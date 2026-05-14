@@ -1,0 +1,10 @@
+[package]
+name = "rustsynth"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cpal = "0.15"
+crossterm = "0.27"
+parking_lot = "0.12"
+midir = "0.10"
