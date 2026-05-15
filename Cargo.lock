@@ -3,6 +3,24 @@
 version = 4
 
 [[package]]
+name = "RustInSynth"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "crossterm",
+ "dashmap",
+ "dirs",
+ "eframe",
+ "egui",
+ "egui_dock",
+ "midir",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3030,24 +3048,6 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rustsynth"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "crossterm",
- "dashmap",
- "dirs",
- "eframe",
- "egui",
- "egui_dock",
- "midir",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
