@@ -29,7 +29,8 @@ pub enum SynthParam {
 
     // Pitch
     PitchBendRange,
-    
+    PortamentoTime,
+
     // Oscillator 1 (Main)
     Osc1Waveform,
     Osc1Level,
@@ -73,6 +74,7 @@ impl SynthParam {
             SynthParam::LfoWaveform => "LFO Waveform",
             SynthParam::LfoDestination => "LFO Destination",
             SynthParam::PitchBendRange => "Pitch Bend Range",
+            SynthParam::PortamentoTime => "Portamento Time",
             SynthParam::Osc1Waveform => "OSC1 Waveform",
             SynthParam::Osc1Level => "OSC1 Level",
             SynthParam::Osc1Phase => "OSC1 Phase",
@@ -109,6 +111,7 @@ impl SynthParam {
             SynthParam::LfoWaveform => "LWF",
             SynthParam::LfoDestination => "LDST",
             SynthParam::PitchBendRange => "PBR",
+            SynthParam::PortamentoTime => "PRT",
             SynthParam::Osc1Waveform => "O1W",
             SynthParam::Osc1Level => "O1L",
             SynthParam::Osc1Phase => "O1P",
@@ -149,6 +152,7 @@ impl SynthParam {
             SynthParam::LfoDestination,
             // Pitch
             SynthParam::PitchBendRange,
+            SynthParam::PortamentoTime,
             // Oscillators
             SynthParam::Osc1Waveform,
             SynthParam::Osc1Level,
@@ -319,6 +323,9 @@ impl CCMapping {
 
         // Pitch Bend Range
         mapping.map(cc::UNDEFINED_102, SynthParam::PitchBendRange);  // CC 102
+
+        // Portamento Time (standard MIDI CC 5)
+        mapping.map(cc::PORTAMENTO_TIME, SynthParam::PortamentoTime);  // CC 5
         
         mapping
     }
@@ -471,6 +478,12 @@ pub fn cc_to_sustain(value: u8) -> f32 {
 /// CC 0-5 = 1, CC 6-10 = 2, ..., CC 122-127 = 24
 pub fn cc_to_pitch_bend_range(value: u8) -> u8 {
     ((value as u16 * 24 / 127) + 1).min(24) as u8
+}
+
+/// Converts CC (0-127) to portamento time in seconds (0.0-3.0)
+/// Uses exponential curve for more resolution at lower values
+pub fn cc_to_portamento_time(value: u8) -> f32 {
+    cc_to_time(value, 0.0, 3.0)
 }
 
 #[cfg(test)]

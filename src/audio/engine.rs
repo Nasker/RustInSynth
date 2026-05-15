@@ -215,6 +215,9 @@ impl AudioEngine {
         // Pitch bend range
         vm.set_pitch_bend_range(params.get(SynthParam::PitchBendRange) as u8);
 
+        // Portamento
+        vm.set_portamento_time(params.get(SynthParam::PortamentoTime));
+
         // Master volume
         vm.set_master_volume(params.get(SynthParam::MasterVolume));
     }

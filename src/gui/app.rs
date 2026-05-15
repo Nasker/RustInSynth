@@ -5,7 +5,7 @@ use crate::core::event::WaveformType;
 use crate::core::filter::{cc_to_cutoff, cc_to_resonance};
 use crate::core::lfo::{LfoDestination, LfoWaveform};
 use crate::core::params::{
-    cc_to_filter_env_amount, cc_to_lfo_depth, cc_to_lfo_rate, cc_to_sustain, cc_to_time,
+    cc_to_filter_env_amount, cc_to_lfo_depth, cc_to_lfo_rate, cc_to_portamento_time, cc_to_sustain, cc_to_time,
     SynthParam,
 };
 use crate::core::voice::{
@@ -89,7 +89,6 @@ impl SynthApp {
     /// Update parameter from UI
     fn set_param(&self, param: SynthParam, value: f32) {
         self.shared.params.set(param, value);
-        println!("Param {} set to {}", param, value);
     }
 
     /// Get parameter value
@@ -136,6 +135,7 @@ impl SynthApp {
         self.set_param(SynthParam::LfoDestination, preset.lfo_destination as u8 as f32);
 
         self.set_param(SynthParam::PitchBendRange, preset.pitch_bend_range as f32);
+        self.set_param(SynthParam::PortamentoTime, preset.portamento_time);
         self.set_param(SynthParam::MasterVolume, preset.master_volume);
     }
 
@@ -193,6 +193,8 @@ impl SynthApp {
 
             pitch_bend_range: self.get_param(SynthParam::PitchBendRange) as u8,
 
+            portamento_time: self.get_param(SynthParam::PortamentoTime),
+
             master_volume: self.get_param(SynthParam::MasterVolume),
         }
     }
@@ -222,7 +224,10 @@ impl SynthApp {
             109 => self.set_param(SynthParam::LfoDepth, cc_to_lfo_depth(value)),
             110 => self.set_param(SynthParam::LfoWaveform, (value / 26).min(4) as f32), // 0-4
             111 => self.set_param(SynthParam::LfoDestination, (value / 32).min(3) as f32), // 0-3
-            
+
+            // Portamento
+            5 => self.set_param(SynthParam::PortamentoTime, cc_to_portamento_time(value)),
+
             // Oscillator levels
             80 => self.set_param(SynthParam::Osc1Level, value as f32 / 127.0),
             81 => self.set_param(SynthParam::Osc2Level, value as f32 / 127.0),
@@ -542,6 +547,7 @@ impl SynthApp {
                 (72, "Release"),
                 (74, "Cutoff"),
                 (71, "Resonance"),
+                (5, "Portamento"),
             ];
 
             for (cc, name) in &cc_mappings {
@@ -621,6 +627,10 @@ impl SynthApp {
 
             // Master volume
             ui.label(RichText::new("MASTER").size(12.0).strong());
+            let mut port_time = self.get_param(SynthParam::PortamentoTime);
+            if knob(ui, &mut port_time, 0.0..=3.0, "Porta", "s").changed() {
+                self.set_param(SynthParam::PortamentoTime, port_time);
+            }
             let mut vol = self.get_param(SynthParam::MasterVolume);
             if knob(ui, &mut vol, 0.0..=1.0, "Volume", "").changed() {
                 self.set_param(SynthParam::MasterVolume, vol);
@@ -926,7 +936,12 @@ impl SynthApp {
         
         ui.add_space(12.0);
         section_header(ui, "MASTER");
-        
+
+        let mut port_time = self.get_param(SynthParam::PortamentoTime);
+        if ui.add(egui::Slider::new(&mut port_time, 0.0..=3.0).text("Portamento").logarithmic(true)).changed() {
+            self.set_param(SynthParam::PortamentoTime, port_time);
+        }
+
         let mut vol = self.get_param(SynthParam::MasterVolume);
         if ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume")).changed() {
             self.set_param(SynthParam::MasterVolume, vol);

@@ -56,8 +56,8 @@ impl ParamBank {
             -12.0_f32, // Osc3Semitones
             0.0_f32,   // Osc3Cents
             0.0_f32,   // Osc3Phase
-            0.5_f32,   // MasterVolume (extra slot)
-            0.0_f32,   // Reserved
+            0.5_f32,   // MasterVolume
+            0.0_f32,   // PortamentoTime
         ];
         
         Self {
@@ -129,7 +129,7 @@ fn param_index(param: SynthParam) -> usize {
         SynthParam::Osc3Cents => 27,
         SynthParam::Osc3Phase => 28,
         SynthParam::MasterVolume => 29,
-        // _ => 30, // Reserved
+        SynthParam::PortamentoTime => 30,
     }
 }
 
@@ -166,6 +166,7 @@ pub fn index_to_param(index: usize) -> Option<SynthParam> {
         27 => Some(SynthParam::Osc3Cents),
         28 => Some(SynthParam::Osc3Phase),
         29 => Some(SynthParam::MasterVolume),
+        30 => Some(SynthParam::PortamentoTime),
         _ => None,
     }
 }

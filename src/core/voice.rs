@@ -3,7 +3,7 @@ use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
 use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
 use super::lfo::{LFO, LfoDestination, LfoWaveform};
 use super::oscillator::{Oscillator, OscillatorBank};
-use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
+use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_portamento_time, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
 use super::presets::Preset;
 use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate};
 
@@ -30,6 +30,10 @@ pub struct Voice {
     filter_env_amount: f32,            // 0.0 to 1.0 (amount of envelope applied)
     // LFO modulation
     base_frequency: Frequency,         // Base note frequency for pitch modulation
+    // Portamento (glide)
+    portamento_time: f32,              // Glide time in seconds (0.0 = off)
+    glide_target_freq: Frequency,       // Target frequency during glide
+    glide_active: bool,                 // Whether portamento glide is in progress
 }
 
 impl Voice {
@@ -46,6 +50,9 @@ impl Voice {
             base_cutoff: 20000.0,
             filter_env_amount: 0.0, // Off by default
             base_frequency: 440.0,
+            portamento_time: 0.0,
+            glide_target_freq: 440.0,
+            glide_active: false,
         }
     }
 
@@ -70,17 +77,30 @@ impl Voice {
             return 0.0;
         }
 
+        // Update portamento glide
+        if self.glide_active {
+            let step = (self.glide_target_freq - self.base_frequency)
+                / (self.portamento_time * self.sample_rate as f32);
+            self.base_frequency += step;
+            if (self.glide_target_freq - self.base_frequency).abs() <= step.abs() {
+                self.base_frequency = self.glide_target_freq;
+                self.glide_active = false;
+            }
+        }
+
         // Get LFO value for this sample
         let lfo_value = self.lfo.next_value();
 
         // Apply LFO pitch modulation (vibrato) if enabled
-        if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
+        let current_freq = if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
             // Vibrato: modulate pitch by up to ±1 semitone at full depth
             let vibrato_semitones = lfo_value; // -1.0 to +1.0 semitones
             let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
-            let modulated_freq = self.base_frequency * vibrato_ratio;
-            self.osc_bank.set_frequency(modulated_freq);
-        }
+            self.base_frequency * vibrato_ratio
+        } else {
+            self.base_frequency
+        };
+        self.osc_bank.set_frequency(current_freq);
 
         // Calculate filter envelope and LFO modulation
         let filter_env_amp = self.filter_envelope.next_amplitude();
@@ -128,10 +148,21 @@ impl Voice {
     pub fn note_on(&mut self, note: MidiNote, velocity: Amplitude) {
         self.current_note = Some(note);
         self.velocity = velocity;
-        let freq = midi_to_frequency(note);
-        self.base_frequency = freq;
-        self.osc_bank.set_frequency(freq);
-        self.osc_bank.reset();
+        let target_freq = midi_to_frequency(note);
+
+        if self.portamento_time > 0.0 && self.is_active() {
+            // Start glide from current frequency
+            self.glide_target_freq = target_freq;
+            self.glide_active = true;
+            // Don't reset oscillator phase during glide
+        } else {
+            self.base_frequency = target_freq;
+            self.glide_target_freq = target_freq;
+            self.glide_active = false;
+            self.osc_bank.set_frequency(self.base_frequency);
+            self.osc_bank.reset();
+        }
+
         self.envelope.trigger();
         self.filter_envelope.trigger();
         self.lfo.reset();
@@ -346,6 +377,8 @@ pub struct VoiceManager {
     lfo_waveform: LfoWaveform,
     lfo_destination: LfoDestination,
     osc_state: OscBankState,
+    // Portamento
+    portamento_time: f32,
 }
 
 impl VoiceManager {
@@ -386,6 +419,8 @@ impl VoiceManager {
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
             osc_state,
+            // Portamento
+            portamento_time: 0.0,
         }
     }
 
@@ -413,6 +448,14 @@ impl VoiceManager {
     /// Set the master volume (0.0 to 1.0)
     pub fn set_master_volume(&mut self, volume: Amplitude) {
         self.master_volume = volume.clamp(0.0, 1.0);
+    }
+
+    /// Set portamento time in seconds (0.0 = off)
+    pub fn set_portamento_time(&mut self, time: f32) {
+        self.portamento_time = time.max(0.0);
+        for voice in &mut self.voices {
+            voice.portamento_time = self.portamento_time;
+        }
     }
 
     /// Generate the next mixed sample from all active voices
@@ -862,7 +905,10 @@ impl VoiceManager {
             SynthParam::PitchBendRange => {
                 self.set_pitch_bend_range(cc_to_pitch_bend_range(value));
             }
-            
+            SynthParam::PortamentoTime => {
+                self.set_portamento_time(cc_to_portamento_time(value));
+            }
+
             // Oscillator 1
             SynthParam::Osc1Waveform => {
                 let waveform = WaveformType::from_index(cc_to_waveform(value));
@@ -1005,6 +1051,9 @@ impl VoiceManager {
             voice.osc_bank_mut().set_pitch_bend_range(preset.pitch_bend_range);
         }
 
+        // Portamento
+        self.set_portamento_time(preset.portamento_time);
+
         // Master volume
         self.master_volume = preset.master_volume.clamp(0.0, 1.0);
     }
@@ -1055,6 +1104,8 @@ impl VoiceManager {
             } else {
                 12
             },
+
+            portamento_time: self.portamento_time,
 
             master_volume: self.master_volume,
         }

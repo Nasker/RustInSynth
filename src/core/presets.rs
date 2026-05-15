@@ -56,6 +56,10 @@ pub struct Preset {
     // Pitch bend
     pub pitch_bend_range: u8,
 
+    // Portamento
+    #[serde(default)]
+    pub portamento_time: f32,
+
     // Master
     pub master_volume: f32,
 }
@@ -108,6 +112,9 @@ impl Default for Preset {
 
             // Pitch bend
             pitch_bend_range: 12,
+
+            // Portamento
+            portamento_time: 0.0,
 
             // Master
             master_volume: 0.5,
