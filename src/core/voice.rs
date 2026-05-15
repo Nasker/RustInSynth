@@ -910,6 +910,9 @@ impl VoiceManager {
             SynthParam::Osc3Phase => {
                 self.set_osc_phase(3, cc_to_phase(value));
             }
+            SynthParam::MasterVolume => {
+                self.set_master_volume(cc_to_level(value));
+            }
         }
     }
 }

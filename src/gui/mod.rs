@@ -128,6 +128,7 @@ fn param_index(param: SynthParam) -> usize {
         SynthParam::Osc3Semitones => 26,
         SynthParam::Osc3Cents => 27,
         SynthParam::Osc3Phase => 28,
+        SynthParam::MasterVolume => 29,
         // _ => 30, // Reserved
     }
 }
@@ -164,6 +165,7 @@ pub fn index_to_param(index: usize) -> Option<SynthParam> {
         26 => Some(SynthParam::Osc3Semitones),
         27 => Some(SynthParam::Osc3Cents),
         28 => Some(SynthParam::Osc3Phase),
+        29 => Some(SynthParam::MasterVolume),
         _ => None,
     }
 }

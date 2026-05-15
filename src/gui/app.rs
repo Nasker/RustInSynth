@@ -43,9 +43,6 @@ pub struct SynthApp {
     
     /// Selected preset index
     selected_preset: Option<usize>,
-    
-    /// Master volume (local copy for UI)
-    master_volume: f32,
 }
 
 impl SynthApp {
@@ -86,13 +83,13 @@ impl SynthApp {
             preset_name: "New Preset".to_string(),
             available_presets,
             selected_preset: None,
-            master_volume: 0.5,
         }
     }
 
     /// Update parameter from UI
     fn set_param(&self, param: SynthParam, value: f32) {
         self.shared.params.set(param, value);
+        println!("Param {} set to {}", param, value);
     }
 
     /// Get parameter value
@@ -139,8 +136,7 @@ impl SynthApp {
         self.set_param(SynthParam::LfoDestination, preset.lfo_destination as u8 as f32);
 
         self.set_param(SynthParam::PitchBendRange, preset.pitch_bend_range as f32);
-
-        self.master_volume = preset.master_volume;
+        self.set_param(SynthParam::MasterVolume, preset.master_volume);
     }
 
     /// Create a preset from current settings
@@ -197,7 +193,7 @@ impl SynthApp {
 
             pitch_bend_range: self.get_param(SynthParam::PitchBendRange) as u8,
 
-            master_volume: self.master_volume,
+            master_volume: self.get_param(SynthParam::MasterVolume),
         }
     }
 
@@ -625,8 +621,9 @@ impl SynthApp {
 
             // Master volume
             ui.label(RichText::new("MASTER").size(12.0).strong());
-            if knob(ui, &mut self.master_volume, 0.0..=1.0, "Volume", "").changed() {
-                // Master volume is handled separately
+            let mut vol = self.get_param(SynthParam::MasterVolume);
+            if knob(ui, &mut vol, 0.0..=1.0, "Volume", "").changed() {
+                self.set_param(SynthParam::MasterVolume, vol);
             }
         });
     }
@@ -930,10 +927,9 @@ impl SynthApp {
         ui.add_space(12.0);
         section_header(ui, "MASTER");
         
-        let mut vol = self.master_volume;
+        let mut vol = self.get_param(SynthParam::MasterVolume);
         if ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume")).changed() {
-            self.master_volume = vol;
-            self.audio_engine.set_master_volume(vol);
+            self.set_param(SynthParam::MasterVolume, vol);
         }
     }
     

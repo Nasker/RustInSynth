@@ -201,11 +201,22 @@ impl AudioEngine {
         vm.set_osc_level(2, params.get(SynthParam::Osc2Level));
         vm.set_osc_level(3, params.get(SynthParam::Osc3Level));
 
-        // Note: Oscillator detune and phase require more complex handling
-        // For now, these are set during preset load
+        // Oscillator detune
+        vm.set_osc_semitones(2, params.get(SynthParam::Osc2Semitones) as i8);
+        vm.set_osc_cents(2, params.get(SynthParam::Osc2Cents) as i8);
+        vm.set_osc_semitones(3, params.get(SynthParam::Osc3Semitones) as i8);
+        vm.set_osc_cents(3, params.get(SynthParam::Osc3Cents) as i8);
+
+        // Oscillator phase
+        vm.set_osc_phase(1, params.get(SynthParam::Osc1Phase));
+        vm.set_osc_phase(2, params.get(SynthParam::Osc2Phase));
+        vm.set_osc_phase(3, params.get(SynthParam::Osc3Phase));
+
+        // Pitch bend range
+        vm.set_pitch_bend_range(params.get(SynthParam::PitchBendRange) as u8);
 
         // Master volume
-        vm.set_master_volume(params.get(SynthParam::Sustain)); // Using Sustain slot temporarily
+        vm.set_master_volume(params.get(SynthParam::MasterVolume));
     }
 }
 

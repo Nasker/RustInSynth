@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 /// Synth parameters that can be controlled via MIDI CC
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,6 +48,9 @@ pub enum SynthParam {
     Osc3Semitones,
     Osc3Cents,
     Osc3Phase,
+
+    // Master
+    MasterVolume,
 }
 
 impl SynthParam {
@@ -82,6 +86,7 @@ impl SynthParam {
             SynthParam::Osc3Semitones => "OSC3 Semitones",
             SynthParam::Osc3Cents => "OSC3 Cents",
             SynthParam::Osc3Phase => "OSC3 Phase",
+            SynthParam::MasterVolume => "Master Volume",
         }
     }
 
@@ -117,6 +122,7 @@ impl SynthParam {
             SynthParam::Osc3Semitones => "O3S",
             SynthParam::Osc3Cents => "O3C",
             SynthParam::Osc3Phase => "O3P",
+            SynthParam::MasterVolume => "VOL",
         }
     }
 
@@ -157,7 +163,15 @@ impl SynthParam {
             SynthParam::Osc3Semitones,
             SynthParam::Osc3Cents,
             SynthParam::Osc3Phase,
+            // Master
+            SynthParam::MasterVolume,
         ]
+    }
+}
+
+impl fmt::Display for SynthParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name())
     }
 }
 
