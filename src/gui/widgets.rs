@@ -1,9 +1,10 @@
 //! Minimoog-style custom widgets for egui
 //!
 //! Provides skeuomorphic knobs, switches, and displays that match
-//! the vintage synthesizer aesthetic.
+//! the vintage synthesizer aesthetic with Rust In Peace theming.
 
 use egui::*;
+use super::theme::{THEME, panel_background, section_header};
 
 /// A Minimoog-style rotary knob
 /// 
@@ -48,16 +49,11 @@ pub fn knob(
     let center = rect.center();
     let radius = rect.width().min(rect.height()) * 0.35;
 
-    // Background circle (dark metal)
-    painter.circle_filled(center, radius, Color32::from_gray(40));
+    // Background circle (dark blue from artwork)
+    painter.circle_filled(center, radius, THEME.bg_blue);
 
     // Outer ring (highlight when active)
-    let ring_color = if response.hovered() || response.dragged() {
-        Color32::from_rgb(180, 140, 80) // Gold/brass highlight
-    } else {
-        Color32::from_gray(60)
-    };
-    painter.circle_stroke(center, radius, Stroke::new(2.0, ring_color));
+    painter.circle_stroke(center, radius, THEME.knob_stroke(response.hovered(), response.dragged()));
 
     // Arc indicator (value visualization)
     let start_angle = -150_f32.to_radians();
@@ -84,18 +80,17 @@ pub fn knob(
         radius * 0.85,
         start_angle,
         end_angle,
-        Stroke::new(3.0, Color32::from_gray(30)),
+        Stroke::new(3.0, THEME.steel_dark),
     );
 
-    // Value arc (warm orange/yellow like Minimoog)
-    let value_color = Color32::from_rgb(255, 180, 60);
+    // Value arc (warning orange)
     draw_arc(
         &painter,
         center,
         radius * 0.85,
         start_angle,
         current_angle,
-        Stroke::new(3.0, value_color),
+        Stroke::new(3.0, THEME.knob_value_color()),
     );
 
     // Indicator dot
@@ -104,7 +99,7 @@ pub fn knob(
         current_angle.cos() * dot_radius,
         current_angle.sin() * dot_radius,
     );
-    painter.circle_filled(dot_pos, 4.0, Color32::WHITE);
+    painter.circle_filled(dot_pos, 4.0, THEME.toxic_green_light);
 
     // Tick marks at 0%, 50%, 100%
     for tick_t in [0.0, 0.5, 1.0] {
@@ -117,7 +112,7 @@ pub fn knob(
             tick_angle.cos() * (radius + 8.0),
             tick_angle.sin() * (radius + 8.0),
         );
-        painter.line_segment([tick_start, tick_end], Stroke::new(2.0, Color32::from_gray(100)));
+        painter.line_segment([tick_start, tick_end], Stroke::new(2.0, THEME.steel_medium));
     }
 
     // Label below knob
@@ -130,7 +125,7 @@ pub fn knob(
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(11.0),
-        Color32::from_gray(200),
+        THEME.text_primary,
     );
 
     // Value display
@@ -155,7 +150,7 @@ pub fn knob(
         Align2::CENTER_CENTER,
         value_text,
         FontId::proportional(10.0),
-        Color32::from_rgb(255, 180, 60), // Match arc color
+        THEME.knob_value_color(),
     );
 
     response
@@ -175,13 +170,9 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
     let visuals = ui.style().interact(&response);
 
     // Background (switch track)
-    let bg_color = if *value {
-        Color32::from_rgb(80, 60, 40) // Dark when on (lit from below)
-    } else {
-        Color32::from_gray(30)
-    };
+    let bg_color = THEME.toggle_switch(*value);
     painter.rect_filled(rect, 4.0, bg_color);
-    painter.rect_stroke(rect, 4.0, Stroke::new(2.0, Color32::from_gray(60)));
+    painter.rect_stroke(rect, 4.0, Stroke::new(2.0, THEME.steel_medium));
 
     // Switch position
     let thumb_radius = 8.0;
@@ -193,12 +184,12 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
 
     // Thumb (the moving part)
     let thumb_color = if *value {
-        Color32::from_rgb(255, 180, 60) // Lit up when on
+        THEME.toxic_green // Lit up when on
     } else {
-        Color32::from_gray(100)
+        THEME.steel_medium
     };
     painter.circle_filled(thumb_center, thumb_radius, thumb_color);
-    painter.circle_stroke(thumb_center, thumb_radius, Stroke::new(1.0, Color32::from_gray(40)));
+    painter.circle_stroke(thumb_center, thumb_radius, Stroke::new(1.0, THEME.steel_dark));
 
     // Label
     painter.text(
@@ -206,7 +197,7 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
         Align2::CENTER_TOP,
         label,
         FontId::proportional(10.0),
-        Color32::from_gray(200),
+        THEME.text_primary,
     );
 
     response
@@ -225,41 +216,54 @@ pub fn selector_switch(
     let total_width = n as f32 * (button_width + spacing) - spacing;
     let height = 24.0;
 
-    ui.vertical(|ui| {
-        // Label
-        ui.label(RichText::new(label).size(11.0).color(Color32::from_gray(200)));
+    let (rect, mut response) = ui.allocate_exact_size(
+        vec2(total_width, height + 20.0),
+        Sense::click(),
+    );
 
-        ui.horizontal(|ui| {
-            let mut changed = false;
-            let mut any_response: Option<Response> = None;
+    // Label
+    let label_rect = Rect::from_min_size(
+        rect.left_top(),
+        vec2(rect.width(), 20.0),
+    );
+    ui.painter_at(label_rect).text(
+        label_rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(11.0),
+        THEME.text_primary,
+    );
 
-            for (i, option) in options.iter().enumerate() {
-                let is_selected = *current == i;
+    // Buttons
+    let button_rect = Rect::from_min_size(
+        rect.left_top() + vec2(0.0, 20.0),
+        vec2(rect.width(), height),
+    );
 
-                let text = RichText::new(*option)
-                    .size(10.0)
-                    .color(if is_selected {
-                        Color32::from_rgb(40, 30, 20)
-                    } else {
-                        Color32::from_gray(200)
-                    });
+    ui.horizontal(|ui| {
+        ui.set_clip_rect(button_rect);
+        
+        let mut changed = false;
+        let mut any_response: Option<Response> = None;
 
-                let button = ui.add_sized(
-                    [button_width, height],
-                    egui::Button::new(text)
-                        .fill(if is_selected {
-                            Color32::from_rgb(255, 180, 60)
-                        } else {
-                            Color32::from_gray(40)
-                        })
-                        .stroke(Stroke::new(1.0, Color32::from_gray(60))),
-                );
+        for (i, option) in options.iter().enumerate() {
+            let is_selected = *current == i;
+            let x_offset = i as f32 * (button_width + spacing);
+            let button_pos = button_rect.left_top() + vec2(x_offset, 0.0);
+            let button_area = Rect::from_min_size(button_pos, vec2(button_width, height));
 
-                if button.clicked() {
-                    *current = i;
-                    changed = true;
-                }
+            let text = RichText::new(*option)
+                .size(10.0)
+                .color(if is_selected {
+                    THEME.text_primary
+                } else {
+                    THEME.text_secondary
+                });
 
+            let button = ui.allocate_rect(button_area, Sense::click());
+            let was_clicked = button.clicked();
+
+            if button.hovered() || was_clicked {
                 any_response = Some(if let Some(r) = any_response {
                     r.union(button)
                 } else {
@@ -267,16 +271,48 @@ pub fn selector_switch(
                 });
             }
 
-            if let Some(mut response) = any_response {
-                if changed {
-                    response.mark_changed();
-                }
-                response
-            } else {
-                ui.allocate_response(vec2(0.0, 0.0), Sense::hover())
+            if was_clicked {
+                *current = i;
+                changed = true;
             }
-        }).inner
-    }).inner
+
+            // Draw button
+            ui.painter_at(button_area).rect_filled(
+                button_area,
+                2.0,
+                if is_selected {
+                    THEME.gold
+                } else {
+                    THEME.steel_dark
+                },
+            );
+            ui.painter_at(button_area).rect_stroke(
+                button_area,
+                2.0,
+                Stroke::new(1.0, THEME.steel_medium),
+            );
+            ui.painter_at(button_area).text(
+                button_area.center(),
+                Align2::CENTER_CENTER,
+                *option,
+                FontId::proportional(10.0),
+                if is_selected {
+                    THEME.text_primary
+                } else {
+                    THEME.text_secondary
+                },
+            );
+        }
+
+        if let Some(mut r) = any_response {
+            if changed {
+                r.mark_changed();
+            }
+            response = response.union(r);
+        }
+    });
+
+    response
 }
 
 /// A vintage-style VU meter / level display
@@ -287,8 +323,8 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
     let painter = ui.painter_at(rect);
 
     // Background
-    painter.rect_filled(rect, 2.0, Color32::from_gray(20));
-    painter.rect_stroke(rect, 2.0, Stroke::new(2.0, Color32::from_gray(60)));
+    painter.rect_filled(rect, 2.0, THEME.steel_dark);
+    painter.rect_stroke(rect, 2.0, Stroke::new(2.0, THEME.steel_medium));
 
     // Level bar (from bottom up)
     let level = level.clamp(0.0, 1.0);
@@ -298,14 +334,8 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
         vec2(rect.width(), bar_height),
     );
 
-    // Gradient: green -> yellow -> red
-    let color = if level < 0.6 {
-        Color32::from_rgb(60, 180, 60)
-    } else if level < 0.85 {
-        Color32::from_rgb(220, 180, 60)
-    } else {
-        Color32::from_rgb(220, 60, 60)
-    };
+    // Use themed VU meter colors
+    let color = THEME.vu_meter_color(level);
 
     if bar_height > 0.0 {
         painter.rect_filled(bar_rect, 1.0, color);
@@ -317,36 +347,8 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
         Align2::CENTER_TOP,
         label,
         FontId::proportional(10.0),
-        Color32::from_gray(200),
+        THEME.text_primary,
     );
-}
-
-/// Draw a vintage panel background
-pub fn panel_background(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
-    Frame::group(ui.style())
-        .fill(Color32::from_rgb(35, 30, 25)) // Dark brown-gray like vintage synths
-        .stroke(Stroke::new(2.0, Color32::from_gray(50)))
-        .rounding(4.0)
-        .show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(4.0);
-                add_contents(ui);
-                ui.add_space(4.0);
-            }).inner
-        });
-}
-
-/// Section header with vintage styling
-pub fn section_header(ui: &mut Ui, text: &str) {
-    ui.label(
-        RichText::new(text)
-            .size(14.0)
-            .strong()
-            .color(Color32::from_rgb(255, 180, 60))
-    );
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(4.0);
 }
 
 /// MIDI feedback indicator - shows last received CC value
@@ -357,19 +359,14 @@ pub fn midi_indicator(ui: &mut Ui, cc: u8, value: Option<u8>, name: &str) {
         let painter = ui.painter_at(rect);
 
         let led_color = if value.is_some() {
-            // Flash with received value brightness
-            let brightness = value.unwrap_or(0) as f32 / 127.0;
-            Color32::from_rgb(
-                (255.0 * brightness) as u8,
-                (200.0 * brightness) as u8,
-                60,
-            )
+            // Use electric blue for MIDI activity
+            THEME.midi_activity(true)
         } else {
-            Color32::from_gray(40)
+            THEME.steel_dark
         };
 
         painter.circle_filled(rect.center(), 5.0, led_color);
-        painter.circle_stroke(rect.center(), 5.0, Stroke::new(1.0, Color32::from_gray(80)));
+        painter.circle_stroke(rect.center(), 5.0, Stroke::new(1.0, THEME.steel_medium));
 
         // Name and value
         let value_text = value
@@ -380,7 +377,7 @@ pub fn midi_indicator(ui: &mut Ui, cc: u8, value: Option<u8>, name: &str) {
             RichText::new(value_text)
                 .size(10.0)
                 .monospace()
-                .color(Color32::from_gray(180))
+                .color(THEME.text_secondary)
         );
     });
 }

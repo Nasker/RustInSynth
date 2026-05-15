@@ -14,6 +14,7 @@ use crate::core::voice::{
 };
 use crate::core::presets::{list_presets, load_preset, save_preset, Preset};
 use crate::gui::widgets::*;
+use crate::gui::theme::{THEME, panel_background, section_header};
 use crate::gui::SharedState;
 use crate::input::midi::MidiInputHandler;
 use egui::*;
@@ -639,6 +640,13 @@ impl SynthApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Set dark theme with our custom colors
+        ctx.set_visuals(egui::Visuals {
+            window_fill: THEME.bg_blue,
+            panel_fill: THEME.panel_bg,
+            ..egui::Visuals::dark()
+        });
+        
         // Request continuous repaints for responsive MIDI handling
         ctx.request_repaint();
         
@@ -674,10 +682,11 @@ impl SynthApp {
         // Sync GUI parameters to audio engine (every frame for responsiveness)
         self.audio_engine.sync_params(&self.shared.params);
 
-        // Set vintage dark theme
+        // Set Rust In Peace theme
         let mut visuals = ctx.style().visuals.clone();
         visuals.dark_mode = true;
-        visuals.panel_fill = Color32::from_rgb(25, 20, 15);
+        visuals.window_fill = THEME.bg_blue;
+        visuals.panel_fill = THEME.panel_bg;
         ctx.set_visuals(visuals);
 
         // Top bar with title
@@ -687,7 +696,7 @@ impl SynthApp {
                     RichText::new("🔊 Rust In Synth")
                         .size(18.0)
                         .strong()
-                        .color(Color32::from_rgb(255, 180, 60))
+                        .color(THEME.gold)
                 );
                 ui.label(
                     RichText::new("v0.4.0")
@@ -706,7 +715,7 @@ impl SynthApp {
 
         // Main panel - Single window layout with all sections
         egui::CentralPanel::default()
-            .frame(Frame::none().fill(Color32::from_rgb(25, 20, 15)))
+            .frame(Frame::none().fill(THEME.bg_blue))
             .show(ctx, |ui| {
                 // Fill available space with scroll area
                 egui::ScrollArea::both()

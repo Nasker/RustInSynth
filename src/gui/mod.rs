@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub mod app;
 pub mod widgets;
+pub mod theme;
 
 pub use app::run_gui;
 
