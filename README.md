@@ -4,7 +4,7 @@ A Minimoog-style monophonic synthesizer written in pure Rust.
 
 ## Features
 
-- **3-oscillator bank** with per-oscillator waveform, level, phase, and detune
+- **3-oscillator bank** with 5 waveforms (Sine, Square, Saw, Triangle, Noise)
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
 - **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
 - **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
@@ -65,7 +65,7 @@ All parameters follow MIDI Sound Controller conventions:
 ### Oscillators
 | CC  | Parameter      | Range                              |
 |-----|----------------|------------------------------------|
-| 75  | OSC1 Waveform  | 0-31=Sine, 32-63=Sq, 64-95=Saw, 96+=Tri |
+| 75  | OSC1 Waveform  | 0-25=Sine, 26-51=Sq, 52-77=Saw, 78-103=Tri, 104+=Noise |
 | 76  | OSC2 Waveform  | (same)                             |
 | 77  | OSC3 Waveform  | (same)                             |
 | 80  | OSC1 Level     | 0% → 100%                          |
@@ -94,6 +94,27 @@ All parameters follow MIDI Sound Controller conventions:
 | CC 102  | Pitch Bend Range| 1 → 24 semitones         |
 
 CC mappings are fully configurable at runtime via the `CCMapping` API.
+
+## Presets
+
+Presets are saved as JSON files in `~/.rustsynth/presets/`. Each preset contains all synth parameters including oscillators, filter, envelopes, LFO, and master volume.
+
+**Programmatic usage:**
+```rust
+use rustsynth::core::{VoiceManager, save_preset, load_preset};
+
+// Create and save a preset
+let mut vm = VoiceManager::monophonic(44100);
+// ... configure the sound ...
+let preset = vm.create_preset("My Bass");
+save_preset(&preset).expect("Failed to save preset");
+
+// Load and apply a preset
+let loaded = load_preset("My Bass").expect("Failed to load preset");
+vm.apply_preset(&loaded);
+```
+
+**CLI preset management** (future enhancement): Load presets by name from command line arguments.
 
 ## Keyboard Layout
 
@@ -146,6 +167,7 @@ src/
 │   ├── lfo.rs           # Low Frequency Oscillator
 │   ├── oscillator.rs    # Waveform generators
 │   ├── params.rs        # CC mapping system
+│   ├── presets.rs       # JSON preset save/load
 │   ├── types.rs         # Core type definitions
 │   └── voice.rs         # Voice allocation
 └── input/
@@ -155,13 +177,14 @@ src/
 
 ## Current Status
 
-**v0.3.0** - Filter envelope + LFO:
-- [x] 3-oscillator bank (Minimoog-style)
+**v0.4.0** - Noise oscillator + Presets:
+- [x] 3-oscillator bank with 5 waveforms (incl. Noise)
 - [x] Per-oscillator waveform, level, phase, detune
 - [x] Resonant SVF filter with analog saturation
 - [x] Dual ADSR envelopes (amplitude + filter)
 - [x] LFO with 5 waveforms, 3 destinations
 - [x] Pitch bend with configurable range (1-24 semitones)
+- [x] JSON-based preset save/load system
 - [x] MIDI input with channel filtering
 - [x] Full CC mapping system (31 parameters)
 - [x] MIDI message debug output
@@ -171,8 +194,8 @@ src/
 ### Near-term (Complete Monophonic Synth)
 - [x] **Filter envelope** - Dedicated ADSR for cutoff modulation
 - [x] **LFO modulation** - Low-frequency oscillator for pitch/filter
-- [ ] **Noise oscillator** - White/pink noise source
-- [ ] **Preset save/load** - JSON-based patch storage
+- [x] **Noise oscillator** - White/pink noise source
+- [x] **Preset save/load** - JSON-based patch storage
 
 ### Long-term
 - [ ] Polyphonic voice allocation

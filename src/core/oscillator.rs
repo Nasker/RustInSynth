@@ -297,6 +297,90 @@ impl Oscillator for TriangleOscillator {
     }
 }
 
+/// Noise oscillator - generates white noise
+/// Unlike other oscillators, frequency controls the "color" of noise (filter cutoff)
+pub struct NoiseOscillator {
+    frequency: Frequency,  // Used as filter cutoff for noise color
+    sample_rate: SampleRate,
+    phase_offset: f32,
+    // Simple state for filtering (one-pole lowpass for pink noise option)
+    filter_state: f32,
+}
+
+impl NoiseOscillator {
+    pub fn new(frequency: Frequency, sample_rate: SampleRate) -> Self {
+        Self {
+            frequency,
+            sample_rate,
+            phase_offset: 0.0,
+            filter_state: 0.0,
+        }
+    }
+
+    /// Generate white noise sample (-1.0 to 1.0)
+    fn white_noise() -> f32 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        let mut hasher = DefaultHasher::new();
+        now.hash(&mut hasher);
+        hasher.write_u64(now as u64);
+        let hash = hasher.finish();
+
+        // Convert to f32 in range [-1.0, 1.0]
+        (hash as f32 / u64::MAX as f32) * 2.0 - 1.0
+    }
+}
+
+impl Oscillator for NoiseOscillator {
+    fn next_sample(&mut self) -> Sample {
+        // Generate white noise
+        let white = Self::white_noise();
+
+        // Apply simple one-pole filter for "color" based on frequency
+        // Higher frequency = less filtering (brighter noise)
+        // cutoff_ratio: 0.0 = full filter (darker), 1.0 = no filter (white)
+        let cutoff_ratio = (self.frequency / 20000.0).clamp(0.0, 1.0);
+        let filter_coeff = 1.0 - cutoff_ratio; // Lower cutoff = more filtering
+
+        // One-pole lowpass filter
+        self.filter_state = white * (1.0 - filter_coeff) + self.filter_state * filter_coeff;
+
+        self.filter_state
+    }
+
+    fn set_frequency(&mut self, frequency: Frequency) {
+        self.frequency = frequency;
+    }
+
+    fn frequency(&self) -> Frequency {
+        self.frequency
+    }
+
+    fn reset(&mut self) {
+        self.filter_state = 0.0;
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+    }
+
+    fn set_phase_offset(&mut self, _offset: f32) {
+        // Noise doesn't use phase, but we store it for API compatibility
+        self.phase_offset = 0.0;
+    }
+
+    fn phase_offset(&self) -> f32 {
+        0.0 // Noise has no phase
+    }
+}
+
 /// Factory function to create an oscillator from WaveformType
 pub fn create_oscillator(waveform: WaveformType, frequency: Frequency, sample_rate: SampleRate) -> Box<dyn Oscillator> {
     match waveform {
@@ -304,6 +388,7 @@ pub fn create_oscillator(waveform: WaveformType, frequency: Frequency, sample_ra
         WaveformType::Square => Box::new(SquareOscillator::new(frequency, sample_rate)),
         WaveformType::Saw => Box::new(SawOscillator::new(frequency, sample_rate)),
         WaveformType::Triangle => Box::new(TriangleOscillator::new(frequency, sample_rate)),
+        WaveformType::Noise => Box::new(NoiseOscillator::new(frequency, sample_rate)),
     }
 }
 

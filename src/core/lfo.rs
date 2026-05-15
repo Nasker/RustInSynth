@@ -1,9 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
-use super::types::{Sample, SampleRate};
+use super::types::{SampleRate};
 
 /// LFO routing destinations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LfoDestination {
     #[default]
     Off,
@@ -35,7 +36,7 @@ impl LfoDestination {
 }
 
 /// LFO waveform types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LfoWaveform {
     #[default]
     Sine,

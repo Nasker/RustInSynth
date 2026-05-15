@@ -1,23 +1,27 @@
+use serde::{Deserialize, Serialize};
+
 use super::types::{Amplitude, MidiNote};
 
 /// Available waveform types
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum WaveformType {
     #[default]
     Sine,
     Square,
     Saw,
     Triangle,
+    Noise,
 }
 
 impl WaveformType {
-    /// Get waveform from index (0-3)
+    /// Get waveform from index (0-4)
     pub fn from_index(index: u8) -> Self {
-        match index % 4 {
+        match index % 5 {
             0 => WaveformType::Sine,
             1 => WaveformType::Square,
             2 => WaveformType::Saw,
             3 => WaveformType::Triangle,
+            4 => WaveformType::Noise,
             _ => WaveformType::Sine,
         }
     }
@@ -29,6 +33,7 @@ impl WaveformType {
             WaveformType::Square => "Square",
             WaveformType::Saw => "Sawtooth",
             WaveformType::Triangle => "Triangle",
+            WaveformType::Noise => "Noise",
         }
     }
 }

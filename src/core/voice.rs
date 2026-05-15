@@ -4,6 +4,7 @@ use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
 use super::lfo::{LFO, LfoDestination, LfoWaveform};
 use super::oscillator::{Oscillator, OscillatorBank};
 use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
+use super::presets::Preset;
 use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate};
 
 /// Envelope time range constants
@@ -952,6 +953,108 @@ fn soft_clip(sample: Sample) -> Sample {
         -1.0 + (sample + 1.0).exp() * 0.5
     } else {
         sample
+    }
+}
+
+impl VoiceManager {
+    /// Apply a preset to all voices
+    pub fn apply_preset(&mut self, preset: &Preset) {
+        // Oscillator settings
+        self.set_osc_waveform(1, preset.osc1_waveform);
+        self.set_osc_level(1, preset.osc1_level);
+        self.set_osc_phase(1, preset.osc1_phase);
+
+        self.set_osc_waveform(2, preset.osc2_waveform);
+        self.set_osc_level(2, preset.osc2_level);
+        self.set_osc_detune(2, preset.osc2_semitones, preset.osc2_cents);
+        self.set_osc_phase(2, preset.osc2_phase);
+
+        self.set_osc_waveform(3, preset.osc3_waveform);
+        self.set_osc_level(3, preset.osc3_level);
+        self.set_osc_detune(3, preset.osc3_semitones, preset.osc3_cents);
+        self.set_osc_phase(3, preset.osc3_phase);
+
+        // Filter settings
+        self.set_filter_cutoff(preset.filter_cutoff);
+        self.set_filter_resonance(preset.filter_resonance);
+
+        // Amplitude envelope
+        self.set_attack(preset.amp_attack);
+        self.set_decay(preset.amp_decay);
+        self.set_sustain(preset.amp_sustain);
+        self.set_release(preset.amp_release);
+
+        // Filter envelope
+        self.set_filter_attack(preset.filter_attack);
+        self.set_filter_decay(preset.filter_decay);
+        self.set_filter_sustain(preset.filter_sustain);
+        self.set_filter_release(preset.filter_release);
+        self.set_filter_env_amount(preset.filter_env_amount);
+
+        // LFO settings
+        self.set_lfo_rate(preset.lfo_rate);
+        self.set_lfo_depth(preset.lfo_depth);
+        self.set_lfo_waveform(preset.lfo_waveform);
+        self.set_lfo_destination(preset.lfo_destination);
+
+        // Pitch bend
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_pitch_bend_range(preset.pitch_bend_range);
+        }
+
+        // Master volume
+        self.master_volume = preset.master_volume.clamp(0.0, 1.0);
+    }
+
+    /// Create a preset from current settings
+    pub fn create_preset(&self, name: &str) -> Preset {
+        Preset {
+            name: name.to_string(),
+            version: "1.0".to_string(),
+
+            osc1_waveform: self.osc_state.osc1_waveform,
+            osc1_level: self.osc_state.osc1_level,
+            osc1_phase: self.osc_state.osc1_phase,
+
+            osc2_waveform: self.osc_state.osc2_waveform,
+            osc2_level: self.osc_state.osc2_level,
+            osc2_semitones: self.osc_state.osc2_semitones,
+            osc2_cents: self.osc_state.osc2_cents,
+            osc2_phase: self.osc_state.osc2_phase,
+
+            osc3_waveform: self.osc_state.osc3_waveform,
+            osc3_level: self.osc_state.osc3_level,
+            osc3_semitones: self.osc_state.osc3_semitones,
+            osc3_cents: self.osc_state.osc3_cents,
+            osc3_phase: self.osc_state.osc3_phase,
+
+            filter_cutoff: self.filter_cutoff,
+            filter_resonance: self.filter_resonance,
+
+            amp_attack: self.attack_time,
+            amp_decay: self.decay_time,
+            amp_sustain: self.sustain_level,
+            amp_release: self.release_time,
+
+            filter_attack: self.filter_attack_time,
+            filter_decay: self.filter_decay_time,
+            filter_sustain: self.filter_sustain_level,
+            filter_release: self.filter_release_time,
+            filter_env_amount: self.filter_env_amount,
+
+            lfo_rate: self.lfo_rate,
+            lfo_depth: self.lfo_depth,
+            lfo_waveform: self.lfo_waveform,
+            lfo_destination: self.lfo_destination,
+
+            pitch_bend_range: if let Some(voice) = self.voices.first() {
+                voice.osc_bank().pitch_bend_range()
+            } else {
+                12
+            },
+
+            master_volume: self.master_volume,
+        }
     }
 }
 
