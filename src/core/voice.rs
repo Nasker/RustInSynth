@@ -1,13 +1,15 @@
-use super::envelope::{AREnvelope, Envelope, EnvelopeState};
+use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
 use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
 use super::oscillator::{Oscillator, OscillatorBank};
-use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase};
+use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain};
 use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate};
 
 /// Envelope time range constants
 pub const MIN_ATTACK_TIME: f32 = 0.001;  // 1ms
 pub const MAX_ATTACK_TIME: f32 = 2.0;    // 2 seconds
+pub const MIN_DECAY_TIME: f32 = 0.001;   // 1ms
+pub const MAX_DECAY_TIME: f32 = 5.0;     // 5 seconds
 pub const MIN_RELEASE_TIME: f32 = 0.001; // 1ms  
 pub const MAX_RELEASE_TIME: f32 = 5.0;   // 5 seconds
 
@@ -26,7 +28,7 @@ impl Voice {
         Self {
             osc_bank: OscillatorBank::new(sample_rate),
             filter: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
-            envelope: Box::new(AREnvelope::new(0.01, 0.1, sample_rate)),
+            envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
             current_note: None,
             velocity: 1.0,
             sample_rate,
@@ -111,6 +113,16 @@ impl Voice {
         self.envelope.set_attack(attack_time);
     }
 
+    /// Set the decay time
+    pub fn set_decay(&mut self, decay_time: f32) {
+        self.envelope.set_decay(decay_time);
+    }
+
+    /// Set the sustain level (0.0 to 1.0)
+    pub fn set_sustain(&mut self, sustain_level: f32) {
+        self.envelope.set_sustain(sustain_level);
+    }
+
     /// Set the release time
     pub fn set_release(&mut self, release_time: f32) {
         self.envelope.set_release(release_time);
@@ -173,8 +185,12 @@ pub struct VoiceManager {
     sample_rate: SampleRate,
     master_volume: Amplitude,
     cc_mapping: CCMapping,
+    // ADSR envelope state
     attack_time: f32,
+    decay_time: f32,
+    sustain_level: f32,
     release_time: f32,
+    // Filter state
     filter_cutoff: Frequency,
     filter_resonance: f32,
     osc_state: OscBankState,
@@ -199,7 +215,9 @@ impl VoiceManager {
             master_volume: 0.5,
             cc_mapping: CCMapping::default_mappings(),
             attack_time: 0.01,
-            release_time: 0.1,
+            decay_time: 0.1,
+            sustain_level: 0.7,
+            release_time: 0.2,
             filter_cutoff: 20000.0,
             filter_resonance: 0.0,
             osc_state,
@@ -304,6 +322,22 @@ impl VoiceManager {
         }
     }
 
+    /// Set decay time for all voices
+    pub fn set_decay(&mut self, decay_time: f32) {
+        self.decay_time = decay_time;
+        for voice in &mut self.voices {
+            voice.set_decay(decay_time);
+        }
+    }
+
+    /// Set sustain level for all voices (0.0 to 1.0)
+    pub fn set_sustain(&mut self, sustain_level: f32) {
+        self.sustain_level = sustain_level;
+        for voice in &mut self.voices {
+            voice.set_sustain(sustain_level);
+        }
+    }
+
     /// Set release time for all voices
     pub fn set_release(&mut self, release_time: f32) {
         self.release_time = release_time;
@@ -315,6 +349,16 @@ impl VoiceManager {
     /// Get current attack time
     pub fn attack(&self) -> f32 {
         self.attack_time
+    }
+
+    /// Get current decay time
+    pub fn decay(&self) -> f32 {
+        self.decay_time
+    }
+
+    /// Get current sustain level
+    pub fn sustain(&self) -> f32 {
+        self.sustain_level
     }
 
     /// Get current release time
@@ -443,10 +487,17 @@ impl VoiceManager {
     /// Handle a parameter change from CC
     fn handle_param_change(&mut self, param: SynthParam, value: u8) {
         match param {
-            // Envelope
+            // ADSR Envelope
             SynthParam::Attack => {
                 let time = cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME);
                 self.set_attack(time);
+            }
+            SynthParam::Decay => {
+                let time = cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME);
+                self.set_decay(time);
+            }
+            SynthParam::Sustain => {
+                self.set_sustain(cc_to_sustain(value));
             }
             SynthParam::Release => {
                 let time = cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME);

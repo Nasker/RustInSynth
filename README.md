@@ -4,14 +4,14 @@ A Minimoog-style monophonic synthesizer written in pure Rust.
 
 ## Features
 
-- **3-oscillator bank** with per-oscillator waveform, level, and detune
+- **3-oscillator bank** with per-oscillator waveform, level, phase, and detune
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
-- **AR envelope** with configurable attack/release
+- **Full ADSR envelope** with attack, decay, sustain, and release
 - **Real-time audio synthesis** using `cpal`
 - **Dual input modes**:
   - QWERTY keyboard (piano-style layout)
   - USB MIDI controller support via `midir`
-- **Full MIDI CC control** for all parameters
+- **Full MIDI CC control** for all 21 parameters
 - **MIDI debug mode** for inspecting raw messages
 
 ## Architecture
@@ -28,7 +28,7 @@ A Minimoog-style monophonic synthesizer written in pure Rust.
                ▼
         ┌─────────────┐    ┌─────────────┐
         │   Filter    │───▶│  Envelope   │───▶ Output
-        │ (SVF + sat) │    │    (AR)     │
+        │ (SVF + sat) │    │   (ADSR)    │
         └─────────────┘    └─────────────┘
 ```
 
@@ -38,11 +38,13 @@ A Minimoog-style monophonic synthesizer written in pure Rust.
 
 All parameters follow MIDI Sound Controller conventions:
 
-### Envelope
-| CC  | Parameter    | Range      |
-|-----|--------------|------------|
-| 73  | Attack Time  | 1ms → 2s   |
-| 72  | Release Time | 1ms → 5s   |
+### ADSR Envelope
+| CC  | Parameter     | Range      |
+|-----|---------------|------------|
+| 73  | Attack Time   | 1ms → 2s   |
+| 83  | Decay Time    | 1ms → 5s   |
+| 84  | Sustain Level | 0% → 100%  |
+| 72  | Release Time  | 1ms → 5s   |
 
 ### Filter
 | CC  | Parameter  | Range                |
@@ -128,19 +130,18 @@ src/
 
 ## Current Status
 
-**v0.1.0** - Core synthesis engine complete:
+**v0.2.0** - Full ADSR envelope:
 - [x] 3-oscillator bank (Minimoog-style)
-- [x] Per-oscillator waveform, level, detune
+- [x] Per-oscillator waveform, level, phase, detune
 - [x] Resonant SVF filter with analog saturation
-- [x] AR envelope
+- [x] Full ADSR envelope
 - [x] MIDI input with channel filtering
-- [x] Full CC mapping system (14 parameters)
+- [x] Full CC mapping system (21 parameters)
 - [x] MIDI message debug output
 
 ## Roadmap
 
 - [ ] Polyphonic voice allocation
-- [ ] ADSR envelope
 - [ ] LFO modulation
 - [ ] Filter envelope
 - [ ] Noise oscillator

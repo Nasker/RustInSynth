@@ -34,14 +34,26 @@ pub trait Envelope: Send + Sync {
     /// Set the sample rate
     fn set_sample_rate(&mut self, sample_rate: SampleRate);
 
-    /// Set attack time in seconds (if supported)
+    /// Set attack time in seconds
     fn set_attack(&mut self, _attack_time: f32) {}
 
-    /// Set release time in seconds (if supported)
+    /// Set decay time in seconds
+    fn set_decay(&mut self, _decay_time: f32) {}
+
+    /// Set sustain level (0.0 to 1.0)
+    fn set_sustain(&mut self, _sustain_level: f32) {}
+
+    /// Set release time in seconds
     fn set_release(&mut self, _release_time: f32) {}
 
     /// Get attack time in seconds
     fn attack(&self) -> f32 { 0.0 }
+
+    /// Get decay time in seconds
+    fn decay(&self) -> f32 { 0.0 }
+
+    /// Get sustain level
+    fn sustain(&self) -> f32 { 1.0 }
 
     /// Get release time in seconds
     fn release_time(&self) -> f32 { 0.0 }
@@ -193,10 +205,10 @@ impl ADSREnvelope {
         sample_rate: SampleRate,
     ) -> Self {
         let mut env = Self {
-            attack_time,
-            decay_time,
+            attack_time: attack_time.max(0.001),
+            decay_time: decay_time.max(0.001),
             sustain_level: sustain_level.clamp(0.0, 1.0),
-            release_time,
+            release_time: release_time.max(0.001),
             sample_rate,
             state: EnvelopeState::Idle,
             current_amplitude: 0.0,
@@ -208,13 +220,19 @@ impl ADSREnvelope {
         env
     }
 
+    /// Create with default parameters (quick attack, medium decay, 70% sustain, medium release)
+    pub fn default_adsr(sample_rate: SampleRate) -> Self {
+        Self::new(0.01, 0.1, 0.7, 0.2, sample_rate)
+    }
+
     fn update_increments(&mut self) {
         let samples_per_second = self.sample_rate as f32;
-        self.attack_increment = 1.0 / (self.attack_time.max(0.001) * samples_per_second);
+        self.attack_increment = 1.0 / (self.attack_time * samples_per_second);
         self.decay_decrement =
-            (1.0 - self.sustain_level) / (self.decay_time.max(0.001) * samples_per_second);
+            (1.0 - self.sustain_level) / (self.decay_time * samples_per_second);
+        // Release decrement is recalculated in release() based on current amplitude
         self.release_decrement =
-            self.sustain_level / (self.release_time.max(0.001) * samples_per_second);
+            self.sustain_level / (self.release_time * samples_per_second);
     }
 }
 
@@ -283,6 +301,42 @@ impl Envelope for ADSREnvelope {
         self.sample_rate = sample_rate;
         self.update_increments();
     }
+
+    fn set_attack(&mut self, attack_time: f32) {
+        self.attack_time = attack_time.max(0.001);
+        self.update_increments();
+    }
+
+    fn set_decay(&mut self, decay_time: f32) {
+        self.decay_time = decay_time.max(0.001);
+        self.update_increments();
+    }
+
+    fn set_sustain(&mut self, sustain_level: f32) {
+        self.sustain_level = sustain_level.clamp(0.0, 1.0);
+        self.update_increments();
+    }
+
+    fn set_release(&mut self, release_time: f32) {
+        self.release_time = release_time.max(0.001);
+        self.update_increments();
+    }
+
+    fn attack(&self) -> f32 {
+        self.attack_time
+    }
+
+    fn decay(&self) -> f32 {
+        self.decay_time
+    }
+
+    fn sustain(&self) -> f32 {
+        self.sustain_level
+    }
+
+    fn release_time(&self) -> f32 {
+        self.release_time
+    }
 }
 
 #[cfg(test)]
@@ -312,5 +366,61 @@ mod tests {
         }
 
         assert!(env.is_finished());
+    }
+
+    #[test]
+    fn test_adsr_envelope_lifecycle() {
+        let mut env = ADSREnvelope::new(0.01, 0.05, 0.5, 0.01, 44100);
+
+        assert_eq!(env.state(), EnvelopeState::Idle);
+        assert_eq!(env.next_amplitude(), 0.0);
+
+        // Trigger attack
+        env.trigger();
+        assert_eq!(env.state(), EnvelopeState::Attack);
+
+        // Run through attack phase
+        for _ in 0..500 {
+            env.next_amplitude();
+        }
+        assert_eq!(env.state(), EnvelopeState::Decay);
+
+        // Run through decay phase
+        for _ in 0..3000 {
+            env.next_amplitude();
+        }
+        assert_eq!(env.state(), EnvelopeState::Sustain);
+        
+        // Sustain level should be ~0.5
+        let amp = env.next_amplitude();
+        assert!((amp - 0.5).abs() < 0.01);
+
+        // Release
+        env.release();
+        assert_eq!(env.state(), EnvelopeState::Release);
+
+        // Run through release
+        for _ in 0..500 {
+            env.next_amplitude();
+        }
+
+        assert!(env.is_finished());
+    }
+
+    #[test]
+    fn test_adsr_setters() {
+        let mut env = ADSREnvelope::default_adsr(44100);
+        
+        env.set_attack(0.5);
+        assert_eq!(env.attack(), 0.5);
+        
+        env.set_decay(0.3);
+        assert_eq!(env.decay(), 0.3);
+        
+        env.set_sustain(0.6);
+        assert_eq!(env.sustain(), 0.6);
+        
+        env.set_release(1.0);
+        assert_eq!(env.release_time(), 1.0);
     }
 }

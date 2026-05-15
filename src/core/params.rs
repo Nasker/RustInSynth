@@ -3,8 +3,10 @@ use std::collections::HashMap;
 /// Synth parameters that can be controlled via MIDI CC
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SynthParam {
-    // Envelope
+    // Envelope (ADSR)
     Attack,
+    Decay,
+    Sustain,
     Release,
     
     // Filter
@@ -36,6 +38,8 @@ impl SynthParam {
     pub fn name(&self) -> &'static str {
         match self {
             SynthParam::Attack => "Attack",
+            SynthParam::Decay => "Decay",
+            SynthParam::Sustain => "Sustain",
             SynthParam::Release => "Release",
             SynthParam::FilterCutoff => "Filter Cutoff",
             SynthParam::FilterResonance => "Filter Resonance",
@@ -59,6 +63,8 @@ impl SynthParam {
     pub fn short_name(&self) -> &'static str {
         match self {
             SynthParam::Attack => "ATK",
+            SynthParam::Decay => "DEC",
+            SynthParam::Sustain => "SUS",
             SynthParam::Release => "REL",
             SynthParam::FilterCutoff => "CUT",
             SynthParam::FilterResonance => "RES",
@@ -82,6 +88,8 @@ impl SynthParam {
     pub fn all() -> &'static [SynthParam] {
         &[
             SynthParam::Attack,
+            SynthParam::Decay,
+            SynthParam::Sustain,
             SynthParam::Release,
             SynthParam::FilterCutoff,
             SynthParam::FilterResonance,
@@ -137,6 +145,9 @@ pub mod cc {
     pub const GP_CTRL_7: u8 = 82;
     pub const GP_CTRL_8: u8 = 83;
     
+    // Portamento Control (84)
+    pub const PORTAMENTO_CTRL: u8 = 84;
+    
     // Undefined CCs good for custom use (85-87, 89-90, 102-119)
     pub const UNDEFINED_85: u8 = 85;
     pub const UNDEFINED_86: u8 = 86;
@@ -178,13 +189,17 @@ impl CCMapping {
     /// - CC 75-77: OSC1/2/3 Waveform
     /// - CC 78-79: OSC2/3 Semitones
     /// - CC 80-82: OSC1/2/3 Level
+    /// - CC 83: Decay Time
+    /// - CC 84: Sustain Level
     /// - CC 85-86: OSC2/3 Cents (fine detune)
     /// - CC 87,89,90: OSC1/2/3 Phase
     pub fn default_mappings() -> Self {
         let mut mapping = Self::new();
         
-        // Envelope - using standard Sound Controllers
+        // ADSR Envelope - using standard Sound Controllers
         mapping.map(cc::SOUND_CTRL_4, SynthParam::Attack);       // CC 73
+        mapping.map(cc::GP_CTRL_8, SynthParam::Decay);           // CC 83
+        mapping.map(cc::PORTAMENTO_CTRL, SynthParam::Sustain);   // CC 84
         mapping.map(cc::SOUND_CTRL_3, SynthParam::Release);      // CC 72
         
         // Filter - using standard Sound Controllers
@@ -322,6 +337,11 @@ pub fn cc_to_waveform(value: u8) -> u8 {
 /// Converts CC (0-127) to phase offset (0.0-1.0)
 /// Full range: 0 = 0°, 127 = 360°
 pub fn cc_to_phase(value: u8) -> f32 {
+    value as f32 / 127.0
+}
+
+/// Converts CC (0-127) to sustain level (0.0-1.0)
+pub fn cc_to_sustain(value: u8) -> f32 {
     value as f32 / 127.0
 }
 
