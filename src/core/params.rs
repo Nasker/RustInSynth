@@ -13,6 +13,9 @@ pub enum SynthParam {
     FilterCutoff,
     FilterResonance,
     
+    // Pitch
+    PitchBendRange,
+    
     // Oscillator 1 (Main)
     Osc1Waveform,
     Osc1Level,
@@ -43,6 +46,7 @@ impl SynthParam {
             SynthParam::Release => "Release",
             SynthParam::FilterCutoff => "Filter Cutoff",
             SynthParam::FilterResonance => "Filter Resonance",
+            SynthParam::PitchBendRange => "Pitch Bend Range",
             SynthParam::Osc1Waveform => "OSC1 Waveform",
             SynthParam::Osc1Level => "OSC1 Level",
             SynthParam::Osc1Phase => "OSC1 Phase",
@@ -68,6 +72,7 @@ impl SynthParam {
             SynthParam::Release => "REL",
             SynthParam::FilterCutoff => "CUT",
             SynthParam::FilterResonance => "RES",
+            SynthParam::PitchBendRange => "PBR",
             SynthParam::Osc1Waveform => "O1W",
             SynthParam::Osc1Level => "O1L",
             SynthParam::Osc1Phase => "O1P",
@@ -93,6 +98,7 @@ impl SynthParam {
             SynthParam::Release,
             SynthParam::FilterCutoff,
             SynthParam::FilterResonance,
+            SynthParam::PitchBendRange,
             SynthParam::Osc1Waveform,
             SynthParam::Osc1Level,
             SynthParam::Osc1Phase,
@@ -154,6 +160,7 @@ pub mod cc {
     pub const UNDEFINED_87: u8 = 87;
     pub const UNDEFINED_89: u8 = 89;
     pub const UNDEFINED_90: u8 = 90;
+    pub const UNDEFINED_102: u8 = 102;
     
     // Effects (91-95)
     pub const REVERB: u8 = 91;
@@ -228,6 +235,9 @@ impl CCMapping {
         mapping.map(cc::UNDEFINED_87, SynthParam::Osc1Phase);  // CC 87
         mapping.map(cc::UNDEFINED_89, SynthParam::Osc2Phase);  // CC 89
         mapping.map(cc::UNDEFINED_90, SynthParam::Osc3Phase);  // CC 90
+        
+        // Pitch Bend Range - RPN would be standard but we use CC for simplicity
+        mapping.map(cc::UNDEFINED_102, SynthParam::PitchBendRange);  // CC 102
         
         mapping
     }
@@ -343,6 +353,12 @@ pub fn cc_to_phase(value: u8) -> f32 {
 /// Converts CC (0-127) to sustain level (0.0-1.0)
 pub fn cc_to_sustain(value: u8) -> f32 {
     value as f32 / 127.0
+}
+
+/// Converts CC (0-127) to pitch bend range in semitones (1-24)
+/// CC 0-5 = 1, CC 6-10 = 2, ..., CC 122-127 = 24
+pub fn cc_to_pitch_bend_range(value: u8) -> u8 {
+    ((value as u16 * 24 / 127) + 1).min(24) as u8
 }
 
 #[cfg(test)]

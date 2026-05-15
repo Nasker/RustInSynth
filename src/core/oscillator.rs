@@ -439,6 +439,8 @@ pub struct OscillatorBank {
     osc2: OscillatorUnit,
     osc3: OscillatorUnit,
     base_frequency: Frequency,
+    pitch_bend: f32,        // -1.0 to +1.0
+    pitch_bend_range: u8,   // semitones (default 12 = 1 octave)
     sample_rate: SampleRate,
 }
 
@@ -449,8 +451,41 @@ impl OscillatorBank {
             osc2: OscillatorUnit::new(sample_rate),
             osc3: OscillatorUnit::new(sample_rate),
             base_frequency: 440.0,
+            pitch_bend: 0.0,
+            pitch_bend_range: 12, // 1 octave default
             sample_rate,
         }
+    }
+
+    /// Set pitch bend (-1.0 to +1.0)
+    pub fn set_pitch_bend(&mut self, bend: f32) {
+        self.pitch_bend = bend.clamp(-1.0, 1.0);
+        self.update_frequencies();
+    }
+
+    /// Get current pitch bend
+    pub fn pitch_bend(&self) -> f32 {
+        self.pitch_bend
+    }
+
+    /// Set pitch bend range in semitones (1-24)
+    pub fn set_pitch_bend_range(&mut self, semitones: u8) {
+        self.pitch_bend_range = semitones.clamp(1, 24);
+    }
+
+    /// Get pitch bend range
+    pub fn pitch_bend_range(&self) -> u8 {
+        self.pitch_bend_range
+    }
+
+    /// Update all oscillator frequencies with pitch bend applied
+    fn update_frequencies(&mut self) {
+        let bend_semitones = self.pitch_bend * self.pitch_bend_range as f32;
+        let bend_ratio = 2.0_f32.powf(bend_semitones / 12.0);
+        let bent_freq = self.base_frequency * bend_ratio;
+        self.osc1.set_base_frequency(bent_freq);
+        self.osc2.set_base_frequency(bent_freq);
+        self.osc3.set_base_frequency(bent_freq);
     }
 
     /// Get mutable reference to oscillator 1 (main)
@@ -546,9 +581,7 @@ impl Oscillator for OscillatorBank {
 
     fn set_frequency(&mut self, frequency: Frequency) {
         self.base_frequency = frequency;
-        self.osc1.set_base_frequency(frequency);
-        self.osc2.set_base_frequency(frequency);
-        self.osc3.set_base_frequency(frequency);
+        self.update_frequencies();
     }
 
     fn frequency(&self) -> Frequency {

@@ -69,6 +69,12 @@ All parameters follow MIDI Sound Controller conventions:
 | 89  | OSC2 Phase     | 0° → 360°                          |
 | 90  | OSC3 Phase     | 0° → 360°                          |
 
+### Pitch Bend
+| Control | Parameter       | Range                    |
+|---------|-----------------|--------------------------|
+| Wheel   | Pitch Bend      | ±range (default ±12 st)  |
+| CC 102  | Pitch Bend Range| 1 → 24 semitones         |
+
 CC mappings are fully configurable at runtime via the `CCMapping` API.
 
 ## Keyboard Layout
@@ -130,13 +136,14 @@ src/
 
 ## Current Status
 
-**v0.2.0** - Full ADSR envelope:
+**v0.2.1** - Pitch bend support:
 - [x] 3-oscillator bank (Minimoog-style)
 - [x] Per-oscillator waveform, level, phase, detune
 - [x] Resonant SVF filter with analog saturation
 - [x] Full ADSR envelope
+- [x] Pitch bend with configurable range (1-24 semitones)
 - [x] MIDI input with channel filtering
-- [x] Full CC mapping system (21 parameters)
+- [x] Full CC mapping system (22 parameters)
 - [x] MIDI message debug output
 
 ## Roadmap

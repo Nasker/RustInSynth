@@ -40,6 +40,8 @@ pub enum SynthEventKind {
     NoteOff,
     WaveformChange(WaveformType),
     ControlChange { cc: u8, value: u8 },
+    /// Pitch bend: value is -1.0 to +1.0 (center = 0.0)
+    PitchBend(f32),
 }
 
 /// Type of note event - for backwards compatibility
@@ -94,6 +96,21 @@ impl SynthEvent {
             note: 0,
             velocity: 0.0,
         }
+    }
+
+    /// Create a pitch bend event from normalized value (-1.0 to +1.0)
+    pub fn pitch_bend(value: f32) -> Self {
+        Self {
+            kind: SynthEventKind::PitchBend(value.clamp(-1.0, 1.0)),
+            note: 0,
+            velocity: 0.0,
+        }
+    }
+
+    /// Create a pitch bend event from MIDI 14-bit value (0-16383, center=8192)
+    pub fn pitch_bend_midi(midi_value: u16) -> Self {
+        let normalized = (midi_value as f32 - 8192.0) / 8192.0;
+        Self::pitch_bend(normalized)
     }
 }
 

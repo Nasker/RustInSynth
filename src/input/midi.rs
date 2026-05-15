@@ -243,6 +243,17 @@ fn parse_midi_message(message: &[u8], channel_filter: Option<MidiChannel>) -> Op
                 None
             }
         }
+        0xE0 => {
+            // Pitch Bend
+            if message.len() >= 3 {
+                let lsb = message[1] as u16;
+                let msb = message[2] as u16;
+                let value = (msb << 7) | lsb; // 14-bit value (0-16383)
+                Some(NoteEvent::pitch_bend_midi(value))
+            } else {
+                None
+            }
+        }
         _ => None, // Ignore other message types for now
     }
 }

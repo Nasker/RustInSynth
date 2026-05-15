@@ -2,7 +2,7 @@ use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
 use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
 use super::oscillator::{Oscillator, OscillatorBank};
-use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain};
+use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range};
 use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate};
 
 /// Envelope time range constants
@@ -484,6 +484,20 @@ impl VoiceManager {
         }
     }
 
+    /// Set pitch bend for all voices (-1.0 to +1.0)
+    pub fn set_pitch_bend(&mut self, bend: f32) {
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_pitch_bend(bend);
+        }
+    }
+
+    /// Set pitch bend range in semitones (1-24)
+    pub fn set_pitch_bend_range(&mut self, semitones: u8) {
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_pitch_bend_range(semitones);
+        }
+    }
+
     /// Handle a parameter change from CC
     fn handle_param_change(&mut self, param: SynthParam, value: u8) {
         match param {
@@ -512,6 +526,11 @@ impl VoiceManager {
             SynthParam::FilterResonance => {
                 let resonance = cc_to_resonance(value);
                 self.set_filter_resonance(resonance);
+            }
+            
+            // Pitch
+            SynthParam::PitchBendRange => {
+                self.set_pitch_bend_range(cc_to_pitch_bend_range(value));
             }
             
             // Oscillator 1
@@ -588,6 +607,9 @@ impl SynthEventReceiver for VoiceManager {
                 if let Some(param) = self.cc_mapping.get_param(cc) {
                     self.handle_param_change(param, value);
                 }
+            }
+            SynthEventKind::PitchBend(bend) => {
+                self.set_pitch_bend(bend);
             }
         }
     }
