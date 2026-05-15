@@ -148,12 +148,17 @@ src/
 
 ## Roadmap
 
+### Near-term (Complete Monophonic Synth)
+- [ ] **Filter envelope** - Dedicated ADSR for cutoff modulation
+- [ ] **LFO modulation** - Low-frequency oscillator for pitch/filter
+- [ ] **Noise oscillator** - White/pink noise source
+- [ ] **Preset save/load** - JSON-based patch storage
+
+### Long-term
 - [ ] Polyphonic voice allocation
-- [ ] LFO modulation
-- [ ] Filter envelope
-- [ ] Noise oscillator
-- [ ] Preset save/load
 - [ ] GUI (egui or iced)
+- [ ] Effects (reverb, delay, chorus)
+- [ ] Arpeggiator/sequencer
 
 ## License
 
