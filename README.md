@@ -1,19 +1,21 @@
-# RustSynth
+# RustInSynth
 
-A Minimoog-style monophonic synthesizer written in pure Rust.
+A Minimoog-style monophonic synthesizer written in pure Rust with a real-time GUI.
+
+![RustInSynth GUI](docs/screenshot.png)
 
 ## Features
 
-- **3-oscillator bank** with 5 waveforms (Sine, Square, Saw, Triangle, Noise)
+- **3-oscillator bank** with 5 waveforms (Sine, Triangle, Saw, Square, Noise)
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
 - **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
 - **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
+- **Real-time GUI** built with `egui` - single-window Minimoog-style layout
 - **Real-time audio synthesis** using `cpal`
-- **Dual input modes**:
-  - QWERTY keyboard (piano-style layout)
-  - USB MIDI controller support via `midir`
-- **Full MIDI CC control** for all 31 parameters
-- **MIDI debug mode** for inspecting raw messages
+- **USB MIDI controller support** via `midir` with live CC feedback
+- **Full MIDI CC control** for all 31+ parameters
+- **Preset system** - JSON-based save/load
+- **Lock-free parameter sharing** between GUI and audio threads
 
 ## Architecture
 
@@ -148,60 +150,62 @@ On startup, choose between keyboard or MIDI input mode.
 ## Dependencies
 
 - `cpal` - Cross-platform audio I/O
-- `midir` - MIDI input handling
-- `crossterm` - Terminal keyboard input
+- `midir` - MIDI input handling  
+- `egui` / `eframe` - Immediate-mode GUI
 - `parking_lot` - Fast synchronization primitives
+- `dashmap` - Lock-free concurrent hashmap
+- `serde` / `serde_json` - Preset serialization
 
 ## Project Structure
 
 ```
 src/
-├── main.rs              # Entry point, input mode selection
+├── main.rs              # Entry point (GUI mode)
 ├── lib.rs               # Library exports
 ├── audio/
-│   └── engine.rs        # Audio stream management
+│   └── engine.rs        # Audio stream + param sync
 ├── core/
 │   ├── envelope.rs      # AR/ADSR envelopes
 │   ├── event.rs         # Note/CC event system
 │   ├── filter.rs        # State Variable Filter
 │   ├── lfo.rs           # Low Frequency Oscillator
-│   ├── oscillator.rs    # Waveform generators
+│   ├── oscillator.rs    # Waveform generators + bank
 │   ├── params.rs        # CC mapping system
 │   ├── presets.rs       # JSON preset save/load
 │   ├── types.rs         # Core type definitions
-│   └── voice.rs         # Voice allocation
+│   └── voice.rs         # Voice manager
+├── gui/
+│   ├── mod.rs           # SharedState + ParamBank
+│   ├── app.rs           # Main egui application
+│   └── widgets.rs       # Custom knobs, toggles, meters
 └── input/
-    ├── keyboard.rs      # QWERTY input handling
-    └── midi.rs          # MIDI input + debug parser
+    └── midi.rs          # MIDI input handler
 ```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Current Status
 
-**v0.4.0** - Noise oscillator + Presets:
-- [x] 3-oscillator bank with 5 waveforms (incl. Noise)
-- [x] Per-oscillator waveform, level, phase, detune
+**v0.5.0** - Full GUI:
+- [x] Real-time egui GUI with Minimoog-style layout
+- [x] 3-oscillator bank with 5 waveforms
+- [x] Per-oscillator waveform, level, phase, detune (semi + cents)
 - [x] Resonant SVF filter with analog saturation
 - [x] Dual ADSR envelopes (amplitude + filter)
-- [x] LFO with 5 waveforms, 3 destinations
-- [x] Pitch bend with configurable range (1-24 semitones)
-- [x] JSON-based preset save/load system
-- [x] MIDI input with channel filtering
-- [x] Full CC mapping system (31 parameters)
-- [x] MIDI message debug output
+- [x] LFO with 5 waveforms, 4 destinations
+- [x] Pitch bend with configurable range
+- [x] JSON-based preset save/load
+- [x] MIDI input with live CC feedback display
+- [x] Lock-free GUI ↔ Audio parameter sync
+- [x] Full CC mapping (31+ parameters)
 
 ## Roadmap
 
-### Near-term (Complete Monophonic Synth)
-- [x] **Filter envelope** - Dedicated ADSR for cutoff modulation
-- [x] **LFO modulation** - Low-frequency oscillator for pitch/filter
-- [x] **Noise oscillator** - White/pink noise source
-- [x] **Preset save/load** - JSON-based patch storage
-
-### Long-term
+- [ ] Runtime MIDI CC learn/mapping
 - [ ] Polyphonic voice allocation
-- [ ] GUI (egui or iced)
 - [ ] Effects (reverb, delay, chorus)
 - [ ] Arpeggiator/sequencer
+- [ ] VST3/CLAP plugin export
 
 ## License
 

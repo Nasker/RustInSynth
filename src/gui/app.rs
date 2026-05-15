@@ -677,7 +677,7 @@ impl SynthApp {
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("🔊 RustSynth")
+                    RichText::new("🔊 Rust In Synth")
                         .size(18.0)
                         .strong()
                         .color(Color32::from_rgb(255, 180, 60))
@@ -1125,7 +1125,7 @@ pub fn run_gui(shared: SharedState) -> Result<(), eframe::Error> {
     };
 
     eframe::run_native(
-        "RustSynth",
+        "Rust In Synth",
         options,
         Box::new(|_cc| Ok(Box::new(SynthApp::new(shared)))),
     )

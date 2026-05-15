@@ -5,7 +5,7 @@
 use rustsynth::gui::{run_gui, SharedState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔊 RustSynth v0.4.0 - GUI Mode");
+    println!("🔊 Rust In Synth v0.4.0 - GUI Mode");
     println!("Starting...\n");
 
     // Create shared state for GUI ↔ Audio communication
