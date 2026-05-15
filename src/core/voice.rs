@@ -379,6 +379,8 @@ pub struct VoiceManager {
     osc_state: OscBankState,
     // Portamento
     portamento_time: f32,
+    // Key stack for monophonic note priority (newest on top)
+    key_stack: Vec<(MidiNote, Amplitude)>,
 }
 
 impl VoiceManager {
@@ -421,6 +423,8 @@ impl VoiceManager {
             osc_state,
             // Portamento
             portamento_time: 0.0,
+            // Key stack
+            key_stack: Vec::new(),
         }
     }
 
@@ -967,14 +971,10 @@ impl SynthEventReceiver for VoiceManager {
     fn receive_event(&mut self, event: NoteEvent) {
         match event.kind {
             SynthEventKind::NoteOn => {
-                if let Some(idx) = self.allocate_voice_index() {
-                    self.voices[idx].note_on(event.note, event.velocity);
-                }
+                self.handle_note_on(event.note, event.velocity);
             }
             SynthEventKind::NoteOff => {
-                if let Some(voice) = self.find_voice_with_note(event.note) {
-                    voice.note_off();
-                }
+                self.handle_note_off(event.note);
             }
             SynthEventKind::WaveformChange(waveform) => {
                 // Legacy: set all oscillators to the same waveform
@@ -989,6 +989,40 @@ impl SynthEventReceiver for VoiceManager {
             }
             SynthEventKind::PitchBend(bend) => {
                 self.set_pitch_bend(bend);
+            }
+        }
+    }
+}
+
+impl VoiceManager {
+    /// Handle note on with key stacking for monophonic operation
+    fn handle_note_on(&mut self, note: MidiNote, velocity: Amplitude) {
+        // Remove note if already pressed (avoid duplicates)
+        self.key_stack.retain(|&(n, _)| n != note);
+        // Push to top of stack (newest priority)
+        self.key_stack.push((note, velocity));
+        
+        // Trigger the note on the first voice (monophonic)
+        if let Some(voice) = self.voices.first_mut() {
+            voice.note_on(note, velocity);
+        }
+    }
+    
+    /// Handle note off with key stacking - return to previous note if any
+    fn handle_note_off(&mut self, note: MidiNote) {
+        // Remove the note from stack
+        self.key_stack.retain(|&(n, _)| n != note);
+        
+        if let Some(voice) = self.voices.first_mut() {
+            // If this was the current note, switch to previous if available
+            if voice.current_note() == Some(note) {
+                if let Some(&(prev_note, prev_velocity)) = self.key_stack.last() {
+                    // Switch to previous note with its original velocity
+                    voice.note_on(prev_note, prev_velocity);
+                } else {
+                    // No more notes in stack, release the voice
+                    voice.note_off();
+                }
             }
         }
     }
