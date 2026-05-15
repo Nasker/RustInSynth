@@ -5,8 +5,10 @@ use cpal::{Device, Host, Stream, StreamConfig};
 use parking_lot::Mutex;
 
 use crate::core::event::{NoteEvent, SynthEventReceiver, WaveformType};
+use crate::core::params::SynthParam;
 use crate::core::types::SampleRate;
 use crate::core::voice::VoiceManager;
+use crate::gui::ParamBank;
 
 /// Error type for audio engine operations
 #[derive(Debug)]
@@ -140,6 +142,70 @@ impl AudioEngine {
     /// Get the current waveform type for oscillator 1
     pub fn waveform(&self) -> WaveformType {
         self.voice_manager.lock().osc_state().osc1_waveform
+    }
+
+    /// Sync parameters from ParamBank to VoiceManager
+    /// Call this periodically from the GUI thread (e.g., every frame)
+    pub fn sync_params(&self, params: &ParamBank) {
+        let mut vm = self.voice_manager.lock();
+
+        // Filter parameters
+        vm.set_filter_cutoff(params.get(SynthParam::FilterCutoff));
+        vm.set_filter_resonance(params.get(SynthParam::FilterResonance));
+
+        // Amplitude envelope
+        vm.set_attack(params.get(SynthParam::Attack));
+        vm.set_decay(params.get(SynthParam::Decay));
+        vm.set_sustain(params.get(SynthParam::Sustain));
+        vm.set_release(params.get(SynthParam::Release));
+
+        // Filter envelope
+        vm.set_filter_attack(params.get(SynthParam::FilterAttack));
+        vm.set_filter_decay(params.get(SynthParam::FilterDecay));
+        vm.set_filter_sustain(params.get(SynthParam::FilterSustain));
+        vm.set_filter_release(params.get(SynthParam::FilterRelease));
+        vm.set_filter_env_amount(params.get(SynthParam::FilterEnvAmount));
+
+        // LFO parameters
+        use crate::core::lfo::{LfoDestination, LfoWaveform};
+        vm.set_lfo_rate(params.get(SynthParam::LfoRate));
+        vm.set_lfo_depth(params.get(SynthParam::LfoDepth));
+        let waveform_idx = params.get(SynthParam::LfoWaveform) as u8;
+        let lfo_waveform = match waveform_idx {
+            0 => LfoWaveform::Sine,
+            1 => LfoWaveform::Triangle,
+            2 => LfoWaveform::Square,
+            3 => LfoWaveform::Saw,
+            _ => LfoWaveform::Random,
+        };
+        vm.set_lfo_waveform(lfo_waveform);
+        let dest_idx = params.get(SynthParam::LfoDestination) as u8;
+        let lfo_dest = match dest_idx {
+            0 => LfoDestination::Off,
+            1 => LfoDestination::Pitch,
+            2 => LfoDestination::FilterCutoff,
+            _ => LfoDestination::Amplitude,
+        };
+        vm.set_lfo_destination(lfo_dest);
+
+        // Oscillator parameters (using conversion functions)
+        use crate::core::event::WaveformType;
+        let waveform1 = WaveformType::from_index(params.get(SynthParam::Osc1Waveform) as u8);
+        let waveform2 = WaveformType::from_index(params.get(SynthParam::Osc2Waveform) as u8);
+        let waveform3 = WaveformType::from_index(params.get(SynthParam::Osc3Waveform) as u8);
+        vm.set_osc_waveform(1, waveform1);
+        vm.set_osc_waveform(2, waveform2);
+        vm.set_osc_waveform(3, waveform3);
+
+        vm.set_osc_level(1, params.get(SynthParam::Osc1Level));
+        vm.set_osc_level(2, params.get(SynthParam::Osc2Level));
+        vm.set_osc_level(3, params.get(SynthParam::Osc3Level));
+
+        // Note: Oscillator detune and phase require more complex handling
+        // For now, these are set during preset load
+
+        // Master volume
+        vm.set_master_volume(params.get(SynthParam::Sustain)); // Using Sustain slot temporarily
     }
 }
 

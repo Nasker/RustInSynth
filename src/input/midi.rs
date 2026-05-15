@@ -172,6 +172,20 @@ impl MidiInputHandler {
         matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
     }
 
+    /// Automatically connect to the first available MIDI port (for GUI mode)
+    pub fn connect_auto() -> Result<Self, MidiError> {
+        let midi_in = MidirInput::new("RustSynth")
+            .map_err(|e| MidiError::InitFailed(e.to_string()))?;
+
+        let ports = midi_in.ports();
+        if ports.is_empty() {
+            return Err(MidiError::NoPortsAvailable);
+        }
+
+        // Connect to first port
+        Self::connect(0, None)
+    }
+
     /// Connect with interactive port and channel selection
     pub fn connect_interactive() -> Result<Self, MidiError> {
         let port_index = Self::prompt_port_selection()?;
