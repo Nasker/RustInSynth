@@ -54,8 +54,10 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 ### 3. Core DSP (`src/core/`)
 
 #### `voice.rs` - Voice Manager
-- Manages monophonic voice allocation
+- Manages monophonic voice allocation with key stacking
 - Contains: `OscillatorBank`, `SVFilter`, `ADSREnvelope` (×2), `LFO`
+- **Key Stack**: `Vec<(MidiNote, Amplitude)>` for proper note priority
+- **Portamento**: Linear glide between notes (0-3 seconds)
 - Implements `SynthEventReceiver` trait for note/CC handling
 - `next_sample()`: Called by audio thread ~44100×/sec
 
@@ -83,7 +85,8 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 #### `params.rs` - CC Mapping
 - `CCMapping`: Bidirectional map between MIDI CC numbers and `SynthParam`
 - Default mappings follow MIDI Sound Controller conventions
-- Conversion functions: `cc_to_cutoff()`, `cc_to_time()`, etc.
+- **Portamento**: CC 5 → `PortamentoTime` (0.0-3.0s exponential)
+- Conversion functions: `cc_to_cutoff()`, `cc_to_time()`, `cc_to_portamento_time()`, etc.
 
 #### `presets.rs` - Preset System
 - JSON serialization via `serde`
@@ -124,7 +127,10 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 1. MIDI callback parses Note On/Off
 2. Sends NoteEvent via channel
 3. GUI polls and forwards to AudioEngine
-4. VoiceManager triggers/releases voice
+4. VoiceManager handles key stacking:
+   - Note On: Push (note, velocity) to stack, trigger voice
+   - Note Off: Remove from stack, return to previous note if any
+5. Portamento: Linear glide between frequency changes
 ```
 
 ## Thread Safety
@@ -150,10 +156,10 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 | `gui/app.rs` | ~1100 | Main GUI application |
 | `gui/widgets.rs` | ~400 | Custom egui widgets |
 | `gui/mod.rs` | ~200 | SharedState, ParamBank |
-| `core/voice.rs` | ~1100 | Voice manager + DSP |
+| `core/voice.rs` | ~1150 | Voice manager + DSP + key stacking |
 | `core/oscillator.rs` | ~500 | Oscillator bank |
 | `core/filter.rs` | ~200 | SVF implementation |
 | `core/envelope.rs` | ~200 | ADSR envelope |
-| `core/params.rs` | ~500 | CC mapping system |
-| `audio/engine.rs` | ~220 | Audio stream management |
+| `core/params.rs` | ~540 | CC mapping system + portamento |
+| `audio/engine.rs` | ~230 | Audio stream management |
 | `input/midi.rs` | ~440 | MIDI input handling |

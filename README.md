@@ -10,10 +10,12 @@ A Minimoog-style monophonic synthesizer written in pure Rust with a real-time GU
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
 - **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
 - **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
+- **Portamento (glide)** with linear interpolation (0-3 seconds)
+- **Monophonic key stacking** - returns to previous note when releasing
 - **Real-time GUI** built with `egui` - single-window Minimoog-style layout
 - **Real-time audio synthesis** using `cpal`
 - **USB MIDI controller support** via `midir` with live CC feedback
-- **Full MIDI CC control** for all 31+ parameters
+- **Full MIDI CC control** for all 32+ parameters
 - **Preset system** - JSON-based save/load
 - **Lock-free parameter sharing** between GUI and audio threads
 
@@ -94,6 +96,11 @@ All parameters follow MIDI Sound Controller conventions:
 |---------|-----------------|--------------------------|
 | Wheel   | Pitch Bend      | ±range (default ±12 st)  |
 | CC 102  | Pitch Bend Range| 1 → 24 semitones         |
+
+### Portamento
+| CC  | Parameter        | Range                      |
+|-----|------------------|----------------------------|
+| 5   | Portamento Time  | 0.0 → 3.0s (exponential)  |
 
 CC mappings are fully configurable at runtime via the `CCMapping` API.
 
@@ -185,6 +192,14 @@ src/
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Current Status
+
+**v0.6.0** - Portamento + Key Stacking:
+- [x] Portamento (glide) with linear interpolation (0-3s)
+- [x] Monophonic key stacking with proper note priority
+- [x] Portamento works between stacked notes
+- [x] MIDI CC 5 control for portamento time
+- [x] GUI controls for portamento in both panels
+- [x] Preset support for portamento settings
 
 **v0.5.0** - Full GUI:
 - [x] Real-time egui GUI with Minimoog-style layout
