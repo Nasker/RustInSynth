@@ -124,14 +124,22 @@ impl AudioEngine {
         self.voice_manager.lock().set_master_volume(volume);
     }
 
-    /// Set the waveform type
-    pub fn set_waveform(&self, waveform: WaveformType) {
-        self.voice_manager.lock().set_waveform(waveform);
+    /// Set the waveform for a specific oscillator (1, 2, or 3)
+    pub fn set_osc_waveform(&self, osc_num: u8, waveform: WaveformType) {
+        self.voice_manager.lock().set_osc_waveform(osc_num, waveform);
     }
 
-    /// Get the current waveform type
+    /// Set waveform for all oscillators (convenience method)
+    pub fn set_waveform(&self, waveform: WaveformType) {
+        let mut vm = self.voice_manager.lock();
+        vm.set_osc_waveform(1, waveform);
+        vm.set_osc_waveform(2, waveform);
+        vm.set_osc_waveform(3, waveform);
+    }
+
+    /// Get the current waveform type for oscillator 1
     pub fn waveform(&self) -> WaveformType {
-        self.voice_manager.lock().waveform()
+        self.voice_manager.lock().osc_state().osc1_waveform
     }
 }
 

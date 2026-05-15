@@ -1,44 +1,73 @@
 # RustSynth
 
-A modular monophonic synthesizer written in pure Rust.
+A Minimoog-style monophonic synthesizer written in pure Rust.
 
 ## Features
 
-- **Real-time audio synthesis** using `cpal`
-- **Multiple waveforms**: Sine, Square, Saw, Triangle
-- **Resonant low-pass filter** (State Variable Filter)
+- **3-oscillator bank** with per-oscillator waveform, level, and detune
+- **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
 - **AR envelope** with configurable attack/release
+- **Real-time audio synthesis** using `cpal`
 - **Dual input modes**:
   - QWERTY keyboard (piano-style layout)
   - USB MIDI controller support via `midir`
-- **MIDI CC control** for real-time parameter tweaking
+- **Full MIDI CC control** for all parameters
 - **MIDI debug mode** for inspecting raw messages
 
 ## Architecture
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Oscillator │───▶│   Filter    │───▶│  Envelope   │───▶ Output
-│ (Waveform)  │    │ (SVF LP/HP) │    │    (AR)     │
-└─────────────┘    └─────────────┘    └─────────────┘
+┌─────────────────────────────────────┐
+│          OSCILLATOR BANK            │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐│
+│  │  OSC 1  │ │  OSC 2  │ │  OSC 3  ││
+│  │ (main)  │ │(detune) │ │ (sub)   ││
+│  └────┬────┘ └────┬────┘ └────┬────┘│
+│       └──────┬────┴───────────┘     │
+└──────────────┼──────────────────────┘
+               ▼
+        ┌─────────────┐    ┌─────────────┐
+        │   Filter    │───▶│  Envelope   │───▶ Output
+        │ (SVF + sat) │    │    (AR)     │
+        └─────────────┘    └─────────────┘
 ```
 
-The synth follows a classic subtractive synthesis signal chain:
-1. **Oscillator** generates the raw waveform
-2. **Filter** shapes the harmonic content (resonant SVF)
-3. **Envelope** controls amplitude over time
+**Default patch**: OSC1=Saw, OSC2=Saw+7¢ (slight detune), OSC3=Square-12st (sub bass)
 
 ## MIDI CC Mappings
 
-| CC  | Parameter        | Range                              |
-|-----|------------------|------------------------------------|
-| 71  | Filter Resonance | 0% → 100%                          |
-| 72  | Release Time     | 1ms → 5s                           |
-| 73  | Attack Time      | 1ms → 2s                           |
-| 74  | Filter Cutoff    | 20Hz → 20kHz (exponential)         |
-| 75  | Waveform         | 0-31=Sine, 32-63=Sq, 64-95=Saw, 96+=Tri |
+All parameters follow MIDI Sound Controller conventions:
 
-CC mappings follow MIDI Sound Controller conventions and are fully configurable at runtime.
+### Envelope
+| CC  | Parameter    | Range      |
+|-----|--------------|------------|
+| 73  | Attack Time  | 1ms → 2s   |
+| 72  | Release Time | 1ms → 5s   |
+
+### Filter
+| CC  | Parameter  | Range                |
+|-----|------------|----------------------|
+| 74  | Cutoff     | 20Hz → 20kHz (exp)   |
+| 71  | Resonance  | 0% → 100%            |
+
+### Oscillators
+| CC  | Parameter      | Range                              |
+|-----|----------------|------------------------------------|
+| 75  | OSC1 Waveform  | 0-31=Sine, 32-63=Sq, 64-95=Saw, 96+=Tri |
+| 76  | OSC2 Waveform  | (same)                             |
+| 77  | OSC3 Waveform  | (same)                             |
+| 80  | OSC1 Level     | 0% → 100%                          |
+| 81  | OSC2 Level     | 0% → 100%                          |
+| 82  | OSC3 Level     | 0% → 100%                          |
+| 78  | OSC2 Semitones | -24 → +24 (CC 64 = 0)              |
+| 79  | OSC3 Semitones | -24 → +24 (CC 64 = 0)              |
+| 85  | OSC2 Cents     | -100 → +100 (CC 64 = 0)            |
+| 86  | OSC3 Cents     | -100 → +100 (CC 64 = 0)            |
+| 87  | OSC1 Phase     | 0° → 360°                          |
+| 89  | OSC2 Phase     | 0° → 360°                          |
+| 90  | OSC3 Phase     | 0° → 360°                          |
+
+CC mappings are fully configurable at runtime via the `CCMapping` API.
 
 ## Keyboard Layout
 
@@ -100,12 +129,12 @@ src/
 ## Current Status
 
 **v0.1.0** - Core synthesis engine complete:
-- [x] Monophonic voice management
-- [x] 4 oscillator types
-- [x] Resonant SVF filter
+- [x] 3-oscillator bank (Minimoog-style)
+- [x] Per-oscillator waveform, level, detune
+- [x] Resonant SVF filter with analog saturation
 - [x] AR envelope
 - [x] MIDI input with channel filtering
-- [x] Configurable CC mappings
+- [x] Full CC mapping system (14 parameters)
 - [x] MIDI message debug output
 
 ## Roadmap
@@ -114,6 +143,7 @@ src/
 - [ ] ADSR envelope
 - [ ] LFO modulation
 - [ ] Filter envelope
+- [ ] Noise oscillator
 - [ ] Preset save/load
 - [ ] GUI (egui or iced)
 
