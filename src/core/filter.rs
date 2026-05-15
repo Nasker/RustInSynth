@@ -47,16 +47,22 @@ pub trait Filter: Send + Sync {
 
 /// State Variable Filter - resonant multimode filter
 /// Can output lowpass, highpass, or bandpass simultaneously
-/// Based on the Chamberlin SVF topology
+/// Based on the Chamberlin SVF topology with analog-style improvements:
+/// - Saturated feedback for warmer resonance
+/// - Parameter smoothing to prevent zipper noise
 pub struct SVFilter {
     cutoff: Frequency,
     resonance: f32,
     sample_rate: SampleRate,
     mode: FilterMode,
 
-    // Filter coefficients
+    // Filter coefficients (current)
     f: f32,  // frequency coefficient
     q: f32,  // damping (inverse of resonance)
+
+    // Filter coefficients (target, for smoothing)
+    f_target: f32,
+    q_target: f32,
 
     // State variables
     low: f32,
@@ -76,11 +82,16 @@ impl SVFilter {
             mode: FilterMode::LowPass,
             f: 0.0,
             q: 0.0,
+            f_target: 0.0,
+            q_target: 0.0,
             low: 0.0,
             band: 0.0,
             high: 0.0,
         };
         filter.update_coefficients();
+        // Initialize current values to target (no smoothing on first set)
+        filter.f = filter.f_target;
+        filter.q = filter.q_target;
         filter
     }
 
@@ -103,38 +114,58 @@ impl SVFilter {
         // Frequency coefficient (using approximation for stability)
         // f = 2 * sin(pi * cutoff / sample_rate)
         // For stability at high frequencies, we use a clamped version
-        self.f = 2.0 * (PI * safe_cutoff / self.sample_rate as f32).sin();
-        self.f = self.f.clamp(0.0, 1.0);
+        self.f_target = 2.0 * (PI * safe_cutoff / self.sample_rate as f32).sin();
+        self.f_target = self.f_target.clamp(0.0, 1.0);
 
         // Q factor (damping) - maps resonance 0-1 to Q range
         // Low Q = no resonance, High Q = lots of resonance
         // Q = 1/resonance, but we map it more musically
         // resonance 0.0 -> q = 2.0 (no resonance)
         // resonance 1.0 -> q = 0.01 (near self-oscillation)
-        self.q = 2.0 - self.resonance * 1.99;
-        self.q = self.q.clamp(0.01, 2.0);
+        self.q_target = 2.0 - self.resonance * 1.99;
+        self.q_target = self.q_target.clamp(0.01, 2.0);
+    }
+
+    /// Smooth coefficient changes to prevent zipper noise
+    /// Called once per sample
+    #[inline]
+    fn smooth_coefficients(&mut self) {
+        // Smoothing factor: ~5ms at 44.1kHz
+        const SMOOTH: f32 = 0.005;
+        self.f += SMOOTH * (self.f_target - self.f);
+        self.q += SMOOTH * (self.q_target - self.q);
     }
 }
 
 impl Filter for SVFilter {
     fn process(&mut self, input: Sample) -> Sample {
+        // Smooth parameter changes to prevent zipper noise
+        self.smooth_coefficients();
+
         // State Variable Filter algorithm (2x oversampled for stability)
         // Run the filter twice per sample for better high-frequency response
         for _ in 0..2 {
             self.low += self.f * self.band;
-            self.high = input - self.low - self.q * self.band;
+
+            // Saturate the resonance feedback for analog-style warmth
+            // This prevents harsh digital ringing at high Q
+            let feedback = self.q * self.band;
+            let saturated_feedback = fast_tanh(feedback);
+
+            self.high = input - self.low - saturated_feedback;
             self.band += self.f * self.high;
+
+            // Gentle saturation on state variables for analog character
+            self.band = fast_tanh(self.band);
         }
 
-        // Soft clip the state variables to prevent blowup at high resonance
+        // Soft clip the output to prevent blowup at high resonance
         self.low = soft_clip_filter(self.low);
-        self.band = soft_clip_filter(self.band);
-        self.high = soft_clip_filter(self.high);
 
         // Return the selected output
         match self.mode {
             FilterMode::LowPass => self.low,
-            FilterMode::HighPass => self.high,
+            FilterMode::HighPass => soft_clip_filter(self.high),
             FilterMode::BandPass => self.band,
         }
     }
@@ -169,12 +200,20 @@ impl Filter for SVFilter {
     }
 }
 
+/// Fast tanh approximation for saturation
+/// Uses rational polynomial - accurate and cheap
+#[inline]
+fn fast_tanh(x: f32) -> f32 {
+    let x2 = x * x;
+    x * (27.0 + x2) / (27.0 + 9.0 * x2)
+}
+
 /// Soft clipping for filter state variables to prevent runaway at high resonance
 fn soft_clip_filter(x: f32) -> f32 {
     if x > 1.0 {
-        1.0 + (x - 1.0).tanh()
+        1.0 + fast_tanh(x - 1.0)
     } else if x < -1.0 {
-        -1.0 + (x + 1.0).tanh()
+        -1.0 + fast_tanh(x + 1.0)
     } else {
         x
     }
