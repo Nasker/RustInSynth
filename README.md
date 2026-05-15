@@ -6,12 +6,13 @@ A Minimoog-style monophonic synthesizer written in pure Rust.
 
 - **3-oscillator bank** with per-oscillator waveform, level, phase, and detune
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
-- **Full ADSR envelope** with attack, decay, sustain, and release
+- **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
+- **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
 - **Real-time audio synthesis** using `cpal`
 - **Dual input modes**:
   - QWERTY keyboard (piano-style layout)
   - USB MIDI controller support via `midir`
-- **Full MIDI CC control** for all 21 parameters
+- **Full MIDI CC control** for all 31 parameters
 - **MIDI debug mode** for inspecting raw messages
 
 ## Architecture
@@ -38,13 +39,22 @@ A Minimoog-style monophonic synthesizer written in pure Rust.
 
 All parameters follow MIDI Sound Controller conventions:
 
-### ADSR Envelope
+### Amplitude Envelope (VCA)
 | CC  | Parameter     | Range      |
 |-----|---------------|------------|
 | 73  | Attack Time   | 1ms → 2s   |
 | 83  | Decay Time    | 1ms → 5s   |
 | 84  | Sustain Level | 0% → 100%  |
 | 72  | Release Time  | 1ms → 5s   |
+
+### Filter Envelope (VCF)
+| CC  | Parameter       | Range      |
+|-----|-----------------|------------|
+| 103 | Filter Attack   | 1ms → 2s   |
+| 104 | Filter Decay    | 1ms → 5s   |
+| 105 | Filter Sustain  | 0% → 100%  |
+| 106 | Filter Release  | 1ms → 5s   |
+| 107 | Filter Env Amt  | 0% → 100%  |
 
 ### Filter
 | CC  | Parameter  | Range                |
@@ -68,6 +78,14 @@ All parameters follow MIDI Sound Controller conventions:
 | 87  | OSC1 Phase     | 0° → 360°                          |
 | 89  | OSC2 Phase     | 0° → 360°                          |
 | 90  | OSC3 Phase     | 0° → 360°                          |
+
+### LFO
+| CC  | Parameter       | Range                           |
+|-----|-----------------|---------------------------------|
+| 108 | LFO Rate        | 0.1 → 20 Hz                     |
+| 109 | LFO Depth       | 0% → 100%                       |
+| 110 | LFO Waveform    | 0=Sine, 1=Tri, 2=Sq, 3=Saw, 4=Rand |
+| 111 | LFO Destination | 0=Off, 1=Pitch, 2=Filter, 3=Amp |
 
 ### Pitch Bend
 | Control | Parameter       | Range                    |
@@ -125,6 +143,7 @@ src/
 │   ├── envelope.rs      # AR/ADSR envelopes
 │   ├── event.rs         # Note/CC event system
 │   ├── filter.rs        # State Variable Filter
+│   ├── lfo.rs           # Low Frequency Oscillator
 │   ├── oscillator.rs    # Waveform generators
 │   ├── params.rs        # CC mapping system
 │   ├── types.rs         # Core type definitions
@@ -136,21 +155,22 @@ src/
 
 ## Current Status
 
-**v0.2.1** - Pitch bend support:
+**v0.3.0** - Filter envelope + LFO:
 - [x] 3-oscillator bank (Minimoog-style)
 - [x] Per-oscillator waveform, level, phase, detune
 - [x] Resonant SVF filter with analog saturation
-- [x] Full ADSR envelope
+- [x] Dual ADSR envelopes (amplitude + filter)
+- [x] LFO with 5 waveforms, 3 destinations
 - [x] Pitch bend with configurable range (1-24 semitones)
 - [x] MIDI input with channel filtering
-- [x] Full CC mapping system (22 parameters)
+- [x] Full CC mapping system (31 parameters)
 - [x] MIDI message debug output
 
 ## Roadmap
 
 ### Near-term (Complete Monophonic Synth)
-- [ ] **Filter envelope** - Dedicated ADSR for cutoff modulation
-- [ ] **LFO modulation** - Low-frequency oscillator for pitch/filter
+- [x] **Filter envelope** - Dedicated ADSR for cutoff modulation
+- [x] **LFO modulation** - Low-frequency oscillator for pitch/filter
 - [ ] **Noise oscillator** - White/pink noise source
 - [ ] **Preset save/load** - JSON-based patch storage
 

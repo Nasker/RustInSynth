@@ -3,7 +3,7 @@ use std::collections::HashMap;
 /// Synth parameters that can be controlled via MIDI CC
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SynthParam {
-    // Envelope (ADSR)
+    // Amplitude Envelope (ADSR)
     Attack,
     Decay,
     Sustain,
@@ -13,6 +13,19 @@ pub enum SynthParam {
     FilterCutoff,
     FilterResonance,
     
+    // Filter Envelope (ADSR)
+    FilterAttack,
+    FilterDecay,
+    FilterSustain,
+    FilterRelease,
+    FilterEnvAmount,
+
+    // LFO
+    LfoRate,
+    LfoDepth,
+    LfoWaveform,
+    LfoDestination,
+
     // Pitch
     PitchBendRange,
     
@@ -46,6 +59,15 @@ impl SynthParam {
             SynthParam::Release => "Release",
             SynthParam::FilterCutoff => "Filter Cutoff",
             SynthParam::FilterResonance => "Filter Resonance",
+            SynthParam::FilterAttack => "Filter Attack",
+            SynthParam::FilterDecay => "Filter Decay",
+            SynthParam::FilterSustain => "Filter Sustain",
+            SynthParam::FilterRelease => "Filter Release",
+            SynthParam::FilterEnvAmount => "Filter Env Amount",
+            SynthParam::LfoRate => "LFO Rate",
+            SynthParam::LfoDepth => "LFO Depth",
+            SynthParam::LfoWaveform => "LFO Waveform",
+            SynthParam::LfoDestination => "LFO Destination",
             SynthParam::PitchBendRange => "Pitch Bend Range",
             SynthParam::Osc1Waveform => "OSC1 Waveform",
             SynthParam::Osc1Level => "OSC1 Level",
@@ -72,6 +94,15 @@ impl SynthParam {
             SynthParam::Release => "REL",
             SynthParam::FilterCutoff => "CUT",
             SynthParam::FilterResonance => "RES",
+            SynthParam::FilterAttack => "FATK",
+            SynthParam::FilterDecay => "FDEC",
+            SynthParam::FilterSustain => "FSUS",
+            SynthParam::FilterRelease => "FREL",
+            SynthParam::FilterEnvAmount => "FENV",
+            SynthParam::LfoRate => "LRT",
+            SynthParam::LfoDepth => "LDEP",
+            SynthParam::LfoWaveform => "LWF",
+            SynthParam::LfoDestination => "LDST",
             SynthParam::PitchBendRange => "PBR",
             SynthParam::Osc1Waveform => "O1W",
             SynthParam::Osc1Level => "O1L",
@@ -92,13 +123,27 @@ impl SynthParam {
     /// Get all available parameters
     pub fn all() -> &'static [SynthParam] {
         &[
+            // Amplitude ADSR
             SynthParam::Attack,
             SynthParam::Decay,
             SynthParam::Sustain,
             SynthParam::Release,
+            // Filter + Filter ADSR
             SynthParam::FilterCutoff,
             SynthParam::FilterResonance,
+            SynthParam::FilterAttack,
+            SynthParam::FilterDecay,
+            SynthParam::FilterSustain,
+            SynthParam::FilterRelease,
+            SynthParam::FilterEnvAmount,
+            // LFO
+            SynthParam::LfoRate,
+            SynthParam::LfoDepth,
+            SynthParam::LfoWaveform,
+            SynthParam::LfoDestination,
+            // Pitch
             SynthParam::PitchBendRange,
+            // Oscillators
             SynthParam::Osc1Waveform,
             SynthParam::Osc1Level,
             SynthParam::Osc1Phase,
@@ -161,7 +206,16 @@ pub mod cc {
     pub const UNDEFINED_89: u8 = 89;
     pub const UNDEFINED_90: u8 = 90;
     pub const UNDEFINED_102: u8 = 102;
-    
+    pub const UNDEFINED_103: u8 = 103;
+    pub const UNDEFINED_104: u8 = 104;
+    pub const UNDEFINED_105: u8 = 105;
+    pub const UNDEFINED_106: u8 = 106;
+    pub const UNDEFINED_107: u8 = 107;
+    pub const UNDEFINED_108: u8 = 108;
+    pub const UNDEFINED_109: u8 = 109;
+    pub const UNDEFINED_110: u8 = 110;
+    pub const UNDEFINED_111: u8 = 111;
+
     // Effects (91-95)
     pub const REVERB: u8 = 91;
     pub const TREMOLO: u8 = 92;
@@ -236,7 +290,20 @@ impl CCMapping {
         mapping.map(cc::UNDEFINED_89, SynthParam::Osc2Phase);  // CC 89
         mapping.map(cc::UNDEFINED_90, SynthParam::Osc3Phase);  // CC 90
         
-        // Pitch Bend Range - RPN would be standard but we use CC for simplicity
+        // Filter Envelope - Undefined CCs (91-95 are effects, so skip to next available)
+        mapping.map(cc::UNDEFINED_103, SynthParam::FilterAttack);  // CC 103
+        mapping.map(cc::UNDEFINED_104, SynthParam::FilterDecay);  // CC 104
+        mapping.map(cc::UNDEFINED_105, SynthParam::FilterSustain);  // CC 105
+        mapping.map(cc::UNDEFINED_106, SynthParam::FilterRelease);  // CC 106
+        mapping.map(cc::UNDEFINED_107, SynthParam::FilterEnvAmount);  // CC 107
+
+        // LFO - Undefined CCs (108-119 available)
+        mapping.map(cc::UNDEFINED_108, SynthParam::LfoRate);  // CC 108
+        mapping.map(cc::UNDEFINED_109, SynthParam::LfoDepth);  // CC 109
+        mapping.map(cc::UNDEFINED_110, SynthParam::LfoWaveform);  // CC 110
+        mapping.map(cc::UNDEFINED_111, SynthParam::LfoDestination);  // CC 111
+
+        // Pitch Bend Range
         mapping.map(cc::UNDEFINED_102, SynthParam::PitchBendRange);  // CC 102
         
         mapping
@@ -324,6 +391,37 @@ pub fn time_to_cc(time: f32, min_time: f32, max_time: f32) -> u8 {
 /// Converts CC (0-127) to level (0.0-1.0)
 pub fn cc_to_level(value: u8) -> f32 {
     value as f32 / 127.0
+}
+
+/// Converts CC (0-127) to filter envelope amount (0.0-1.0)
+/// Maps 0-127 to 0.0-1.0 for filter modulation depth
+pub fn cc_to_filter_env_amount(value: u8) -> f32 {
+    value as f32 / 127.0
+}
+
+/// Converts CC (0-127) to LFO rate (0.1-20 Hz)
+/// CC 0 = 0.1 Hz, CC 127 = 20 Hz, exponential curve
+pub fn cc_to_lfo_rate(value: u8) -> f32 {
+    let normalized = value as f32 / 127.0;
+    // Exponential curve: 0.1 * (200.0 ^ normalized)
+    0.1 * (200.0_f32.powf(normalized))
+}
+
+/// Converts CC (0-127) to LFO depth (0.0-1.0)
+pub fn cc_to_lfo_depth(value: u8) -> f32 {
+    value as f32 / 127.0
+}
+
+/// Converts CC (0-127) to LFO waveform index (0-4)
+/// 0=Sine, 1=Triangle, 2=Square, 3=Saw, 4=Random
+pub fn cc_to_lfo_waveform(value: u8) -> u8 {
+    (value / 26).min(4) // 0-25=0, 26-51=1, 52-77=2, 78-103=3, 104-127=4
+}
+
+/// Converts CC (0-127) to LFO destination index (0-3)
+/// 0=Off, 1=Pitch, 2=Filter, 3=Amplitude
+pub fn cc_to_lfo_destination(value: u8) -> u8 {
+    (value / 32).min(3) // 0-31=0, 32-63=1, 64-95=2, 96-127=3
 }
 
 /// Converts CC (0-127) to semitones (-24 to +24)

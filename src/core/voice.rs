@@ -1,8 +1,9 @@
 use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
 use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
+use super::lfo::{LFO, LfoDestination, LfoWaveform};
 use super::oscillator::{Oscillator, OscillatorBank};
-use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range};
+use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
 use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate};
 
 /// Envelope time range constants
@@ -13,14 +14,21 @@ pub const MAX_DECAY_TIME: f32 = 5.0;     // 5 seconds
 pub const MIN_RELEASE_TIME: f32 = 0.001; // 1ms  
 pub const MAX_RELEASE_TIME: f32 = 5.0;   // 5 seconds
 
-/// A single synthesizer voice containing an oscillator bank, filter, and envelope
+/// A single synthesizer voice containing an oscillator bank, filter, envelopes, and LFO
 pub struct Voice {
     osc_bank: OscillatorBank,
     filter: Box<dyn Filter>,
-    envelope: Box<dyn Envelope>,
+    envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
+    filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
+    lfo: LFO,                          // Low frequency oscillator for modulation
     current_note: Option<MidiNote>,
     velocity: Amplitude,
     sample_rate: SampleRate,
+    // Filter envelope modulation
+    base_cutoff: Frequency,
+    filter_env_amount: f32,            // 0.0 to 1.0 (amount of envelope applied)
+    // LFO modulation
+    base_frequency: Frequency,         // Base note frequency for pitch modulation
 }
 
 impl Voice {
@@ -29,9 +37,14 @@ impl Voice {
             osc_bank: OscillatorBank::new(sample_rate),
             filter: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
             envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
+            filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
+            lfo: LFO::new(sample_rate),
             current_note: None,
             velocity: 1.0,
             sample_rate,
+            base_cutoff: 20000.0,
+            filter_env_amount: 0.0, // Off by default
+            base_frequency: 440.0,
         }
     }
 
@@ -56,25 +69,77 @@ impl Voice {
             return 0.0;
         }
 
+        // Get LFO value for this sample
+        let lfo_value = self.lfo.next_value();
+
+        // Apply LFO pitch modulation (vibrato) if enabled
+        if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
+            // Vibrato: modulate pitch by up to ±1 semitone at full depth
+            let vibrato_semitones = lfo_value; // -1.0 to +1.0 semitones
+            let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
+            let modulated_freq = self.base_frequency * vibrato_ratio;
+            self.osc_bank.set_frequency(modulated_freq);
+        }
+
+        // Calculate filter envelope and LFO modulation
+        let filter_env_amp = self.filter_envelope.next_amplitude();
+        let filter_lfo = if self.lfo.destination() == LfoDestination::FilterCutoff {
+            lfo_value // -1.0 to +1.0
+        } else {
+            0.0
+        };
+
+        let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
+            // Combine envelope and LFO modulation
+            let max_cutoff = 20000.0f32;
+            let cutoff_range = max_cutoff - self.base_cutoff;
+
+            // Envelope opens filter upward
+            let env_modulation = cutoff_range * self.filter_env_amount * filter_env_amp;
+
+            // LFO can modulate up or down (±50% of remaining range at full depth)
+            let lfo_depth = self.lfo.depth();
+            let lfo_modulation = cutoff_range * lfo_depth * filter_lfo * 0.5;
+
+            let target_cutoff = self.base_cutoff + env_modulation + lfo_modulation;
+            target_cutoff.min(max_cutoff).max(20.0)
+        } else {
+            self.base_cutoff
+        };
+        self.filter.set_cutoff(modulated_cutoff);
+
         let osc_sample = self.osc_bank.next_sample();
         let filtered_sample = self.filter.process(osc_sample);
         let env_amplitude = self.envelope.next_amplitude();
 
-        filtered_sample * env_amplitude * self.velocity
+        // Apply LFO amplitude modulation (tremolo) if enabled
+        let lfo_amp = if self.lfo.destination() == LfoDestination::Amplitude {
+            // Tremolo: 1.0 ± depth (never goes negative)
+            1.0 + lfo_value * 0.5 // 0.5 to 1.5 range at full depth
+        } else {
+            1.0
+        };
+
+        filtered_sample * env_amplitude * self.velocity * lfo_amp
     }
 
     /// Trigger a note on this voice
     pub fn note_on(&mut self, note: MidiNote, velocity: Amplitude) {
         self.current_note = Some(note);
         self.velocity = velocity;
-        self.osc_bank.set_frequency(midi_to_frequency(note));
+        let freq = midi_to_frequency(note);
+        self.base_frequency = freq;
+        self.osc_bank.set_frequency(freq);
         self.osc_bank.reset();
         self.envelope.trigger();
+        self.filter_envelope.trigger();
+        self.lfo.reset();
     }
 
     /// Release the current note
     pub fn note_off(&mut self) {
         self.envelope.release();
+        self.filter_envelope.release();
     }
 
     /// Check if this voice is currently playing
@@ -97,6 +162,8 @@ impl Voice {
         self.osc_bank.reset();
         self.filter.reset();
         self.envelope.reset();
+        self.filter_envelope.reset();
+        self.lfo.reset();
         self.current_note = None;
     }
 
@@ -106,6 +173,84 @@ impl Voice {
         self.osc_bank.set_sample_rate(sample_rate);
         self.filter.set_sample_rate(sample_rate);
         self.envelope.set_sample_rate(sample_rate);
+        self.filter_envelope.set_sample_rate(sample_rate);
+        self.lfo.set_sample_rate(sample_rate);
+    }
+
+    /// Set LFO rate (0.1 to 20 Hz)
+    pub fn set_lfo_rate(&mut self, rate: f32) {
+        self.lfo.set_rate(rate);
+    }
+
+    /// Set LFO depth (0.0 to 1.0)
+    pub fn set_lfo_depth(&mut self, depth: f32) {
+        self.lfo.set_depth(depth);
+    }
+
+    /// Set LFO waveform
+    pub fn set_lfo_waveform(&mut self, waveform: LfoWaveform) {
+        self.lfo.set_waveform(waveform);
+    }
+
+    /// Set LFO destination
+    pub fn set_lfo_destination(&mut self, destination: LfoDestination) {
+        self.lfo.set_destination(destination);
+    }
+
+    /// Get LFO rate
+    pub fn lfo_rate(&self) -> f32 {
+        self.lfo.rate()
+    }
+
+    /// Get LFO depth
+    pub fn lfo_depth(&self) -> f32 {
+        self.lfo.depth()
+    }
+
+    /// Get LFO waveform
+    pub fn lfo_waveform(&self) -> LfoWaveform {
+        self.lfo.waveform()
+    }
+
+    /// Get LFO destination
+    pub fn lfo_destination(&self) -> LfoDestination {
+        self.lfo.destination()
+    }
+
+    /// Set the filter envelope attack time
+    pub fn set_filter_attack(&mut self, attack_time: f32) {
+        self.filter_envelope.set_attack(attack_time);
+    }
+
+    /// Set the filter envelope decay time
+    pub fn set_filter_decay(&mut self, decay_time: f32) {
+        self.filter_envelope.set_decay(decay_time);
+    }
+
+    /// Set the filter envelope sustain level
+    pub fn set_filter_sustain(&mut self, sustain_level: f32) {
+        self.filter_envelope.set_sustain(sustain_level);
+    }
+
+    /// Set the filter envelope release time
+    pub fn set_filter_release(&mut self, release_time: f32) {
+        self.filter_envelope.set_release(release_time);
+    }
+
+    /// Set the filter envelope amount (0.0 to 1.0)
+    pub fn set_filter_env_amount(&mut self, amount: f32) {
+        self.filter_env_amount = amount.clamp(0.0, 1.0);
+    }
+
+    /// Get the filter envelope amount
+    pub fn filter_env_amount(&self) -> f32 {
+        self.filter_env_amount
+    }
+
+    /// Set the base filter cutoff (also updates base_cutoff for envelope modulation)
+    pub fn set_filter_cutoff(&mut self, cutoff: Frequency) {
+        self.base_cutoff = cutoff;
+        self.filter.set_cutoff(cutoff);
     }
 
     /// Set the attack time
@@ -126,11 +271,6 @@ impl Voice {
     /// Set the release time
     pub fn set_release(&mut self, release_time: f32) {
         self.envelope.set_release(release_time);
-    }
-
-    /// Set the filter cutoff frequency
-    pub fn set_filter_cutoff(&mut self, cutoff: Frequency) {
-        self.filter.set_cutoff(cutoff);
     }
 
     /// Set the filter resonance
@@ -185,14 +325,25 @@ pub struct VoiceManager {
     sample_rate: SampleRate,
     master_volume: Amplitude,
     cc_mapping: CCMapping,
-    // ADSR envelope state
+    // Amplitude ADSR envelope state
     attack_time: f32,
     decay_time: f32,
     sustain_level: f32,
     release_time: f32,
+    // Filter envelope state
+    filter_attack_time: f32,
+    filter_decay_time: f32,
+    filter_sustain_level: f32,
+    filter_release_time: f32,
+    filter_env_amount: f32,
     // Filter state
     filter_cutoff: Frequency,
     filter_resonance: f32,
+    // LFO state
+    lfo_rate: f32,
+    lfo_depth: f32,
+    lfo_waveform: LfoWaveform,
+    lfo_destination: LfoDestination,
     osc_state: OscBankState,
 }
 
@@ -214,12 +365,25 @@ impl VoiceManager {
             sample_rate,
             master_volume: 0.5,
             cc_mapping: CCMapping::default_mappings(),
+            // Amp envelope defaults
             attack_time: 0.01,
             decay_time: 0.1,
             sustain_level: 0.7,
             release_time: 0.2,
+            // Filter envelope defaults (quick pluck by default)
+            filter_attack_time: 0.01,
+            filter_decay_time: 0.3,
+            filter_sustain_level: 0.0,
+            filter_release_time: 0.3,
+            filter_env_amount: 0.0, // Off by default
+            // Filter state
             filter_cutoff: 20000.0,
             filter_resonance: 0.0,
+            // LFO defaults (off by default)
+            lfo_rate: 6.0,
+            lfo_depth: 0.0,
+            lfo_waveform: LfoWaveform::Sine,
+            lfo_destination: LfoDestination::Off,
             osc_state,
         }
     }
@@ -392,6 +556,123 @@ impl VoiceManager {
         self.filter_resonance
     }
 
+    /// Set filter envelope attack time for all voices
+    pub fn set_filter_attack(&mut self, attack_time: f32) {
+        self.filter_attack_time = attack_time;
+        for voice in &mut self.voices {
+            voice.set_filter_attack(attack_time);
+        }
+    }
+
+    /// Set filter envelope decay time for all voices
+    pub fn set_filter_decay(&mut self, decay_time: f32) {
+        self.filter_decay_time = decay_time;
+        for voice in &mut self.voices {
+            voice.set_filter_decay(decay_time);
+        }
+    }
+
+    /// Set filter envelope sustain level for all voices
+    pub fn set_filter_sustain(&mut self, sustain_level: f32) {
+        self.filter_sustain_level = sustain_level;
+        for voice in &mut self.voices {
+            voice.set_filter_sustain(sustain_level);
+        }
+    }
+
+    /// Set filter envelope release time for all voices
+    pub fn set_filter_release(&mut self, release_time: f32) {
+        self.filter_release_time = release_time;
+        for voice in &mut self.voices {
+            voice.set_filter_release(release_time);
+        }
+    }
+
+    /// Set filter envelope amount for all voices (0.0 to 1.0)
+    pub fn set_filter_env_amount(&mut self, amount: f32) {
+        self.filter_env_amount = amount.clamp(0.0, 1.0);
+        for voice in &mut self.voices {
+            voice.set_filter_env_amount(self.filter_env_amount);
+        }
+    }
+
+    /// Get current filter envelope attack time
+    pub fn filter_attack(&self) -> f32 {
+        self.filter_attack_time
+    }
+
+    /// Get current filter envelope decay time
+    pub fn filter_decay(&self) -> f32 {
+        self.filter_decay_time
+    }
+
+    /// Get current filter envelope sustain level
+    pub fn filter_sustain(&self) -> f32 {
+        self.filter_sustain_level
+    }
+
+    /// Get current filter envelope release time
+    pub fn filter_release_time(&self) -> f32 {
+        self.filter_release_time
+    }
+
+    /// Get current filter envelope amount
+    pub fn filter_env_amount(&self) -> f32 {
+        self.filter_env_amount
+    }
+
+    /// Set LFO rate for all voices (0.1 to 20 Hz)
+    pub fn set_lfo_rate(&mut self, rate: f32) {
+        self.lfo_rate = rate.clamp(0.1, 20.0);
+        for voice in &mut self.voices {
+            voice.set_lfo_rate(self.lfo_rate);
+        }
+    }
+
+    /// Set LFO depth for all voices (0.0 to 1.0)
+    pub fn set_lfo_depth(&mut self, depth: f32) {
+        self.lfo_depth = depth.clamp(0.0, 1.0);
+        for voice in &mut self.voices {
+            voice.set_lfo_depth(self.lfo_depth);
+        }
+    }
+
+    /// Set LFO waveform for all voices
+    pub fn set_lfo_waveform(&mut self, waveform: LfoWaveform) {
+        self.lfo_waveform = waveform;
+        for voice in &mut self.voices {
+            voice.set_lfo_waveform(waveform);
+        }
+    }
+
+    /// Set LFO destination for all voices
+    pub fn set_lfo_destination(&mut self, destination: LfoDestination) {
+        self.lfo_destination = destination;
+        for voice in &mut self.voices {
+            voice.set_lfo_destination(destination);
+        }
+    }
+
+    /// Get current LFO rate
+    pub fn lfo_rate(&self) -> f32 {
+        self.lfo_rate
+    }
+
+    /// Get current LFO depth
+    pub fn lfo_depth(&self) -> f32 {
+        self.lfo_depth
+    }
+
+    /// Get current LFO waveform
+    pub fn lfo_waveform(&self) -> LfoWaveform {
+        self.lfo_waveform
+    }
+
+    /// Get current LFO destination
+    pub fn lfo_destination(&self) -> LfoDestination {
+        self.lfo_destination
+    }
+
     /// Get current oscillator bank state
     pub fn osc_state(&self) -> &OscBankState {
         &self.osc_state
@@ -527,7 +808,55 @@ impl VoiceManager {
                 let resonance = cc_to_resonance(value);
                 self.set_filter_resonance(resonance);
             }
-            
+            // Filter Envelope
+            SynthParam::FilterAttack => {
+                let time = cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME);
+                self.set_filter_attack(time);
+            }
+            SynthParam::FilterDecay => {
+                let time = cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME);
+                self.set_filter_decay(time);
+            }
+            SynthParam::FilterSustain => {
+                self.set_filter_sustain(cc_to_sustain(value));
+            }
+            SynthParam::FilterRelease => {
+                let time = cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME);
+                self.set_filter_release(time);
+            }
+            SynthParam::FilterEnvAmount => {
+                self.set_filter_env_amount(cc_to_filter_env_amount(value));
+            }
+
+            // LFO
+            SynthParam::LfoRate => {
+                self.set_lfo_rate(cc_to_lfo_rate(value));
+            }
+            SynthParam::LfoDepth => {
+                self.set_lfo_depth(cc_to_lfo_depth(value));
+            }
+            SynthParam::LfoWaveform => {
+                let waveform_idx = cc_to_lfo_waveform(value);
+                let waveform = match waveform_idx {
+                    0 => LfoWaveform::Sine,
+                    1 => LfoWaveform::Triangle,
+                    2 => LfoWaveform::Square,
+                    3 => LfoWaveform::Saw,
+                    _ => LfoWaveform::Random,
+                };
+                self.set_lfo_waveform(waveform);
+            }
+            SynthParam::LfoDestination => {
+                let dest_idx = cc_to_lfo_destination(value);
+                let destination = match dest_idx {
+                    0 => LfoDestination::Off,
+                    1 => LfoDestination::Pitch,
+                    2 => LfoDestination::FilterCutoff,
+                    _ => LfoDestination::Amplitude,
+                };
+                self.set_lfo_destination(destination);
+            }
+
             // Pitch
             SynthParam::PitchBendRange => {
                 self.set_pitch_bend_range(cc_to_pitch_bend_range(value));
