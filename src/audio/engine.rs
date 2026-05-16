@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig};
@@ -38,11 +40,12 @@ pub struct AudioEngine {
     stream: Option<Stream>,
     voice_manager: Arc<Mutex<VoiceManager>>,
     sample_rate: SampleRate,
+    cpu_load: Arc<AtomicU32>,
 }
 
 impl AudioEngine {
     /// Create a new audio engine with default settings
-    pub fn new() -> Result<Self, AudioError> {
+    pub fn new(cpu_load: Arc<AtomicU32>) -> Result<Self, AudioError> {
         let host = cpal::default_host();
 
         let device = host
@@ -65,6 +68,7 @@ impl AudioEngine {
             stream: None,
             voice_manager,
             sample_rate,
+            cpu_load,
         })
     }
 
@@ -82,12 +86,16 @@ impl AudioEngine {
     pub fn start(&mut self) -> Result<(), AudioError> {
         let voice_manager = Arc::clone(&self.voice_manager);
         let channels = self._config.channels as usize;
+        let cpu_load = Arc::clone(&self.cpu_load);
+        let sample_rate = self.sample_rate as f64;
 
         let stream = self
             ._device
             .build_output_stream(
                 &self._config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let start = Instant::now();
+                    
                     let mut vm = voice_manager.lock();
                     for frame in data.chunks_mut(channels) {
                         let sample = vm.next_sample();
@@ -95,6 +103,18 @@ impl AudioEngine {
                             *channel_sample = sample;
                         }
                     }
+                    drop(vm); // Release lock before measuring
+                    
+                    // Calculate CPU load: process_time / available_time
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let buffer_samples = data.len() / channels;
+                    let available_time = buffer_samples as f64 / sample_rate;
+                    let load = (elapsed / available_time) as f32;
+                    
+                    // Store as atomic (smoothed with previous value)
+                    let prev = f32::from_bits(cpu_load.load(Ordering::Relaxed));
+                    let smoothed = prev * 0.9 + load * 0.1; // Simple low-pass filter
+                    cpu_load.store(smoothed.to_bits(), Ordering::Relaxed);
                 },
                 move |err| {
                     eprintln!("Audio stream error: {}", err);

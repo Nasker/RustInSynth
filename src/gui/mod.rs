@@ -177,6 +177,8 @@ pub struct SharedState {
     pub params: Arc<ParamBank>,
     // MIDI feedback: (CC number, value) from external controllers
     pub midi_feedback: Arc<dashmap::DashMap<u8, u8>>, // CC -> value
+    // CPU load from audio thread (0.0 - 1.0, stored as u32 bits)
+    pub cpu_load: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl SharedState {
@@ -184,7 +186,20 @@ impl SharedState {
         Self {
             params: Arc::new(ParamBank::new()),
             midi_feedback: Arc::new(dashmap::DashMap::new()),
+            cpu_load: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
+    }
+    
+    /// Get CPU load as percentage (0.0 - 100.0)
+    pub fn get_cpu_load(&self) -> f32 {
+        let bits = self.cpu_load.load(std::sync::atomic::Ordering::Relaxed);
+        f32::from_bits(bits) * 100.0
+    }
+    
+    /// Set CPU load (0.0 - 1.0)
+    pub fn set_cpu_load(&self, load: f32) {
+        let bits = load.to_bits();
+        self.cpu_load.store(bits, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

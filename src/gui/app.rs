@@ -54,8 +54,9 @@ impl SynthApp {
         let midi_ports = MidiInputHandler::list_ports().unwrap_or_default();
         let selected_midi_port = if !midi_ports.is_empty() { Some(0) } else { None };
 
-        // Initialize audio engine
-        let mut audio_engine = match AudioEngine::new() {
+        // Initialize audio engine with CPU load measurement
+        let cpu_load = std::sync::Arc::clone(&shared.cpu_load);
+        let mut audio_engine = match AudioEngine::new(cpu_load) {
             Ok(mut engine) => {
                 engine.set_master_volume(0.5);
                 if let Err(e) = engine.start() {
@@ -699,10 +700,30 @@ impl SynthApp {
                         .color(THEME.gold)
                 );
                 ui.label(
-                    RichText::new("v0.4.0")
+                    RichText::new("v0.5.0")
                         .size(10.0)
                         .color(Color32::from_gray(120))
                 );
+                
+                ui.separator();
+                
+                // CPU Load meter
+                let cpu_load = self.shared.get_cpu_load();
+                let cpu_color = if cpu_load < 50.0 {
+                    Color32::from_rgb(100, 200, 100) // Green
+                } else if cpu_load < 80.0 {
+                    Color32::from_rgb(200, 200, 100) // Yellow
+                } else {
+                    Color32::from_rgb(200, 100, 100) // Red
+                };
+                ui.label(RichText::new("CPU:").size(10.0).color(Color32::from_gray(150)));
+                ui.add(
+                    egui::ProgressBar::new(cpu_load / 100.0)
+                        .desired_width(60.0)
+                        .fill(cpu_color)
+                );
+                ui.label(RichText::new(format!("{:.1}%", cpu_load)).size(10.0).monospace());
+                
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new("Monophonic Synthesizer")
