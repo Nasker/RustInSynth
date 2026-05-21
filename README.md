@@ -11,7 +11,7 @@ A Minimoog-style monophonic synthesizer written in pure Rust with a real-time GU
 - **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
 - **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
 - **Portamento (glide)** with linear interpolation (0-3 seconds)
-- **Monophonic key stacking** - returns to previous note when releasing
+- **Mono/Poly modes** - monophonic with key stacking OR 8-voice polyphony
 - **Real-time GUI** built with `egui` - single-window Minimoog-style layout
 - **Real-time audio synthesis** using `cpal`
 - **USB MIDI controller support** via `midir` with live CC feedback
@@ -196,12 +196,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Current Status
 
-**v0.7.2** - Factory Presets & MIDI Learn:
+**v0.8.0** - Polyphonic Mode:
+- [x] 8-voice polyphony with voice stealing
+- [x] MONO/POLY toggle in GUI
+- [x] Live voice count display (Voices: X/8)
 - [x] 8 factory presets (Sub Bass, Moog Bass, Glide Lead, Warm Pad, Pluck, Sweep FX, Wobble, Soft Keys)
 - [x] Runtime MIDI CC Learn - map any CC to any parameter
-- [x] Custom CC mappings persist to `~/.rustinsynth/cc_mappings.json`
 - [x] Real-time CPU load meter in top bar
-- [x] Centralized theme system (`theme.rs`)
 
 **v0.6.0** - Portamento + Key Stacking:
 - [x] Portamento (glide) with linear interpolation (0-3s)
@@ -226,7 +227,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Roadmap
 
-- [ ] Polyphonic voice allocation (4-8 voices)
+- [x] ~~Polyphonic voice allocation~~ ✅ Done (8 voices)
 - [ ] Effects chain (delay, reverb, chorus)
 - [ ] Additional filter types (HP, BP, ladder)
 - [ ] Arpeggiator

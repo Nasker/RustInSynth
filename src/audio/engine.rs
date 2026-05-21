@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use crate::core::event::{NoteEvent, SynthEventReceiver, WaveformType};
 use crate::core::params::SynthParam;
 use crate::core::types::SampleRate;
-use crate::core::voice::VoiceManager;
+use crate::core::voice::{VoiceManager, PolyphonyMode};
 use crate::gui::ParamBank;
 
 /// Error type for audio engine operations
@@ -240,6 +240,26 @@ impl AudioEngine {
 
         // Master volume
         vm.set_master_volume(params.get(SynthParam::MasterVolume));
+    }
+    
+    /// Set polyphony mode (Mono or Poly)
+    pub fn set_polyphony_mode(&self, mode: PolyphonyMode) {
+        self.voice_manager.lock().set_polyphony_mode(mode);
+    }
+    
+    /// Get current polyphony mode
+    pub fn polyphony_mode(&self) -> PolyphonyMode {
+        self.voice_manager.lock().polyphony_mode()
+    }
+    
+    /// Get number of active voices
+    pub fn active_voice_count(&self) -> usize {
+        self.voice_manager.lock().active_voice_count()
+    }
+    
+    /// Get max voices
+    pub fn max_voices(&self) -> usize {
+        self.voice_manager.lock().max_voices()
     }
 }
 

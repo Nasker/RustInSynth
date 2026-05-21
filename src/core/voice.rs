@@ -349,14 +349,30 @@ impl Default for OscBankState {
     }
 }
 
+/// Polyphony mode for the voice manager
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolyphonyMode {
+    /// Single voice with key stacking (returns to previous note)
+    Mono,
+    /// Multiple independent voices for chords
+    Poly,
+}
+
+impl Default for PolyphonyMode {
+    fn default() -> Self {
+        PolyphonyMode::Mono
+    }
+}
+
 /// Manages multiple voices for polyphonic playback
-/// Currently configured for monophonic operation but ready for polyphony
 pub struct VoiceManager {
     voices: Vec<Voice>,
     max_voices: usize,
     sample_rate: SampleRate,
     master_volume: Amplitude,
     cc_mapping: CCMapping,
+    // Polyphony mode
+    polyphony_mode: PolyphonyMode,
     // Amplitude ADSR envelope state
     attack_time: f32,
     decay_time: f32,
@@ -401,6 +417,7 @@ impl VoiceManager {
             sample_rate,
             master_volume: 0.5,
             cc_mapping: CCMapping::default_mappings(),
+            polyphony_mode: PolyphonyMode::Mono,
             // Amp envelope defaults
             attack_time: 0.01,
             decay_time: 0.1,
@@ -444,9 +461,44 @@ impl VoiceManager {
         bank.set_phase(3, state.osc3_phase);
     }
 
-    /// Create a monophonic voice manager (single voice)
+    /// Create a monophonic voice manager (8 voices but mono mode)
     pub fn monophonic(sample_rate: SampleRate) -> Self {
-        Self::new(1, sample_rate)
+        let mut vm = Self::new(8, sample_rate);
+        vm.polyphony_mode = PolyphonyMode::Mono;
+        vm
+    }
+    
+    /// Create a polyphonic voice manager (8 voices)
+    pub fn polyphonic(sample_rate: SampleRate) -> Self {
+        let mut vm = Self::new(8, sample_rate);
+        vm.polyphony_mode = PolyphonyMode::Poly;
+        vm
+    }
+    
+    /// Set polyphony mode
+    pub fn set_polyphony_mode(&mut self, mode: PolyphonyMode) {
+        self.polyphony_mode = mode;
+        // Clear key stack when switching modes
+        self.key_stack.clear();
+        // Release all voices when switching
+        for voice in &mut self.voices {
+            voice.note_off();
+        }
+    }
+    
+    /// Get current polyphony mode
+    pub fn polyphony_mode(&self) -> PolyphonyMode {
+        self.polyphony_mode
+    }
+    
+    /// Get number of active voices
+    pub fn active_voice_count(&self) -> usize {
+        self.voices.iter().filter(|v| v.is_active()).count()
+    }
+    
+    /// Get max voices
+    pub fn max_voices(&self) -> usize {
+        self.max_voices
     }
 
     /// Set the master volume (0.0 to 1.0)
@@ -995,21 +1047,37 @@ impl SynthEventReceiver for VoiceManager {
 }
 
 impl VoiceManager {
-    /// Handle note on with key stacking for monophonic operation
+    /// Handle note on - dispatches to mono or poly handler
     fn handle_note_on(&mut self, note: MidiNote, velocity: Amplitude) {
+        match self.polyphony_mode {
+            PolyphonyMode::Mono => self.handle_note_on_mono(note, velocity),
+            PolyphonyMode::Poly => self.handle_note_on_poly(note, velocity),
+        }
+    }
+    
+    /// Handle note off - dispatches to mono or poly handler
+    fn handle_note_off(&mut self, note: MidiNote) {
+        match self.polyphony_mode {
+            PolyphonyMode::Mono => self.handle_note_off_mono(note),
+            PolyphonyMode::Poly => self.handle_note_off_poly(note),
+        }
+    }
+    
+    /// Monophonic note on with key stacking
+    fn handle_note_on_mono(&mut self, note: MidiNote, velocity: Amplitude) {
         // Remove note if already pressed (avoid duplicates)
         self.key_stack.retain(|&(n, _)| n != note);
         // Push to top of stack (newest priority)
         self.key_stack.push((note, velocity));
         
-        // Trigger the note on the first voice (monophonic)
+        // Trigger the note on the first voice
         if let Some(voice) = self.voices.first_mut() {
             voice.note_on(note, velocity);
         }
     }
     
-    /// Handle note off with key stacking - return to previous note if any
-    fn handle_note_off(&mut self, note: MidiNote) {
+    /// Monophonic note off with key stacking - return to previous note if any
+    fn handle_note_off_mono(&mut self, note: MidiNote) {
         // Remove the note from stack
         self.key_stack.retain(|&(n, _)| n != note);
         
@@ -1024,6 +1092,47 @@ impl VoiceManager {
                     voice.note_off();
                 }
             }
+        }
+    }
+    
+    /// Polyphonic note on - allocate a voice for the note
+    fn handle_note_on_poly(&mut self, note: MidiNote, velocity: Amplitude) {
+        // First check if this note is already playing - retrigger it
+        if let Some(voice) = self.find_voice_with_note(note) {
+            voice.note_on(note, velocity);
+            return;
+        }
+        
+        // Allocate a new voice
+        if let Some(idx) = self.allocate_voice_index() {
+            // Apply current envelope/filter/lfo settings to the voice
+            let voice = &mut self.voices[idx];
+            voice.set_attack(self.attack_time);
+            voice.set_decay(self.decay_time);
+            voice.set_sustain(self.sustain_level);
+            voice.set_release(self.release_time);
+            voice.set_filter_cutoff(self.filter_cutoff);
+            voice.set_filter_resonance(self.filter_resonance);
+            voice.set_filter_attack(self.filter_attack_time);
+            voice.set_filter_decay(self.filter_decay_time);
+            voice.set_filter_sustain(self.filter_sustain_level);
+            voice.set_filter_release(self.filter_release_time);
+            voice.set_filter_env_amount(self.filter_env_amount);
+            voice.set_lfo_rate(self.lfo_rate);
+            voice.set_lfo_depth(self.lfo_depth);
+            voice.set_lfo_waveform(self.lfo_waveform);
+            voice.set_lfo_destination(self.lfo_destination);
+            // Portamento doesn't make as much sense in poly, but keep it
+            voice.portamento_time = self.portamento_time;
+            
+            voice.note_on(note, velocity);
+        }
+    }
+    
+    /// Polyphonic note off - release the voice playing this note
+    fn handle_note_off_poly(&mut self, note: MidiNote) {
+        if let Some(voice) = self.find_voice_with_note(note) {
+            voice.note_off();
         }
     }
 }

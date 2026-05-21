@@ -10,7 +10,7 @@ use crate::core::params::{
 };
 use crate::core::voice::{
     MIN_ATTACK_TIME, MAX_ATTACK_TIME, MIN_DECAY_TIME, MAX_DECAY_TIME,
-    MIN_RELEASE_TIME, MAX_RELEASE_TIME,
+    MIN_RELEASE_TIME, MAX_RELEASE_TIME, PolyphonyMode,
 };
 use crate::core::presets::{list_presets, load_preset, save_preset, install_factory_presets, Preset};
 use crate::gui::widgets::*;
@@ -1150,7 +1150,26 @@ impl SynthApp {
             });
         
         ui.add_space(12.0);
-        section_header(ui, "PITCH");
+        section_header(ui, "PITCH / VOICE");
+        
+        // Polyphony mode toggle
+        let current_mode = self.audio_engine.polyphony_mode();
+        ui.horizontal(|ui| {
+            ui.label("Mode:");
+            let mono_selected = current_mode == PolyphonyMode::Mono;
+            if ui.selectable_label(mono_selected, "MONO").clicked() && !mono_selected {
+                self.audio_engine.set_polyphony_mode(PolyphonyMode::Mono);
+            }
+            let poly_selected = current_mode == PolyphonyMode::Poly;
+            if ui.selectable_label(poly_selected, "POLY").clicked() && !poly_selected {
+                self.audio_engine.set_polyphony_mode(PolyphonyMode::Poly);
+            }
+        });
+        
+        // Voice count display
+        let active = self.audio_engine.active_voice_count();
+        let max = self.audio_engine.max_voices();
+        ui.label(RichText::new(format!("Voices: {}/{}", active, max)).size(10.0).color(Color32::from_gray(150)));
         
         let mut bend = self.get_param(SynthParam::PitchBendRange);
         if ui.add(egui::Slider::new(&mut bend, 1.0..=24.0).text("Bend Range")).changed() {

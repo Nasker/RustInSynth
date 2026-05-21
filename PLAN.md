@@ -21,13 +21,14 @@
   - Soft Keys (electric piano style)
 
 ### Phase 2: Sound Design
-- [ ] **2.1 Polyphonic Mode** ⬅️ NEXT
-  - Voice allocation (4-8 voices)
-  - Voice stealing strategies
-  - Unison/detune mode
-  - Major refactor ~300+ lines
+- [x] **2.1 Polyphonic Mode** ✅ DONE
+  - 8-voice polyphony with voice stealing
+  - MONO/POLY toggle in GUI
+  - Live voice count display
+  - Mono mode retains key stacking
 
-- [ ] **2.2 Effects Chain**
+- [ ] **2.2 Effects Chain** ⬅️ NEXT
+
   - Delay (tempo-sync optional)
   - Reverb (simple algorithmic)
   - Chorus/Flanger
@@ -114,6 +115,7 @@ struct SynthApp {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-21 | v0.8.0 | Polyphonic mode (8 voices, MONO/POLY toggle) |
 | 2026-05-21 | v0.7.2 | 8 factory presets (bass, lead, pad, FX) |
 | 2026-05-21 | v0.7.1 | MIDI CC Learn with persistence |
 | 2026-05-21 | v0.7.0 | CPU meter, theme system |
