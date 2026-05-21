@@ -1,16 +1,17 @@
 # RustInSynth
 
-A Minimoog-style monophonic synthesizer written in pure Rust with a real-time GUI.
+A Minimoog-style synthesizer written in pure Rust with a real-time GUI and **true stereo output**.
 
 ![RustInSynth GUI](docs/screenshot.png)
 
 ## Features
 
 - **3-oscillator bank** with 5 waveforms (Sine, Triangle, Saw, Square, Noise)
+- **True stereo output** with per-oscillator panning and stereo width control
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
 - **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
 - **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
-- **Effects chain** - Delay, Reverb (Schroeder), Chorus with GUI controls
+- **Stereo effects chain** - Ping-pong Delay, Stereo Reverb, Wide Chorus
 - **Portamento (glide)** with linear interpolation (0-3 seconds)
 - **Mono/Poly modes** - monophonic with key stacking OR 8-voice polyphony
 - **Real-time GUI** built with `egui` - single-window Minimoog-style layout
@@ -197,6 +198,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Current Status
 
+**v1.0.0** - True Stereo Output:
+- [x] Per-oscillator panning (L/R positioning)
+- [x] Stereo width control (mono to extra-wide)
+- [x] Ping-pong delay with stereo feedback
+- [x] True stereo reverb (different L/R reflections)
+- [x] Wide chorus with LFO phase offset
+- [x] GUI controls for pan and width
+
 **v0.9.0** - Effects Chain:
 - [x] Delay effect (time, feedback, mix)
 - [x] Reverb (Schroeder-style: 4 comb + 2 allpass filters)
@@ -230,6 +239,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 - [x] ~~Polyphonic voice allocation~~ ✅ Done (8 voices)
 - [x] ~~Effects chain~~ ✅ Done (Delay, Reverb, Chorus)
+- [x] ~~Stereo output~~ ✅ Done (per-osc pan, width, stereo FX)
 - [ ] Additional filter types (HP, BP, ladder)
 - [ ] Arpeggiator
 - [ ] VST3/CLAP plugin export (via nih-plug)

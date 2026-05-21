@@ -33,13 +33,21 @@
   - Chorus (LFO-modulated delay)
   - GUI with enable toggles + parameters
 
-- [ ] **2.3 Additional Filter Types** ⬅️ NEXT
+- [x] **2.3 Stereo Output** ✅ DONE
+  - StereoSample type with equal-power panning
+  - Pan control per oscillator (-1.0 to +1.0)
+  - Stereo width control (0.0 mono to 2.0 extra-wide)
+  - Ping-pong delay with cross-feedback
+  - True stereo reverb (different L/R comb delays)
+  - Wide stereo chorus (90° LFO phase offset)
+  - GUI sliders for pan and width
 
+- [ ] **2.4 Additional Filter Types** ⬅️ NEXT
   - Highpass, Bandpass modes
   - 24dB/oct Ladder filter option
   - Filter drive/saturation control
 
-- [ ] **2.4 Arpeggiator**
+- [ ] **2.5 Arpeggiator**
   - Up/Down/Random patterns
   - Tempo sync
   - Octave range
@@ -115,6 +123,7 @@ struct SynthApp {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-21 | v1.0.0 | True stereo output (per-osc pan, width, stereo FX) |
 | 2026-05-21 | v0.9.0 | Effects chain (Delay, Reverb, Chorus) |
 | 2026-05-21 | v0.8.0 | Polyphonic mode (8 voices, MONO/POLY toggle) |
 | 2026-05-21 | v0.7.2 | 8 factory presets (bass, lead, pad, FX) |

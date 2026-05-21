@@ -949,6 +949,11 @@ impl SynthApp {
             if ui.add(egui::Slider::new(&mut phase1, 0.0..=1.0).text("Phase")).changed() {
                 self.set_param(SynthParam::Osc1Phase, phase1);
             }
+            
+            let mut pan1 = self.audio_engine.osc_pan(1);
+            if ui.add(egui::Slider::new(&mut pan1, -1.0..=1.0).text("Pan")).changed() {
+                self.audio_engine.set_osc_pan(1, pan1);
+            }
         });
         
         ui.add_space(4.0);
@@ -988,6 +993,11 @@ impl SynthApp {
             if ui.add(egui::Slider::new(&mut phase2, 0.0..=1.0).text("Phase")).changed() {
                 self.set_param(SynthParam::Osc2Phase, phase2);
             }
+            
+            let mut pan2 = self.audio_engine.osc_pan(2);
+            if ui.add(egui::Slider::new(&mut pan2, -1.0..=1.0).text("Pan")).changed() {
+                self.audio_engine.set_osc_pan(2, pan2);
+            }
         });
         
         ui.add_space(4.0);
@@ -1026,6 +1036,23 @@ impl SynthApp {
             let mut phase3 = self.get_param(SynthParam::Osc3Phase);
             if ui.add(egui::Slider::new(&mut phase3, 0.0..=1.0).text("Phase")).changed() {
                 self.set_param(SynthParam::Osc3Phase, phase3);
+            }
+            
+            let mut pan3 = self.audio_engine.osc_pan(3);
+            if ui.add(egui::Slider::new(&mut pan3, -1.0..=1.0).text("Pan")).changed() {
+                self.audio_engine.set_osc_pan(3, pan3);
+            }
+        });
+        
+        ui.add_space(4.0);
+        
+        // Stereo Width
+        ui.group(|ui| {
+            ui.label(RichText::new("STEREO").size(10.0).strong().color(Color32::from_rgb(100, 200, 255)));
+            
+            let mut width = self.audio_engine.stereo_width();
+            if ui.add(egui::Slider::new(&mut width, 0.0..=2.0).text("Width")).changed() {
+                self.audio_engine.set_stereo_width(width);
             }
         });
     }

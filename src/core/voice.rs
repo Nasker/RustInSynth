@@ -5,7 +5,7 @@ use super::lfo::{LFO, LfoDestination, LfoWaveform};
 use super::oscillator::{Oscillator, OscillatorBank};
 use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_portamento_time, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
 use super::presets::Preset;
-use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate};
+use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate, StereoSample};
 
 /// Envelope time range constants
 pub const MIN_ATTACK_TIME: f32 = 0.001;  // 1ms
@@ -142,6 +142,81 @@ impl Voice {
         };
 
         filtered_sample * env_amplitude * self.velocity * lfo_amp
+    }
+    
+    /// Generate the next stereo sample from this voice with per-oscillator panning
+    /// pans: (osc1_pan, osc2_pan, osc3_pan) where -1.0 = left, 0.0 = center, 1.0 = right
+    pub fn next_sample_stereo(&mut self, pans: (f32, f32, f32)) -> StereoSample {
+        if self.envelope.is_finished() {
+            return StereoSample::ZERO;
+        }
+
+        // Update portamento glide
+        if self.glide_active {
+            let step = (self.glide_target_freq - self.base_frequency)
+                / (self.portamento_time * self.sample_rate as f32);
+            self.base_frequency += step;
+            if (self.glide_target_freq - self.base_frequency).abs() <= step.abs() {
+                self.base_frequency = self.glide_target_freq;
+                self.glide_active = false;
+            }
+        }
+
+        // Get LFO value for this sample
+        let lfo_value = self.lfo.next_value();
+
+        // Apply LFO pitch modulation (vibrato) if enabled
+        let current_freq = if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
+            let vibrato_semitones = lfo_value;
+            let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
+            self.base_frequency * vibrato_ratio
+        } else {
+            self.base_frequency
+        };
+        self.osc_bank.set_frequency(current_freq);
+
+        // Calculate filter envelope and LFO modulation
+        let filter_env_amp = self.filter_envelope.next_amplitude();
+        let filter_lfo = if self.lfo.destination() == LfoDestination::FilterCutoff {
+            lfo_value
+        } else {
+            0.0
+        };
+
+        let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
+            let max_cutoff = 20000.0f32;
+            let cutoff_range = max_cutoff - self.base_cutoff;
+            let env_modulation = cutoff_range * self.filter_env_amount * filter_env_amp;
+            let lfo_depth = self.lfo.depth();
+            let lfo_modulation = cutoff_range * lfo_depth * filter_lfo * 0.5;
+            let target_cutoff = self.base_cutoff + env_modulation + lfo_modulation;
+            target_cutoff.min(max_cutoff).max(20.0)
+        } else {
+            self.base_cutoff
+        };
+        self.filter.set_cutoff(modulated_cutoff);
+
+        // Get individual oscillator samples and pan them
+        let (s1, s2, s3) = self.osc_bank.next_samples_individual();
+        let stereo_osc = StereoSample::from_mono_panned(s1, pans.0)
+            + StereoSample::from_mono_panned(s2, pans.1)
+            + StereoSample::from_mono_panned(s3, pans.2);
+        
+        // Filter the stereo signal (process L and R separately)
+        let filtered_left = self.filter.process(stereo_osc.left);
+        let filtered_right = self.filter.process(stereo_osc.right);
+        let filtered_stereo = StereoSample::new(filtered_left, filtered_right);
+        
+        let env_amplitude = self.envelope.next_amplitude();
+
+        // Apply LFO amplitude modulation (tremolo) if enabled
+        let lfo_amp = if self.lfo.destination() == LfoDestination::Amplitude {
+            1.0 + lfo_value * 0.5
+        } else {
+            1.0
+        };
+
+        filtered_stereo * (env_amplitude * self.velocity * lfo_amp)
     }
 
     /// Trigger a note on this voice
@@ -373,6 +448,11 @@ pub struct VoiceManager {
     cc_mapping: CCMapping,
     // Polyphony mode
     polyphony_mode: PolyphonyMode,
+    // Stereo panning (-1.0 = left, 0.0 = center, 1.0 = right)
+    osc1_pan: f32,
+    osc2_pan: f32,
+    osc3_pan: f32,
+    stereo_width: f32,  // 0.0 = mono, 1.0 = normal, 2.0 = extra wide
     // Amplitude ADSR envelope state
     attack_time: f32,
     decay_time: f32,
@@ -418,6 +498,11 @@ impl VoiceManager {
             master_volume: 0.5,
             cc_mapping: CCMapping::default_mappings(),
             polyphony_mode: PolyphonyMode::Mono,
+            // Stereo defaults (slight spread for fatness)
+            osc1_pan: 0.0,    // Center
+            osc2_pan: -0.3,   // Slightly left
+            osc3_pan: 0.3,    // Slightly right
+            stereo_width: 1.0,
             // Amp envelope defaults
             attack_time: 0.01,
             decay_time: 0.1,
@@ -514,7 +599,7 @@ impl VoiceManager {
         }
     }
 
-    /// Generate the next mixed sample from all active voices
+    /// Generate the next mixed sample from all active voices (mono, for backwards compat)
     pub fn next_sample(&mut self) -> Sample {
         let mut mixed_sample: Sample = 0.0;
 
@@ -527,6 +612,54 @@ impl VoiceManager {
         // Apply master volume and soft clipping
         let output = mixed_sample * self.master_volume;
         soft_clip(output)
+    }
+    
+    /// Generate the next stereo sample from all active voices
+    pub fn next_sample_stereo(&mut self) -> StereoSample {
+        let mut mixed = StereoSample::ZERO;
+        let pans = (self.osc1_pan, self.osc2_pan, self.osc3_pan);
+
+        for voice in &mut self.voices {
+            if voice.is_active() {
+                mixed += voice.next_sample_stereo(pans);
+            }
+        }
+
+        // Apply master volume, stereo width, and soft clipping
+        let output = mixed * self.master_volume;
+        let widened = output.with_width(self.stereo_width);
+        StereoSample::new(soft_clip(widened.left), soft_clip(widened.right))
+    }
+    
+    /// Set oscillator pan (-1.0 = left, 0.0 = center, 1.0 = right)
+    pub fn set_osc_pan(&mut self, osc_num: u8, pan: f32) {
+        let pan = pan.clamp(-1.0, 1.0);
+        match osc_num {
+            1 => self.osc1_pan = pan,
+            2 => self.osc2_pan = pan,
+            3 => self.osc3_pan = pan,
+            _ => {}
+        }
+    }
+    
+    /// Get oscillator pan
+    pub fn osc_pan(&self, osc_num: u8) -> f32 {
+        match osc_num {
+            1 => self.osc1_pan,
+            2 => self.osc2_pan,
+            3 => self.osc3_pan,
+            _ => 0.0,
+        }
+    }
+    
+    /// Set stereo width (0.0 = mono, 1.0 = normal, 2.0 = extra wide)
+    pub fn set_stereo_width(&mut self, width: f32) {
+        self.stereo_width = width.clamp(0.0, 2.0);
+    }
+    
+    /// Get stereo width
+    pub fn stereo_width(&self) -> f32 {
+        self.stereo_width
     }
 
     /// Find a free voice or steal the oldest releasing voice

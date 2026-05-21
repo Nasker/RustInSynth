@@ -653,6 +653,17 @@ impl OscillatorBank {
     }
 }
 
+impl OscillatorBank {
+    /// Get individual oscillator samples (for stereo panning)
+    /// Returns (osc1, osc2, osc3) samples normalized
+    pub fn next_samples_individual(&mut self) -> (Sample, Sample, Sample) {
+        let s1 = self.osc1.next_sample() / 3.0;
+        let s2 = self.osc2.next_sample() / 3.0;
+        let s3 = self.osc3.next_sample() / 3.0;
+        (s1, s2, s3)
+    }
+}
+
 impl Oscillator for OscillatorBank {
     fn next_sample(&mut self) -> Sample {
         // Mix all three oscillators

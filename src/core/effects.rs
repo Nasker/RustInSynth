@@ -1,8 +1,8 @@
 //! Audio effects: Delay, Reverb, Chorus
 
-use super::types::{Sample, SampleRate};
+use super::types::{Sample, SampleRate, StereoSample};
 
-/// Trait for audio effects
+/// Trait for audio effects (mono)
 pub trait Effect: Send {
     /// Process a single sample
     fn process(&mut self, input: Sample) -> Sample;
@@ -11,6 +11,18 @@ pub trait Effect: Send {
     fn set_sample_rate(&mut self, sample_rate: SampleRate);
     
     /// Reset internal state (clear buffers)
+    fn reset(&mut self);
+}
+
+/// Trait for stereo audio effects
+pub trait StereoEffect: Send {
+    /// Process a stereo sample
+    fn process_stereo(&mut self, input: StereoSample) -> StereoSample;
+    
+    /// Set the sample rate
+    fn set_sample_rate(&mut self, sample_rate: SampleRate);
+    
+    /// Reset internal state
     fn reset(&mut self);
 }
 
@@ -61,22 +73,26 @@ impl DelayLine {
     }
 }
 
-/// Stereo delay effect with feedback
+/// Stereo ping-pong delay effect
 pub struct Delay {
-    delay_line: DelayLine,
+    delay_line_l: DelayLine,
+    delay_line_r: DelayLine,
     delay_time: f32,      // Delay time in seconds (0.0 - 2.0)
     feedback: f32,        // Feedback amount (0.0 - 0.95)
     mix: f32,             // Dry/wet mix (0.0 = dry, 1.0 = wet)
+    ping_pong: bool,      // Enable ping-pong mode
     sample_rate: SampleRate,
 }
 
 impl Delay {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
-            delay_line: DelayLine::new(2.0, sample_rate),
+            delay_line_l: DelayLine::new(2.0, sample_rate),
+            delay_line_r: DelayLine::new(2.0, sample_rate),
             delay_time: 0.3,
             feedback: 0.4,
             mix: 0.3,
+            ping_pong: true,  // Ping-pong on by default for stereo goodness
             sample_rate,
         }
     }
@@ -93,30 +109,55 @@ impl Delay {
         self.mix = mix.clamp(0.0, 1.0);
     }
     
+    pub fn set_ping_pong(&mut self, enabled: bool) {
+        self.ping_pong = enabled;
+    }
+    
     pub fn delay_time(&self) -> f32 { self.delay_time }
     pub fn feedback(&self) -> f32 { self.feedback }
     pub fn mix(&self) -> f32 { self.mix }
+    pub fn ping_pong(&self) -> bool { self.ping_pong }
+    
+    /// Process stereo with ping-pong
+    pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
+        let delay_samples = (self.delay_time * self.sample_rate as f32) as usize;
+        let delay_samples = delay_samples.max(1);
+        
+        let delayed_l = self.delay_line_l.read(delay_samples);
+        let delayed_r = self.delay_line_r.read(delay_samples);
+        
+        if self.ping_pong {
+            // Ping-pong: L feeds into R, R feeds into L
+            self.delay_line_l.write(input.left + delayed_r * self.feedback);
+            self.delay_line_r.write(input.right + delayed_l * self.feedback);
+        } else {
+            // Standard stereo delay
+            self.delay_line_l.write(input.left + delayed_l * self.feedback);
+            self.delay_line_r.write(input.right + delayed_r * self.feedback);
+        }
+        
+        StereoSample::new(
+            input.left * (1.0 - self.mix) + delayed_l * self.mix,
+            input.right * (1.0 - self.mix) + delayed_r * self.mix,
+        )
+    }
 }
 
 impl Effect for Delay {
     fn process(&mut self, input: Sample) -> Sample {
-        let delay_samples = (self.delay_time * self.sample_rate as f32) as usize;
-        let delayed = self.delay_line.read(delay_samples.max(1));
-        
-        // Write input + feedback to delay line
-        self.delay_line.write(input + delayed * self.feedback);
-        
-        // Mix dry and wet
-        input * (1.0 - self.mix) + delayed * self.mix
+        let stereo = self.process_stereo(StereoSample::from_mono(input));
+        (stereo.left + stereo.right) * 0.5
     }
     
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
-        self.delay_line = DelayLine::new(2.0, sample_rate);
+        self.delay_line_l = DelayLine::new(2.0, sample_rate);
+        self.delay_line_r = DelayLine::new(2.0, sample_rate);
     }
     
     fn reset(&mut self) {
-        self.delay_line.clear();
+        self.delay_line_l.clear();
+        self.delay_line_r.clear();
     }
 }
 
@@ -193,10 +234,12 @@ impl AllpassFilter {
     }
 }
 
-/// Schroeder reverb with 4 comb filters and 2 allpass filters
+/// Stereo Schroeder reverb with different L/R comb filter delays
 pub struct Reverb {
-    combs: Vec<CombFilter>,
-    allpasses: Vec<AllpassFilter>,
+    combs_l: Vec<CombFilter>,
+    combs_r: Vec<CombFilter>,
+    allpasses_l: Vec<AllpassFilter>,
+    allpasses_r: Vec<AllpassFilter>,
     room_size: f32,       // 0.0 - 1.0
     damping: f32,         // 0.0 - 1.0
     mix: f32,             // Dry/wet mix
@@ -206,8 +249,10 @@ pub struct Reverb {
 impl Reverb {
     pub fn new(sample_rate: SampleRate) -> Self {
         let mut reverb = Self {
-            combs: Vec::new(),
-            allpasses: Vec::new(),
+            combs_l: Vec::new(),
+            combs_r: Vec::new(),
+            allpasses_l: Vec::new(),
+            allpasses_r: Vec::new(),
             room_size: 0.5,
             damping: 0.5,
             mix: 0.3,
@@ -219,17 +264,26 @@ impl Reverb {
     
     fn rebuild_filters(&mut self) {
         // Comb filter delay times (in samples at 44100 Hz, scaled to current rate)
+        // Different delays for L/R create stereo width
         let scale = self.sample_rate as f32 / 44100.0;
-        let comb_delays = [1116, 1188, 1277, 1356];
-        let allpass_delays = [556, 441];
+        let comb_delays_l = [1116, 1188, 1277, 1356];
+        let comb_delays_r = [1139, 1211, 1300, 1379];  // Slightly different for stereo
+        let allpass_delays_l = [556, 441];
+        let allpass_delays_r = [579, 464];  // Slightly different for stereo
         
         let feedback = 0.84 + self.room_size * 0.12; // 0.84 - 0.96
         
-        self.combs = comb_delays.iter()
+        self.combs_l = comb_delays_l.iter()
+            .map(|&d| CombFilter::new((d as f32 * scale) as usize, feedback, self.damping))
+            .collect();
+        self.combs_r = comb_delays_r.iter()
             .map(|&d| CombFilter::new((d as f32 * scale) as usize, feedback, self.damping))
             .collect();
         
-        self.allpasses = allpass_delays.iter()
+        self.allpasses_l = allpass_delays_l.iter()
+            .map(|&d| AllpassFilter::new((d as f32 * scale) as usize, 0.5))
+            .collect();
+        self.allpasses_r = allpass_delays_r.iter()
             .map(|&d| AllpassFilter::new((d as f32 * scale) as usize, 0.5))
             .collect();
     }
@@ -238,14 +292,20 @@ impl Reverb {
         self.room_size = size.clamp(0.0, 1.0);
         // Update comb filter feedback
         let feedback = 0.84 + self.room_size * 0.12;
-        for comb in &mut self.combs {
+        for comb in &mut self.combs_l {
+            comb.feedback = feedback;
+        }
+        for comb in &mut self.combs_r {
             comb.feedback = feedback;
         }
     }
     
     pub fn set_damping(&mut self, damping: f32) {
         self.damping = damping.clamp(0.0, 1.0);
-        for comb in &mut self.combs {
+        for comb in &mut self.combs_l {
+            comb.damp = self.damping;
+        }
+        for comb in &mut self.combs_r {
             comb.damp = self.damping;
         }
     }
@@ -257,25 +317,43 @@ impl Reverb {
     pub fn room_size(&self) -> f32 { self.room_size }
     pub fn damping(&self) -> f32 { self.damping }
     pub fn mix(&self) -> f32 { self.mix }
+    
+    /// Process stereo reverb
+    pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
+        // Sum of parallel comb filters (separate L/R)
+        let mut comb_sum_l: Sample = 0.0;
+        let mut comb_sum_r: Sample = 0.0;
+        for comb in &mut self.combs_l {
+            comb_sum_l += comb.process(input.left);
+        }
+        for comb in &mut self.combs_r {
+            comb_sum_r += comb.process(input.right);
+        }
+        comb_sum_l *= 0.25;
+        comb_sum_r *= 0.25;
+        
+        // Series allpass filters for diffusion
+        let mut output_l = comb_sum_l;
+        let mut output_r = comb_sum_r;
+        for allpass in &mut self.allpasses_l {
+            output_l = allpass.process(output_l);
+        }
+        for allpass in &mut self.allpasses_r {
+            output_r = allpass.process(output_r);
+        }
+        
+        // Mix dry and wet
+        StereoSample::new(
+            input.left * (1.0 - self.mix) + output_l * self.mix,
+            input.right * (1.0 - self.mix) + output_r * self.mix,
+        )
+    }
 }
 
 impl Effect for Reverb {
     fn process(&mut self, input: Sample) -> Sample {
-        // Sum of parallel comb filters
-        let mut comb_sum: Sample = 0.0;
-        for comb in &mut self.combs {
-            comb_sum += comb.process(input);
-        }
-        comb_sum *= 0.25; // Normalize
-        
-        // Series allpass filters for diffusion
-        let mut output = comb_sum;
-        for allpass in &mut self.allpasses {
-            output = allpass.process(output);
-        }
-        
-        // Mix dry and wet
-        input * (1.0 - self.mix) + output * self.mix
+        let stereo = self.process_stereo(StereoSample::from_mono(input));
+        (stereo.left + stereo.right) * 0.5
     }
     
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
@@ -284,10 +362,16 @@ impl Effect for Reverb {
     }
     
     fn reset(&mut self) {
-        for comb in &mut self.combs {
+        for comb in &mut self.combs_l {
             comb.clear();
         }
-        for allpass in &mut self.allpasses {
+        for comb in &mut self.combs_r {
+            comb.clear();
+        }
+        for allpass in &mut self.allpasses_l {
+            allpass.clear();
+        }
+        for allpass in &mut self.allpasses_r {
             allpass.clear();
         }
     }
@@ -297,24 +381,28 @@ impl Effect for Reverb {
 // CHORUS
 // ============================================================================
 
-/// Chorus effect using modulated delay
+/// Stereo chorus effect with LFO phase offset between L/R
 pub struct Chorus {
-    delay_line: DelayLine,
+    delay_line_l: DelayLine,
+    delay_line_r: DelayLine,
     lfo_phase: f32,
     rate: f32,            // LFO rate in Hz (0.1 - 5.0)
     depth: f32,           // Modulation depth in ms (0.0 - 10.0)
     mix: f32,             // Dry/wet mix
+    stereo_spread: f32,   // LFO phase offset for stereo (0.0 - 0.5)
     sample_rate: SampleRate,
 }
 
 impl Chorus {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
-            delay_line: DelayLine::new(0.05, sample_rate), // 50ms max
+            delay_line_l: DelayLine::new(0.05, sample_rate), // 50ms max
+            delay_line_r: DelayLine::new(0.05, sample_rate),
             lfo_phase: 0.0,
             rate: 1.5,
             depth: 3.0,
             mix: 0.5,
+            stereo_spread: 0.25,  // 90 degrees phase offset
             sample_rate,
         }
     }
@@ -334,39 +422,57 @@ impl Chorus {
     pub fn rate(&self) -> f32 { self.rate }
     pub fn depth(&self) -> f32 { self.depth }
     pub fn mix(&self) -> f32 { self.mix }
-}
-
-impl Effect for Chorus {
-    fn process(&mut self, input: Sample) -> Sample {
-        // LFO (sine wave)
-        let lfo = (self.lfo_phase * std::f32::consts::TAU).sin();
+    
+    /// Process stereo chorus
+    pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
+        // LFO for left channel
+        let lfo_l = (self.lfo_phase * std::f32::consts::TAU).sin();
+        // LFO for right channel (phase offset for stereo width)
+        let lfo_r = ((self.lfo_phase + self.stereo_spread) * std::f32::consts::TAU).sin();
+        
         self.lfo_phase += self.rate / self.sample_rate as f32;
         if self.lfo_phase >= 1.0 {
             self.lfo_phase -= 1.0;
         }
         
-        // Modulated delay time (center at 7ms + depth modulation)
+        // Modulated delay times
         let center_delay_ms = 7.0;
-        let delay_ms = center_delay_ms + lfo * self.depth * 0.5;
-        let delay_samples = delay_ms * 0.001 * self.sample_rate as f32;
+        let delay_ms_l = center_delay_ms + lfo_l * self.depth * 0.5;
+        let delay_ms_r = center_delay_ms + lfo_r * self.depth * 0.5;
+        let delay_samples_l = delay_ms_l * 0.001 * self.sample_rate as f32;
+        let delay_samples_r = delay_ms_r * 0.001 * self.sample_rate as f32;
         
-        // Write to delay line
-        self.delay_line.write(input);
+        // Write to delay lines
+        self.delay_line_l.write(input.left);
+        self.delay_line_r.write(input.right);
         
         // Read with interpolation
-        let delayed = self.delay_line.read_interpolated(delay_samples);
+        let delayed_l = self.delay_line_l.read_interpolated(delay_samples_l);
+        let delayed_r = self.delay_line_r.read_interpolated(delay_samples_r);
         
         // Mix dry and wet
-        input * (1.0 - self.mix) + delayed * self.mix
+        StereoSample::new(
+            input.left * (1.0 - self.mix) + delayed_l * self.mix,
+            input.right * (1.0 - self.mix) + delayed_r * self.mix,
+        )
+    }
+}
+
+impl Effect for Chorus {
+    fn process(&mut self, input: Sample) -> Sample {
+        let stereo = self.process_stereo(StereoSample::from_mono(input));
+        (stereo.left + stereo.right) * 0.5
     }
     
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
-        self.delay_line = DelayLine::new(0.05, sample_rate);
+        self.delay_line_l = DelayLine::new(0.05, sample_rate);
+        self.delay_line_r = DelayLine::new(0.05, sample_rate);
     }
     
     fn reset(&mut self) {
-        self.delay_line.clear();
+        self.delay_line_l.clear();
+        self.delay_line_r.clear();
         self.lfo_phase = 0.0;
     }
 }
@@ -397,18 +503,25 @@ impl EffectsChain {
         }
     }
     
+    /// Process mono (for backwards compatibility)
     pub fn process(&mut self, input: Sample) -> Sample {
+        let stereo = self.process_stereo(StereoSample::from_mono(input));
+        (stereo.left + stereo.right) * 0.5
+    }
+    
+    /// Process stereo signal through effects chain
+    pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
         let mut output = input;
         
         // Process in order: Chorus → Delay → Reverb
         if self.chorus_enabled {
-            output = self.chorus.process(output);
+            output = self.chorus.process_stereo(output);
         }
         if self.delay_enabled {
-            output = self.delay.process(output);
+            output = self.delay.process_stereo(output);
         }
         if self.reverb_enabled {
-            output = self.reverb.process(output);
+            output = self.reverb.process_stereo(output);
         }
         
         output

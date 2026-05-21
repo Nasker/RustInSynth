@@ -104,10 +104,22 @@ impl AudioEngine {
                     let mut vm = voice_manager.lock();
                     let mut fx = effects_chain.lock();
                     for frame in data.chunks_mut(channels) {
-                        let sample = vm.next_sample();
-                        let processed = fx.process(sample);
-                        for channel_sample in frame.iter_mut() {
-                            *channel_sample = processed;
+                        // Generate stereo sample from voices
+                        let stereo = vm.next_sample_stereo();
+                        // Process through stereo effects chain
+                        let processed = fx.process_stereo(stereo);
+                        
+                        // Output to channels (stereo or mono)
+                        if channels >= 2 {
+                            frame[0] = processed.left;
+                            frame[1] = processed.right;
+                            // Fill remaining channels with silence if > 2
+                            for ch in frame.iter_mut().skip(2) {
+                                *ch = 0.0;
+                            }
+                        } else {
+                            // Mono output: mix L+R
+                            frame[0] = (processed.left + processed.right) * 0.5;
                         }
                     }
                     drop(vm);
@@ -268,6 +280,30 @@ impl AudioEngine {
     /// Get max voices
     pub fn max_voices(&self) -> usize {
         self.voice_manager.lock().max_voices()
+    }
+    
+    // ========================================================================
+    // Stereo Control
+    // ========================================================================
+    
+    /// Set oscillator pan (-1.0 = left, 0.0 = center, 1.0 = right)
+    pub fn set_osc_pan(&self, osc_num: u8, pan: f32) {
+        self.voice_manager.lock().set_osc_pan(osc_num, pan);
+    }
+    
+    /// Get oscillator pan
+    pub fn osc_pan(&self, osc_num: u8) -> f32 {
+        self.voice_manager.lock().osc_pan(osc_num)
+    }
+    
+    /// Set stereo width (0.0 = mono, 1.0 = normal, 2.0 = extra wide)
+    pub fn set_stereo_width(&self, width: f32) {
+        self.voice_manager.lock().set_stereo_width(width);
+    }
+    
+    /// Get stereo width
+    pub fn stereo_width(&self) -> f32 {
+        self.voice_manager.lock().stereo_width()
     }
     
     // ========================================================================
