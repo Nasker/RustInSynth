@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
 
 use midir::{MidiInput as MidirInput, MidiInputConnection, MidiInputPort};
 
@@ -8,6 +9,9 @@ use crate::core::types::MidiNote;
 
 /// MIDI channel (0-15, displayed as 1-16 to user)
 pub type MidiChannel = u8;
+
+/// Special value meaning "all channels" (no filter)
+const MIDI_CHANNEL_ALL: u8 = 255;
 
 /// Error type for MIDI operations
 #[derive(Debug)]
@@ -35,7 +39,7 @@ impl std::error::Error for MidiError {}
 pub struct MidiInputHandler {
     _connection: MidiInputConnection<()>,
     receiver: Receiver<NoteEvent>,
-    channel_filter: Option<MidiChannel>,
+    channel_filter: Arc<AtomicU8>,  // 255 = all channels, 0-15 = specific channel
     debug_mode: bool,
 }
 
@@ -131,7 +135,12 @@ impl MidiInputHandler {
 
         let (sender, receiver): (Sender<NoteEvent>, Receiver<NoteEvent>) = mpsc::channel();
 
-        let filter = channel_filter;
+        // Use atomic for runtime channel filter changes
+        let filter_atomic = Arc::new(AtomicU8::new(
+            channel_filter.unwrap_or(MIDI_CHANNEL_ALL)
+        ));
+        let filter_clone = Arc::clone(&filter_atomic);
+        
         let connection = midi_in
             .connect(
                 port,
@@ -140,7 +149,14 @@ impl MidiInputHandler {
                     if debug_mode {
                         print_midi_debug(timestamp, message);
                     }
-                    if let Some(event) = parse_midi_message(message, filter) {
+                    // Read current filter from atomic
+                    let current_filter = filter_clone.load(Ordering::Relaxed);
+                    let filter_opt = if current_filter == MIDI_CHANNEL_ALL {
+                        None
+                    } else {
+                        Some(current_filter)
+                    };
+                    if let Some(event) = parse_midi_message(message, filter_opt) {
                         let _ = sender.send(event);
                     }
                 },
@@ -156,7 +172,7 @@ impl MidiInputHandler {
         Ok(Self {
             _connection: connection,
             receiver,
-            channel_filter,
+            channel_filter: filter_atomic,
             debug_mode,
         })
     }
@@ -199,9 +215,37 @@ impl MidiInputHandler {
         self.receiver.try_recv().ok()
     }
 
-    /// Get the channel filter setting
+    /// Get the channel filter setting (None = all channels)
     pub fn channel_filter(&self) -> Option<MidiChannel> {
-        self.channel_filter
+        let val = self.channel_filter.load(Ordering::Relaxed);
+        if val == MIDI_CHANNEL_ALL {
+            None
+        } else {
+            Some(val)
+        }
+    }
+    
+    /// Set the channel filter at runtime (None = all channels, Some(0-15) = specific channel)
+    pub fn set_channel_filter(&self, channel: Option<MidiChannel>) {
+        let val = channel.unwrap_or(MIDI_CHANNEL_ALL);
+        self.channel_filter.store(val, Ordering::Relaxed);
+    }
+    
+    /// Get channel as display value (0 = All, 1-16 = channel)
+    pub fn channel_display(&self) -> u8 {
+        match self.channel_filter() {
+            None => 0,
+            Some(ch) => ch + 1,
+        }
+    }
+    
+    /// Set channel from display value (0 = All, 1-16 = channel)
+    pub fn set_channel_from_display(&self, display_value: u8) {
+        if display_value == 0 {
+            self.set_channel_filter(None);
+        } else {
+            self.set_channel_filter(Some((display_value - 1).min(15)));
+        }
     }
 }
 

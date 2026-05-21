@@ -1379,6 +1379,30 @@ impl SynthApp {
             }
         });
         
+        // MIDI Channel selector
+        ui.add_space(4.0);
+        let channel_labels = ["All", "1", "2", "3", "4", "5", "6", "7", "8", 
+                              "9", "10", "11", "12", "13", "14", "15", "16"];
+        let current_channel = self.midi_handler.as_ref()
+            .map(|h| h.channel_display())
+            .unwrap_or(0) as usize;
+        
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Channel:").size(10.0));
+            egui::ComboBox::from_id_source("midi_channel")
+                .width(50.0)
+                .selected_text(channel_labels[current_channel.min(16)])
+                .show_ui(ui, |ui| {
+                    for (i, label) in channel_labels.iter().enumerate() {
+                        if ui.selectable_label(current_channel == i, *label).clicked() {
+                            if let Some(ref handler) = self.midi_handler {
+                                handler.set_channel_from_display(i as u8);
+                            }
+                        }
+                    }
+                });
+        });
+        
         // MIDI Learn section
         ui.add_space(8.0);
         ui.separator();
