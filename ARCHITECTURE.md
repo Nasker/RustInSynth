@@ -28,8 +28,9 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 
 #### `mod.rs` - Shared State
 - **`ParamBank`**: Array of `AtomicU32` storing all synth parameters as f32 bits
-- **`SharedState`**: Contains `ParamBank` + `DashMap` for MIDI CC feedback
+- **`SharedState`**: Contains `ParamBank` + `DashMap` for MIDI CC feedback + CPU load atomic
 - Lock-free reads/writes using `Ordering::Relaxed`
+- `get_cpu_load()` / `set_cpu_load()` for real-time CPU measurement
 
 #### `app.rs` - Main Application
 - **`SynthApp`**: Owns `AudioEngine`, `MidiInputHandler`, and `SharedState`
@@ -43,6 +44,11 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 - VU meter, MIDI indicator
 - Minimoog-style panel backgrounds
 
+#### `theme.rs` - Centralized Styling
+- `SynthTheme` struct with all UI colors
+- Global `THEME` constant for consistent styling
+- Easy to swap color schemes
+
 ### 2. Audio Layer (`src/audio/`)
 
 #### `engine.rs` - Audio Engine
@@ -50,6 +56,8 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 - Owns `Arc<Mutex<VoiceManager>>` shared with audio callback
 - `sync_params()`: Reads `ParamBank` and applies to `VoiceManager`
 - `send_event()`: Forwards MIDI events to `VoiceManager`
+- **CPU load measurement**: Measures `process_time / available_time` per buffer
+- Smoothed with low-pass filter (0.9/0.1) for stable display
 
 ### 3. Core DSP (`src/core/`)
 
@@ -138,6 +146,7 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 | Component | Thread | Synchronization |
 |-----------|--------|-----------------|
 | `ParamBank` | GUI + Audio | `AtomicU32` (lock-free) |
+| `cpu_load` | Audio → GUI | `AtomicU32` (lock-free) |
 | `midi_feedback` | GUI + MIDI | `DashMap` (lock-free) |
 | `VoiceManager` | Audio | `parking_lot::Mutex` |
 | MIDI events | MIDI → GUI | `mpsc::channel` |
@@ -155,7 +164,8 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 |------|-------|---------|
 | `gui/app.rs` | ~1100 | Main GUI application |
 | `gui/widgets.rs` | ~400 | Custom egui widgets |
-| `gui/mod.rs` | ~200 | SharedState, ParamBank |
+| `gui/theme.rs` | ~50 | Centralized color theme |
+| `gui/mod.rs` | ~210 | SharedState, ParamBank, CPU load |
 | `core/voice.rs` | ~1150 | Voice manager + DSP + key stacking |
 | `core/oscillator.rs` | ~500 | Oscillator bank |
 | `core/filter.rs` | ~200 | SVF implementation |

@@ -129,6 +129,16 @@ impl SynthParam {
         }
     }
 
+    /// Parse parameter from name string
+    pub fn from_name(name: &str) -> Option<SynthParam> {
+        for param in Self::all() {
+            if param.name() == name {
+                return Some(*param);
+            }
+        }
+        None
+    }
+    
     /// Get all available parameters
     pub fn all() -> &'static [SynthParam] {
         &[

@@ -12,12 +12,54 @@ use crate::core::voice::{
     MIN_ATTACK_TIME, MAX_ATTACK_TIME, MIN_DECAY_TIME, MAX_DECAY_TIME,
     MIN_RELEASE_TIME, MAX_RELEASE_TIME,
 };
-use crate::core::presets::{list_presets, load_preset, save_preset, Preset};
+use crate::core::presets::{list_presets, load_preset, save_preset, install_factory_presets, Preset};
 use crate::gui::widgets::*;
 use crate::gui::theme::{THEME, panel_background, section_header};
 use crate::gui::SharedState;
 use crate::input::midi::MidiInputHandler;
 use egui::*;
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+
+/// Get the CC mappings file path
+fn cc_mappings_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".rustinsynth")
+        .join("cc_mappings.json")
+}
+
+/// Load custom CC mappings from disk
+fn load_cc_mappings() -> Option<HashMap<u8, SynthParam>> {
+    let path = cc_mappings_path();
+    let content = fs::read_to_string(&path).ok()?;
+    let raw: HashMap<u8, String> = serde_json::from_str(&content).ok()?;
+    
+    let mut map = HashMap::new();
+    for (cc, param_name) in raw {
+        if let Some(param) = SynthParam::from_name(&param_name) {
+            map.insert(cc, param);
+        }
+    }
+    Some(map)
+}
+
+/// Save custom CC mappings to disk
+fn save_cc_mappings(map: &HashMap<u8, SynthParam>) -> Result<(), std::io::Error> {
+    let path = cc_mappings_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    
+    let raw: HashMap<u8, String> = map.iter()
+        .map(|(cc, param)| (*cc, param.name().to_string()))
+        .collect();
+    
+    let content = serde_json::to_string_pretty(&raw)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(&path, content)
+}
 
 /// Main synth application
 pub struct SynthApp {
@@ -44,10 +86,23 @@ pub struct SynthApp {
     
     /// Selected preset index
     selected_preset: Option<usize>,
+    
+    /// MIDI Learn: which parameter is waiting for CC assignment
+    midi_learn_target: Option<SynthParam>,
+    
+    /// Custom CC mappings (user overrides)
+    custom_cc_map: HashMap<u8, SynthParam>,
 }
 
 impl SynthApp {
     pub fn new(shared: SharedState) -> Self {
+        // Install factory presets on first run
+        match install_factory_presets() {
+            Ok(n) if n > 0 => println!("Installed {} factory presets", n),
+            Err(e) => eprintln!("Failed to install factory presets: {}", e),
+            _ => {}
+        }
+        
         let available_presets = list_presets().unwrap_or_default();
 
         // Get available MIDI ports
@@ -76,6 +131,9 @@ impl SynthApp {
             println!("MIDI connected!");
         }
 
+        // Load custom CC mappings if they exist
+        let custom_cc_map = load_cc_mappings().unwrap_or_default();
+        
         Self {
             shared,
             audio_engine,
@@ -85,6 +143,8 @@ impl SynthApp {
             preset_name: "New Preset".to_string(),
             available_presets,
             selected_preset: None,
+            midi_learn_target: None,
+            custom_cc_map,
         }
     }
 
@@ -203,6 +263,13 @@ impl SynthApp {
 
     /// Update ParamBank from incoming MIDI CC to keep GUI in sync
     fn update_param_from_cc(&mut self, cc: u8, value: u8) {
+        // Check custom mappings first (user overrides)
+        if let Some(&param) = self.custom_cc_map.get(&cc) {
+            self.apply_cc_to_param(param, value);
+            return;
+        }
+        
+        // Default mappings
         match cc {
             // ADSR Envelope
             73 => self.set_param(SynthParam::Attack, cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME)),
@@ -242,6 +309,56 @@ impl SynthApp {
             
             _ => {} // Ignore unmapped CCs
         }
+    }
+    
+    /// Apply CC value to a specific parameter with appropriate scaling
+    fn apply_cc_to_param(&mut self, param: SynthParam, value: u8) {
+        let scaled = match param {
+            // Time-based parameters
+            SynthParam::Attack => cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
+            SynthParam::Decay => cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
+            SynthParam::Release => cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
+            SynthParam::FilterAttack => cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
+            SynthParam::FilterDecay => cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
+            SynthParam::FilterRelease => cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
+            SynthParam::PortamentoTime => cc_to_portamento_time(value),
+            
+            // 0-1 range parameters
+            SynthParam::Sustain | SynthParam::FilterSustain => cc_to_sustain(value),
+            SynthParam::FilterEnvAmount => cc_to_filter_env_amount(value),
+            SynthParam::LfoDepth => cc_to_lfo_depth(value),
+            SynthParam::Osc1Level | SynthParam::Osc2Level | SynthParam::Osc3Level => value as f32 / 127.0,
+            SynthParam::Osc1Phase | SynthParam::Osc2Phase | SynthParam::Osc3Phase => value as f32 / 127.0,
+            SynthParam::MasterVolume => value as f32 / 127.0,
+            
+            // Filter
+            SynthParam::FilterCutoff => cc_to_cutoff(value),
+            SynthParam::FilterResonance => cc_to_resonance(value),
+            
+            // LFO
+            SynthParam::LfoRate => cc_to_lfo_rate(value),
+            SynthParam::LfoWaveform => (value / 26).min(4) as f32,
+            SynthParam::LfoDestination => (value / 32).min(3) as f32,
+            
+            // Oscillator waveforms
+            SynthParam::Osc1Waveform | SynthParam::Osc2Waveform | SynthParam::Osc3Waveform => {
+                (value / 26).min(4) as f32
+            }
+            
+            // Semitones (-24 to +24)
+            SynthParam::Osc2Semitones | SynthParam::Osc3Semitones => {
+                ((value as f32 / 127.0) * 48.0 - 24.0).round()
+            }
+            
+            // Cents (-100 to +100)
+            SynthParam::Osc2Cents | SynthParam::Osc3Cents => {
+                ((value as f32 / 127.0) * 200.0 - 100.0).round()
+            }
+            
+            // Pitch bend range (1-24)
+            SynthParam::PitchBendRange => ((value as f32 / 127.0) * 23.0 + 1.0).round(),
+        };
+        self.set_param(param, scaled);
     }
 
     fn ui_oscillators(&mut self, ui: &mut Ui) {
@@ -675,6 +792,18 @@ impl SynthApp {
             if let crate::core::event::NoteEventKind::ControlChange { cc, value } = event.kind {
                 // Always update feedback map for ALL CCs
                 self.shared.midi_feedback.insert(cc, value);
+                
+                // Check if we're in MIDI learn mode
+                if let Some(target_param) = self.midi_learn_target.take() {
+                    // Assign this CC to the target parameter
+                    self.custom_cc_map.insert(cc, target_param);
+                    // Save to disk
+                    if let Err(e) = save_cc_mappings(&self.custom_cc_map) {
+                        eprintln!("Failed to save CC mappings: {}", e);
+                    }
+                    println!("Mapped CC {} → {}", cc, target_param.name());
+                }
+                
                 // Update ParamBank for mapped CCs so sync_params doesn't overwrite
                 self.update_param_from_cc(cc, value);
             }
@@ -1114,6 +1243,46 @@ impl SynthApp {
             }
         });
         
+        // MIDI Learn section
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+        
+        // Learn status indicator
+        if let Some(param) = &self.midi_learn_target {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("🎯 Learning:").size(10.0).color(Color32::YELLOW));
+                ui.label(RichText::new(param.name()).size(10.0).strong());
+            });
+            if ui.button("Cancel").clicked() {
+                self.midi_learn_target = None;
+            }
+        } else {
+            ui.label(RichText::new("CC Learn:").size(10.0));
+            
+            // Parameter selector for learn
+            egui::ComboBox::from_id_source("midi_learn_param")
+                .selected_text("Select param...")
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    for param in SynthParam::all() {
+                        if ui.selectable_label(false, param.name()).clicked() {
+                            self.midi_learn_target = Some(*param);
+                        }
+                    }
+                });
+        }
+        
+        // Show custom mappings count
+        if !self.custom_cc_map.is_empty() {
+            ui.add_space(4.0);
+            ui.label(RichText::new(format!("{} custom mappings", self.custom_cc_map.len())).size(9.0).color(Color32::from_gray(120)));
+            if ui.small_button("Clear all").clicked() {
+                self.custom_cc_map.clear();
+                let _ = save_cc_mappings(&self.custom_cc_map);
+            }
+        }
+        
         // Recent CCs - show all received CCs
         ui.add_space(8.0);
         ui.label(RichText::new("CC Activity:").size(10.0));
@@ -1124,13 +1293,19 @@ impl SynthApp {
         
         egui::ScrollArea::vertical()
             .id_source("midi_cc_activity")
-            .max_height(100.0)
+            .max_height(80.0)
             .show(ui, |ui| {
-                for (cc, val) in cc_list.iter().take(12) {
+                for (cc, val) in cc_list.iter().take(10) {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("CC {:>3}:", cc)).size(10.0).monospace());
-                        ui.add(egui::ProgressBar::new(*val as f32 / 127.0).desired_width(60.0));
-                        ui.label(RichText::new(format!("{:>3}", val)).size(10.0).monospace());
+                        // Show if this CC has a custom mapping
+                        let mapped = self.custom_cc_map.get(cc).map(|p| p.short_name());
+                        let cc_text = if let Some(param_name) = mapped {
+                            format!("CC {:>3} → {}", cc, param_name)
+                        } else {
+                            format!("CC {:>3}:", cc)
+                        };
+                        ui.label(RichText::new(cc_text).size(9.0).monospace());
+                        ui.add(egui::ProgressBar::new(*val as f32 / 127.0).desired_width(40.0));
                     });
                 }
             });

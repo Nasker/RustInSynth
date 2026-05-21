@@ -18,6 +18,8 @@ A Minimoog-style monophonic synthesizer written in pure Rust with a real-time GU
 - **Full MIDI CC control** for all 32+ parameters
 - **Preset system** - JSON-based save/load
 - **Lock-free parameter sharing** between GUI and audio threads
+- **Real-time CPU meter** - actual DSP load measurement
+- **Centralized theme system** - consistent styling
 
 ## Architecture
 
@@ -182,9 +184,10 @@ src/
 │   ├── types.rs         # Core type definitions
 │   └── voice.rs         # Voice manager
 ├── gui/
-│   ├── mod.rs           # SharedState + ParamBank
+│   ├── mod.rs           # SharedState + ParamBank + CPU load
 │   ├── app.rs           # Main egui application
-│   └── widgets.rs       # Custom knobs, toggles, meters
+│   ├── widgets.rs       # Custom knobs, toggles, meters
+│   └── theme.rs         # Centralized color theme
 └── input/
     └── midi.rs          # MIDI input handler
 ```
@@ -192,6 +195,13 @@ src/
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Current Status
+
+**v0.7.2** - Factory Presets & MIDI Learn:
+- [x] 8 factory presets (Sub Bass, Moog Bass, Glide Lead, Warm Pad, Pluck, Sweep FX, Wobble, Soft Keys)
+- [x] Runtime MIDI CC Learn - map any CC to any parameter
+- [x] Custom CC mappings persist to `~/.rustinsynth/cc_mappings.json`
+- [x] Real-time CPU load meter in top bar
+- [x] Centralized theme system (`theme.rs`)
 
 **v0.6.0** - Portamento + Key Stacking:
 - [x] Portamento (glide) with linear interpolation (0-3s)
@@ -216,11 +226,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Roadmap
 
-- [ ] Runtime MIDI CC learn/mapping
-- [ ] Polyphonic voice allocation
-- [ ] Effects (reverb, delay, chorus)
-- [ ] Arpeggiator/sequencer
-- [ ] VST3/CLAP plugin export
+- [ ] Polyphonic voice allocation (4-8 voices)
+- [ ] Effects chain (delay, reverb, chorus)
+- [ ] Additional filter types (HP, BP, ladder)
+- [ ] Arpeggiator
+- [ ] VST3/CLAP plugin export (via nih-plug)
+- [ ] Oscilloscope / waveform display
 
 ## License
 
