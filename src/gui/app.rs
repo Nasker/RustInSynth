@@ -873,7 +873,7 @@ impl SynthApp {
                     .show(ui, |ui| {
                         ui.set_min_height(ui.available_height());
                         
-                        ui.columns(5, |columns| {
+                        ui.columns(6, |columns| {
                             // Column 1: Oscillators
                             columns[0].vertical(|ui| {
                                 ui.set_min_width(180.0);
@@ -898,8 +898,14 @@ impl SynthApp {
                                 self.ui_lfo_compact(ui);
                             });
                             
-                            // Column 5: Presets & MIDI
+                            // Column 5: Effects
                             columns[4].vertical(|ui| {
+                                ui.set_min_width(150.0);
+                                self.ui_effects_compact(ui);
+                            });
+                            
+                            // Column 6: Presets & MIDI
+                            columns[5].vertical(|ui| {
                                 ui.set_min_width(180.0);
                                 self.ui_presets_compact(ui);
                                 ui.add_space(16.0);
@@ -1175,6 +1181,90 @@ impl SynthApp {
         if ui.add(egui::Slider::new(&mut bend, 1.0..=24.0).text("Bend Range")).changed() {
             self.set_param(SynthParam::PitchBendRange, bend);
         }
+    }
+    
+    /// Compact effects panel
+    fn ui_effects_compact(&mut self, ui: &mut Ui) {
+        section_header(ui, "EFFECTS");
+        
+        // DELAY
+        ui.group(|ui| {
+            let mut delay_on = self.audio_engine.delay_enabled();
+            if ui.checkbox(&mut delay_on, RichText::new("DELAY").size(10.0).strong()).changed() {
+                self.audio_engine.set_delay_enabled(delay_on);
+            }
+            
+            if delay_on {
+                let mut time = self.audio_engine.delay_time();
+                if ui.add(egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s")).changed() {
+                    self.audio_engine.set_delay_time(time);
+                }
+                
+                let mut feedback = self.audio_engine.delay_feedback();
+                if ui.add(egui::Slider::new(&mut feedback, 0.0..=0.9).text("Feedback")).changed() {
+                    self.audio_engine.set_delay_feedback(feedback);
+                }
+                
+                let mut mix = self.audio_engine.delay_mix();
+                if ui.add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix")).changed() {
+                    self.audio_engine.set_delay_mix(mix);
+                }
+            }
+        });
+        
+        ui.add_space(4.0);
+        
+        // REVERB
+        ui.group(|ui| {
+            let mut reverb_on = self.audio_engine.reverb_enabled();
+            if ui.checkbox(&mut reverb_on, RichText::new("REVERB").size(10.0).strong()).changed() {
+                self.audio_engine.set_reverb_enabled(reverb_on);
+            }
+            
+            if reverb_on {
+                let mut room = self.audio_engine.reverb_room_size();
+                if ui.add(egui::Slider::new(&mut room, 0.0..=1.0).text("Room")).changed() {
+                    self.audio_engine.set_reverb_room_size(room);
+                }
+                
+                let mut damp = self.audio_engine.reverb_damping();
+                if ui.add(egui::Slider::new(&mut damp, 0.0..=1.0).text("Damp")).changed() {
+                    self.audio_engine.set_reverb_damping(damp);
+                }
+                
+                let mut mix = self.audio_engine.reverb_mix();
+                if ui.add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix")).changed() {
+                    self.audio_engine.set_reverb_mix(mix);
+                }
+            }
+        });
+        
+        ui.add_space(4.0);
+        
+        // CHORUS
+        ui.group(|ui| {
+            let mut chorus_on = self.audio_engine.chorus_enabled();
+            if ui.checkbox(&mut chorus_on, RichText::new("CHORUS").size(10.0).strong()).changed() {
+                self.audio_engine.set_chorus_enabled(chorus_on);
+            }
+            
+            if chorus_on {
+                let mut rate = self.audio_engine.chorus_rate();
+                if ui.add(egui::Slider::new(&mut rate, 0.1..=5.0).text("Rate").suffix("Hz")).changed() {
+                    self.audio_engine.set_chorus_rate(rate);
+                }
+                
+                let mut depth = self.audio_engine.chorus_depth();
+                if ui.add(egui::Slider::new(&mut depth, 0.0..=10.0).text("Depth").suffix("ms")).changed() {
+                    self.audio_engine.set_chorus_depth(depth);
+                }
+                
+                let mut mix = self.audio_engine.chorus_mix();
+                if ui.add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix")).changed() {
+                    self.audio_engine.set_chorus_mix(mix);
+                }
+            }
+        });
     }
     
     /// Compact presets panel

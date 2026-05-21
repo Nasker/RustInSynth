@@ -10,6 +10,7 @@ use crate::core::event::{NoteEvent, SynthEventReceiver, WaveformType};
 use crate::core::params::SynthParam;
 use crate::core::types::SampleRate;
 use crate::core::voice::{VoiceManager, PolyphonyMode};
+use crate::core::effects::EffectsChain;
 use crate::gui::ParamBank;
 
 /// Error type for audio engine operations
@@ -39,6 +40,7 @@ pub struct AudioEngine {
     _config: StreamConfig,
     stream: Option<Stream>,
     voice_manager: Arc<Mutex<VoiceManager>>,
+    effects_chain: Arc<Mutex<EffectsChain>>,
     sample_rate: SampleRate,
     cpu_load: Arc<AtomicU32>,
 }
@@ -60,6 +62,7 @@ impl AudioEngine {
         let stream_config: StreamConfig = config.into();
 
         let voice_manager = Arc::new(Mutex::new(VoiceManager::monophonic(sample_rate)));
+        let effects_chain = Arc::new(Mutex::new(EffectsChain::new(sample_rate)));
 
         Ok(Self {
             _host: host,
@@ -67,6 +70,7 @@ impl AudioEngine {
             _config: stream_config,
             stream: None,
             voice_manager,
+            effects_chain,
             sample_rate,
             cpu_load,
         })
@@ -85,6 +89,7 @@ impl AudioEngine {
     /// Start the audio stream
     pub fn start(&mut self) -> Result<(), AudioError> {
         let voice_manager = Arc::clone(&self.voice_manager);
+        let effects_chain = Arc::clone(&self.effects_chain);
         let channels = self._config.channels as usize;
         let cpu_load = Arc::clone(&self.cpu_load);
         let sample_rate = self.sample_rate as f64;
@@ -97,13 +102,16 @@ impl AudioEngine {
                     let start = Instant::now();
                     
                     let mut vm = voice_manager.lock();
+                    let mut fx = effects_chain.lock();
                     for frame in data.chunks_mut(channels) {
                         let sample = vm.next_sample();
+                        let processed = fx.process(sample);
                         for channel_sample in frame.iter_mut() {
-                            *channel_sample = sample;
+                            *channel_sample = processed;
                         }
                     }
-                    drop(vm); // Release lock before measuring
+                    drop(vm);
+                    drop(fx);
                     
                     // Calculate CPU load: process_time / available_time
                     let elapsed = start.elapsed().as_secs_f64();
@@ -260,6 +268,93 @@ impl AudioEngine {
     /// Get max voices
     pub fn max_voices(&self) -> usize {
         self.voice_manager.lock().max_voices()
+    }
+    
+    // ========================================================================
+    // Effects Control
+    // ========================================================================
+    
+    /// Get a reference to the effects chain
+    pub fn effects_chain(&self) -> Arc<Mutex<EffectsChain>> {
+        Arc::clone(&self.effects_chain)
+    }
+    
+    // Delay
+    pub fn set_delay_enabled(&self, enabled: bool) {
+        self.effects_chain.lock().delay_enabled = enabled;
+    }
+    pub fn delay_enabled(&self) -> bool {
+        self.effects_chain.lock().delay_enabled
+    }
+    pub fn set_delay_time(&self, time: f32) {
+        self.effects_chain.lock().delay.set_delay_time(time);
+    }
+    pub fn delay_time(&self) -> f32 {
+        self.effects_chain.lock().delay.delay_time()
+    }
+    pub fn set_delay_feedback(&self, feedback: f32) {
+        self.effects_chain.lock().delay.set_feedback(feedback);
+    }
+    pub fn delay_feedback(&self) -> f32 {
+        self.effects_chain.lock().delay.feedback()
+    }
+    pub fn set_delay_mix(&self, mix: f32) {
+        self.effects_chain.lock().delay.set_mix(mix);
+    }
+    pub fn delay_mix(&self) -> f32 {
+        self.effects_chain.lock().delay.mix()
+    }
+    
+    // Reverb
+    pub fn set_reverb_enabled(&self, enabled: bool) {
+        self.effects_chain.lock().reverb_enabled = enabled;
+    }
+    pub fn reverb_enabled(&self) -> bool {
+        self.effects_chain.lock().reverb_enabled
+    }
+    pub fn set_reverb_room_size(&self, size: f32) {
+        self.effects_chain.lock().reverb.set_room_size(size);
+    }
+    pub fn reverb_room_size(&self) -> f32 {
+        self.effects_chain.lock().reverb.room_size()
+    }
+    pub fn set_reverb_damping(&self, damping: f32) {
+        self.effects_chain.lock().reverb.set_damping(damping);
+    }
+    pub fn reverb_damping(&self) -> f32 {
+        self.effects_chain.lock().reverb.damping()
+    }
+    pub fn set_reverb_mix(&self, mix: f32) {
+        self.effects_chain.lock().reverb.set_mix(mix);
+    }
+    pub fn reverb_mix(&self) -> f32 {
+        self.effects_chain.lock().reverb.mix()
+    }
+    
+    // Chorus
+    pub fn set_chorus_enabled(&self, enabled: bool) {
+        self.effects_chain.lock().chorus_enabled = enabled;
+    }
+    pub fn chorus_enabled(&self) -> bool {
+        self.effects_chain.lock().chorus_enabled
+    }
+    pub fn set_chorus_rate(&self, rate: f32) {
+        self.effects_chain.lock().chorus.set_rate(rate);
+    }
+    pub fn chorus_rate(&self) -> f32 {
+        self.effects_chain.lock().chorus.rate()
+    }
+    pub fn set_chorus_depth(&self, depth: f32) {
+        self.effects_chain.lock().chorus.set_depth(depth);
+    }
+    pub fn chorus_depth(&self) -> f32 {
+        self.effects_chain.lock().chorus.depth()
+    }
+    pub fn set_chorus_mix(&self, mix: f32) {
+        self.effects_chain.lock().chorus.set_mix(mix);
+    }
+    pub fn chorus_mix(&self) -> f32 {
+        self.effects_chain.lock().chorus.mix()
     }
 }
 

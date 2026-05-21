@@ -27,14 +27,14 @@
   - Live voice count display
   - Mono mode retains key stacking
 
-- [ ] **2.2 Effects Chain** ⬅️ NEXT
+- [x] **2.2 Effects Chain** ✅ DONE
+  - Delay (time, feedback, mix)
+  - Reverb (Schroeder-style: 4 comb + 2 allpass)
+  - Chorus (LFO-modulated delay)
+  - GUI with enable toggles + parameters
 
-  - Delay (tempo-sync optional)
-  - Reverb (simple algorithmic)
-  - Chorus/Flanger
-  - Each ~200 lines
+- [ ] **2.3 Additional Filter Types** ⬅️ NEXT
 
-- [ ] **2.3 Additional Filter Types**
   - Highpass, Bandpass modes
   - 24dB/oct Ladder filter option
   - Filter drive/saturation control
@@ -115,6 +115,7 @@ struct SynthApp {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-21 | v0.9.0 | Effects chain (Delay, Reverb, Chorus) |
 | 2026-05-21 | v0.8.0 | Polyphonic mode (8 voices, MONO/POLY toggle) |
 | 2026-05-21 | v0.7.2 | 8 factory presets (bass, lead, pad, FX) |
 | 2026-05-21 | v0.7.1 | MIDI CC Learn with persistence |

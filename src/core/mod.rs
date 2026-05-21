@@ -1,3 +1,4 @@
+pub mod effects;
 pub mod envelope;
 pub mod event;
 pub mod filter;
@@ -17,3 +18,4 @@ pub use params::{SynthParam, CCMapping, cc_to_time, cc_to_level, cc_to_semitones
 pub use presets::{Preset, PresetError, default_presets_dir, ensure_presets_dir, list_presets, load_preset, save_preset};
 pub use types::{Sample, SampleRate, Frequency, Amplitude};
 pub use voice::{Voice, VoiceManager, PolyphonyMode};
+pub use effects::{Effect, Delay, Reverb, Chorus, EffectsChain};
