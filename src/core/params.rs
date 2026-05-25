@@ -490,10 +490,15 @@ pub fn cc_to_pitch_bend_range(value: u8) -> u8 {
     ((value as u16 * 24 / 127) + 1).min(24) as u8
 }
 
-/// Converts CC (0-127) to portamento time in seconds (0.0-3.0)
-/// Uses exponential curve for more resolution at lower values
+/// Converts CC (0-127) to portamento time in seconds (0.0-2.0)
+/// CC 0 = off (0s). CC 1-127 = true exponential 5ms to 2s.
+/// Each quarter of the CC range covers one decade: 5ms→22ms→100ms→460ms→2000ms
 pub fn cc_to_portamento_time(value: u8) -> f32 {
-    cc_to_time(value, 0.0, 3.0)
+    if value == 0 {
+        return 0.0;
+    }
+    let normalized = (value - 1) as f32 / 126.0;
+    0.005 * (400.0_f32.powf(normalized))
 }
 
 #[cfg(test)]

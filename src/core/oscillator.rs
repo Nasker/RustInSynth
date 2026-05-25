@@ -711,6 +711,270 @@ impl Oscillator for OscillatorBank {
 }
 
 #[cfg(test)]
+mod synth_plot_tests {
+    use super::*;
+    use crate::core::envelope::{ADSREnvelope, AREnvelope, Envelope};
+    use std::path::PathBuf;
+
+    /// Synthesize audio by multiplying oscillator samples with envelope amplitude.
+    /// Returns (audio_samples, envelope_samples) for plotting.
+    fn synthesize<O: Oscillator, E: Envelope>(
+        osc: &mut O,
+        env: &mut E,
+        events: &[(f32, bool)], // (time_seconds, is_note_on)
+        duration_seconds: f32,
+        sample_rate: u32,
+    ) -> (Vec<f32>, Vec<f32>, Vec<(usize, bool)>) {
+        let total_samples = (duration_seconds * sample_rate as f32) as usize;
+        let mut audio = Vec::with_capacity(total_samples);
+        let mut envelope_curve = Vec::with_capacity(total_samples);
+        let mut event_markers = Vec::new();
+
+        let mut event_index = 0;
+        for sample in 0..total_samples {
+            // Fire events at the correct sample
+            while event_index < events.len() {
+                let event_sample = (events[event_index].0 * sample_rate as f32) as usize;
+                if event_sample == sample {
+                    let is_on = events[event_index].1;
+                    if is_on { env.trigger(); } else { env.release(); }
+                    event_markers.push((sample, is_on));
+                    event_index += 1;
+                } else {
+                    break;
+                }
+            }
+            let amp = env.next_amplitude();
+            let raw = osc.next_sample();
+            envelope_curve.push(amp);
+            audio.push(raw * amp);
+        }
+        (audio, envelope_curve, event_markers)
+    }
+
+    fn plot_synth_output(
+        audio: &[f32],
+        envelope: &[f32],
+        events: &[(usize, bool)],
+        sample_rate: u32,
+        filename: &str,
+        title: &str,
+    ) {
+        use plotters::prelude::*;
+
+        let path = PathBuf::from(filename);
+        {
+            let root = BitMapBackend::new(&path, (1400, 800)).into_drawing_area();
+            root.fill(&WHITE).unwrap();
+
+            let duration = audio.len() as f32 / sample_rate as f32;
+            let (top, bottom) = root.split_vertically(400);
+
+            // --- TOP PANEL: full waveform (subsampled) + envelope overlay ---
+            let subsample = (audio.len() / 4000).max(1);
+
+            let mut chart = ChartBuilder::on(&top)
+                .caption(title, ("sans-serif", 22))
+                .margin(10)
+                .x_label_area_size(30)
+                .y_label_area_size(50)
+                .build_cartesian_2d(0.0f32..duration, -1.1f32..1.1f32)
+                .unwrap();
+
+            chart.configure_mesh().x_desc("Time (s)").y_desc("Amplitude").draw().unwrap();
+
+            // Audio waveform
+            chart.draw_series(LineSeries::new(
+                audio.iter().enumerate().step_by(subsample)
+                    .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
+                BLUE.mix(0.5),
+            )).unwrap()
+                .label("Sine * Envelope")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+
+            // Envelope upper bound
+            chart.draw_series(LineSeries::new(
+                envelope.iter().enumerate().step_by(subsample)
+                    .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
+                RED.stroke_width(2),
+            )).unwrap()
+                .label("Envelope")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+
+            // Envelope lower bound (mirror)
+            chart.draw_series(LineSeries::new(
+                envelope.iter().enumerate().step_by(subsample)
+                    .map(|(i, &e)| (i as f32 / sample_rate as f32, -e)),
+                RED.stroke_width(2),
+            )).unwrap();
+
+            // Note on/off markers
+            for (idx, is_on) in events {
+                let x = *idx as f32 / sample_rate as f32;
+                let color = if *is_on { GREEN } else { RED };
+                chart.draw_series(std::iter::once(
+                    TriangleMarker::new((x, 1.05), 10, color.filled())
+                )).unwrap();
+            }
+
+            chart.configure_series_labels()
+                .background_style(WHITE.mix(0.8))
+                .border_style(BLACK)
+                .draw().unwrap();
+
+            // --- BOTTOM PANEL: zoomed attack (first 200ms) ---
+            let zoom_samples = ((sample_rate as f32 * 0.2) as usize).min(audio.len());
+            let zoom_dur = zoom_samples as f32 / sample_rate as f32;
+
+            let mut chart2 = ChartBuilder::on(&bottom)
+                .caption("Zoomed: Attack region (first 200 ms)", ("sans-serif", 18))
+                .margin(10)
+                .x_label_area_size(30)
+                .y_label_area_size(50)
+                .build_cartesian_2d(0.0f32..zoom_dur, -1.1f32..1.1f32)
+                .unwrap();
+
+            chart2.configure_mesh().x_desc("Time (s)").y_desc("Amplitude").draw().unwrap();
+
+            chart2.draw_series(LineSeries::new(
+                audio[..zoom_samples].iter().enumerate()
+                    .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
+                BLUE.mix(0.6),
+            )).unwrap();
+
+            chart2.draw_series(LineSeries::new(
+                envelope[..zoom_samples].iter().enumerate()
+                    .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
+                &RED,
+            )).unwrap();
+
+            chart2.draw_series(LineSeries::new(
+                envelope[..zoom_samples].iter().enumerate()
+                    .map(|(i, &e)| (i as f32 / sample_rate as f32, -e)),
+                &RED,
+            )).unwrap();
+
+            root.present().unwrap();
+        }
+        println!("Saved: {}", path.display());
+    }
+
+    fn check_waveform_continuity(audio: &[f32], events: &[(usize, bool)]) -> Vec<(usize, f32, f32)> {
+        let mut jumps = Vec::new();
+        for i in 1..audio.len() {
+            let delta = (audio[i] - audio[i - 1]).abs();
+            // Flag only at event boundaries — these are the most likely click sources
+            let near_event = events.iter().any(|(idx, _)| {
+                (*idx as isize - i as isize).abs() <= 5
+            });
+            if near_event && delta > 0.1 {
+                jumps.push((i, audio[i - 1], audio[i]));
+            }
+        }
+        jumps
+    }
+
+    /// Simple ADSR-enveloped 440 Hz sine: one note on, one note off
+    #[test]
+    fn plot_sine_adsr_simple() {
+        let sample_rate = 44100u32;
+        let mut osc = SineOscillator::new(440.0, sample_rate);
+        let mut env = ADSREnvelope::new(0.1, 0.2, 0.7, 0.3, sample_rate);
+
+        let events = vec![(0.0, true), (1.0, false)];
+        let (audio, envelope, markers) =
+            synthesize(&mut osc, &mut env, &events, 1.8, sample_rate);
+
+        plot_synth_output(&audio, &envelope, &markers, sample_rate,
+            "test_synth_sine_adsr_simple.png", "Sine + ADSR Envelope (440 Hz)");
+
+        let jumps = check_waveform_continuity(&audio, &markers);
+        assert!(jumps.is_empty(),
+            "Detected {} amplitude jumps near note events (potential clicks):\n{:?}",
+            jumps.len(), jumps);
+    }
+
+    /// Fast attack (1 ms) — checks for onset click
+    #[test]
+    fn plot_sine_adsr_fast_attack() {
+        let sample_rate = 44100u32;
+        let mut osc = SineOscillator::new(440.0, sample_rate);
+        let mut env = ADSREnvelope::new(0.001, 0.1, 0.6, 0.2, sample_rate);
+
+        let events = vec![(0.0, true), (0.5, false)];
+        let (audio, envelope, markers) =
+            synthesize(&mut osc, &mut env, &events, 0.9, sample_rate);
+
+        plot_synth_output(&audio, &envelope, &markers, sample_rate,
+            "test_synth_sine_fast_attack.png", "Sine + ADSR — Fast Attack (1 ms)");
+
+        let jumps = check_waveform_continuity(&audio, &markers);
+        assert!(jumps.is_empty(),
+            "Fast attack caused {} click-like jumps:\n{:?}", jumps.len(), jumps);
+    }
+
+    /// Re-trigger during release — the most common source of clicks
+    #[test]
+    fn plot_sine_adsr_retrigger_during_release() {
+        let sample_rate = 44100u32;
+        let mut osc = SineOscillator::new(440.0, sample_rate);
+        let mut env = ADSREnvelope::new(0.05, 0.1, 0.6, 0.3, sample_rate);
+
+        // Note off, then note on again before release finishes
+        let events = vec![
+            (0.0, true),
+            (0.3, false),
+            (0.45, true),  // re-trigger mid-release
+            (0.9, false),
+        ];
+        let (audio, envelope, markers) =
+            synthesize(&mut osc, &mut env, &events, 1.4, sample_rate);
+
+        plot_synth_output(&audio, &envelope, &markers, sample_rate,
+            "test_synth_sine_retrigger.png", "Sine + ADSR — Re-trigger During Release");
+
+        println!("\n=== RETRIGGER CLICK ANALYSIS ===");
+        let jumps = check_waveform_continuity(&audio, &markers);
+        if jumps.is_empty() {
+            println!("✓ No clicks detected at re-trigger boundaries");
+        } else {
+            for (idx, prev, curr) in &jumps {
+                let t = *idx as f32 / sample_rate as f32;
+                println!("  ⚠ Click at {:.4}s: {:.4} -> {:.4} (Δ={:.4})", t, prev, curr, (curr - prev).abs());
+            }
+        }
+
+        assert!(jumps.is_empty(),
+            "Re-trigger caused {} click-like jumps:\n{:?}", jumps.len(), jumps);
+    }
+
+    /// AR envelope on a sine — compare with ADSR
+    #[test]
+    fn plot_sine_ar_vs_adsr() {
+        let sample_rate = 44100u32;
+        let events = vec![(0.0, true), (0.6, false)];
+
+        // AR
+        let mut osc_ar = SineOscillator::new(440.0, sample_rate);
+        let mut ar = AREnvelope::new(0.1, 0.3, sample_rate);
+        let (ar_audio, ar_env, ar_markers) =
+            synthesize(&mut osc_ar, &mut ar, &events, 1.2, sample_rate);
+        plot_synth_output(&ar_audio, &ar_env, &ar_markers, sample_rate,
+            "test_synth_sine_ar.png", "Sine + AR Envelope (440 Hz)");
+
+        // ADSR
+        let mut osc_adsr = SineOscillator::new(440.0, sample_rate);
+        let mut adsr = ADSREnvelope::new(0.1, 0.15, 0.7, 0.3, sample_rate);
+        let (adsr_audio, adsr_env, adsr_markers) =
+            synthesize(&mut osc_adsr, &mut adsr, &events, 1.2, sample_rate);
+        plot_synth_output(&adsr_audio, &adsr_env, &adsr_markers, sample_rate,
+            "test_synth_sine_adsr.png", "Sine + ADSR Envelope (440 Hz)");
+
+        println!("AR plot and ADSR plot both saved.");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

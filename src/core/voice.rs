@@ -111,19 +111,16 @@ impl Voice {
         };
 
         let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
-            // Combine envelope and LFO modulation
             let max_cutoff = 20000.0f32;
-            let cutoff_range = max_cutoff - self.base_cutoff;
-
-            // Envelope opens filter upward
-            let env_modulation = cutoff_range * self.filter_env_amount * filter_env_amp;
-
-            // LFO can modulate up or down (±50% of remaining range at full depth)
+            // Octave-based envelope: each step of env_amount sweeps equal perceptual distance
+            // 6 octaves of range (e.g. 500Hz -> 32kHz) at full amount
+            let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
+            let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
+            // LFO: ±2 octaves at full depth, centred on the envelope position
             let lfo_depth = self.lfo.depth();
-            let lfo_modulation = cutoff_range * lfo_depth * filter_lfo * 0.5;
-
-            let target_cutoff = self.base_cutoff + env_modulation + lfo_modulation;
-            target_cutoff.min(max_cutoff).max(20.0)
+            let lfo_semitones = 24.0 * lfo_depth * filter_lfo;
+            let lfo_factor = 2.0f32.powf(lfo_semitones / 12.0);
+            (env_cutoff * lfo_factor).clamp(20.0, max_cutoff)
         } else {
             self.base_cutoff
         };
@@ -185,12 +182,12 @@ impl Voice {
 
         let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
             let max_cutoff = 20000.0f32;
-            let cutoff_range = max_cutoff - self.base_cutoff;
-            let env_modulation = cutoff_range * self.filter_env_amount * filter_env_amp;
+            let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
+            let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
             let lfo_depth = self.lfo.depth();
-            let lfo_modulation = cutoff_range * lfo_depth * filter_lfo * 0.5;
-            let target_cutoff = self.base_cutoff + env_modulation + lfo_modulation;
-            target_cutoff.min(max_cutoff).max(20.0)
+            let lfo_semitones = 24.0 * lfo_depth * filter_lfo;
+            let lfo_factor = 2.0f32.powf(lfo_semitones / 12.0);
+            (env_cutoff * lfo_factor).clamp(20.0, max_cutoff)
         } else {
             self.base_cutoff
         };
@@ -238,6 +235,8 @@ impl Voice {
             self.osc_bank.reset();
         }
 
+        self.filter.reset();
+        self.filter_envelope.reset();
         self.envelope.trigger();
         self.filter_envelope.trigger();
         self.lfo.reset();
