@@ -1,7 +1,10 @@
 [package]
 name = "RustInSynth"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cpal = "0.15"
@@ -15,6 +18,8 @@ egui = "0.28"
 egui_dock = "0.13"
 eframe = { version = "0.28", features = ["default"] }
 dashmap = "6.1"
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 
 [dev-dependencies]
 tempfile = "3.8"

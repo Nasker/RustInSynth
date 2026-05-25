@@ -558,6 +558,14 @@ impl VoiceManager {
         vm.polyphony_mode = PolyphonyMode::Poly;
         vm
     }
+
+    /// Reset all voices and key stack to initial state
+    pub fn reset(&mut self) {
+        for voice in &mut self.voices {
+            voice.reset();
+        }
+        self.key_stack.clear();
+    }
     
     /// Set polyphony mode
     pub fn set_polyphony_mode(&mut self, mode: PolyphonyMode) {

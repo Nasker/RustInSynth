@@ -1,6 +1,6 @@
 # RustInSynth Development Plan
 
-## Current Version: v0.7.0
+## Current Version: v1.0.1
 
 ## Roadmap (Ordered by Priority)
 
@@ -19,6 +19,11 @@
   - Sweep FX (noise, resonant filter sweep)
   - Wobble (dubstep LFO bass)
   - Soft Keys (electric piano style)
+
+- [x] **1.3 Envelope & Control Curves Polish** ✅ DONE
+  - Fixed retrigger clicks by clearing filter state on `note_on`
+  - Converted filter envelope modulation from linear Hz to musical octaves (6-octave range)
+  - Updated portamento mapping to true exponential curve (0.005s to 2.0s) with decade-based CC resolution
 
 ### Phase 2: Sound Design
 - [x] **2.1 Polyphonic Mode** ✅ DONE
@@ -69,7 +74,7 @@
   - Optional (CPU intensive)
 
 ### Phase 4: Distribution
-- [ ] **4.1 VST3/CLAP Plugin Export**
+- [x] **4.1 VST3/CLAP Plugin Export** ✅ DONE
   - Integrate nih-plug
   - Wrap existing DSP
   - Cross-platform builds
@@ -123,6 +128,7 @@ struct SynthApp {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-25 | v1.0.1 | Fixed filter envelope clicks/discontinuities on retrigger, mapped filter envelope & LFO to octaves, true exponential portamento resolution |
 | 2026-05-21 | v1.0.0 | True stereo output (per-osc pan, width, stereo FX) |
 | 2026-05-21 | v0.9.0 | Effects chain (Delay, Reverb, Chorus) |
 | 2026-05-21 | v0.8.0 | Polyphonic mode (8 voices, MONO/POLY toggle) |
