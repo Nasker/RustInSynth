@@ -11,6 +11,10 @@ pub struct RustInSynthPlugin {
     params: Arc<RustInSynthParams>,
     voice_manager: VoiceManager,
     effects_chain: EffectsChain,
+    // Track last synced waveforms to avoid allocations in audio thread
+    last_osc1_waveform: i32,
+    last_osc2_waveform: i32,
+    last_osc3_waveform: i32,
 }
 
 #[derive(Params)]
@@ -394,6 +398,20 @@ impl Plugin for RustInSynthPlugin {
         let sample_rate = buffer_config.sample_rate as u32;
         self.voice_manager.set_sample_rate(sample_rate);
         self.effects_chain.set_sample_rate(sample_rate);
+        
+        // Initialize oscillator waveforms here (safe to allocate outside audio thread)
+        let w1 = WaveformType::from_index(self.params.osc1_waveform.value() as u8);
+        let w2 = WaveformType::from_index(self.params.osc2_waveform.value() as u8);
+        let w3 = WaveformType::from_index(self.params.osc3_waveform.value() as u8);
+        self.voice_manager.set_osc_waveform(1, w1);
+        self.voice_manager.set_osc_waveform(2, w2);
+        self.voice_manager.set_osc_waveform(3, w3);
+        
+        // Track current waveforms
+        self.last_osc1_waveform = self.params.osc1_waveform.value();
+        self.last_osc2_waveform = self.params.osc2_waveform.value();
+        self.last_osc3_waveform = self.params.osc3_waveform.value();
+        
         true
     }
 
@@ -408,8 +426,8 @@ impl Plugin for RustInSynthPlugin {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // 1. Sync parameter values from host controls
-        self.sync_plugin_params();
+        // 1. Sync non-allocating parameter values from host controls
+        self.sync_plugin_params_safe();
 
         // 2. Process incoming MIDI notes and events
         while let Some(event) = context.next_event() {
@@ -461,10 +479,86 @@ impl RustInSynthPlugin {
             params: Arc::new(RustInSynthParams::default()),
             voice_manager: VoiceManager::polyphonic(sample_rate),
             effects_chain: EffectsChain::new(sample_rate),
+            last_osc1_waveform: 0,
+            last_osc2_waveform: 0,
+            last_osc3_waveform: 0,
         }
     }
 
+    /// Sync parameters that are safe to change in the audio thread (no allocations)
+    fn sync_plugin_params_safe(&mut self) {
+        // Envelopes
+        self.voice_manager.set_attack(self.params.attack.value());
+        self.voice_manager.set_decay(self.params.decay.value());
+        self.voice_manager.set_sustain(self.params.sustain.value());
+        self.voice_manager.set_release(self.params.release.value());
+
+        self.voice_manager.set_filter_attack(self.params.f_attack.value());
+        self.voice_manager.set_filter_decay(self.params.f_decay.value());
+        self.voice_manager.set_filter_sustain(self.params.f_sustain.value());
+        self.voice_manager.set_filter_release(self.params.f_release.value());
+        self.voice_manager.set_filter_env_amount(self.params.f_amount.value());
+
+        // Filter
+        self.voice_manager.set_filter_cutoff(self.params.cutoff.value());
+        self.voice_manager.set_filter_resonance(self.params.resonance.value());
+
+        // LFO
+        self.voice_manager.set_lfo_rate(self.params.lfo_rate.value());
+        self.voice_manager.set_lfo_depth(self.params.lfo_depth.value());
+
+        let lfo_waveform = match self.params.lfo_waveform.value() {
+            0 => LfoWaveform::Sine,
+            1 => LfoWaveform::Triangle,
+            2 => LfoWaveform::Square,
+            3 => LfoWaveform::Saw,
+            _ => LfoWaveform::Random,
+        };
+        self.voice_manager.set_lfo_waveform(lfo_waveform);
+
+        let lfo_dest = match self.params.lfo_destination.value() {
+            1 => LfoDestination::Pitch,
+            2 => LfoDestination::FilterCutoff,
+            3 => LfoDestination::Amplitude,
+            _ => LfoDestination::Off,
+        };
+        self.voice_manager.set_lfo_destination(lfo_dest);
+
+        // Oscillator levels, detune, phase, pan (no allocations)
+        self.voice_manager.set_osc_level(1, self.params.osc1_level.value());
+        self.voice_manager.set_osc_level(2, self.params.osc2_level.value());
+        self.voice_manager.set_osc_level(3, self.params.osc3_level.value());
+
+        self.voice_manager.set_osc_semitones(2, self.params.osc2_semitones.value() as i8);
+        self.voice_manager.set_osc_cents(2, self.params.osc2_cents.value() as i8);
+        self.voice_manager.set_osc_semitones(3, self.params.osc3_semitones.value() as i8);
+        self.voice_manager.set_osc_cents(3, self.params.osc3_cents.value() as i8);
+
+        self.voice_manager.set_osc_phase(1, self.params.osc1_phase.value());
+        self.voice_manager.set_osc_phase(2, self.params.osc2_phase.value());
+        self.voice_manager.set_osc_phase(3, self.params.osc3_phase.value());
+
+        self.voice_manager.set_osc_pan(1, self.params.osc1_pan.value());
+        self.voice_manager.set_osc_pan(2, self.params.osc2_pan.value());
+        self.voice_manager.set_osc_pan(3, self.params.osc3_pan.value());
+
+        // Master controls
+        self.voice_manager.set_portamento_time(self.params.portamento.value());
+        self.voice_manager.set_pitch_bend_range(self.params.pitch_bend_range.value() as u8);
+        self.voice_manager.set_stereo_width(self.params.stereo_width.value());
+        self.voice_manager.set_master_volume(self.params.master_volume.value());
+
+        let mode = if self.params.polyphony_mode.value() == 0 {
+            PolyphonyMode::Mono
+        } else {
+            PolyphonyMode::Poly
+        };
+        self.voice_manager.set_polyphony_mode(mode);
+    }
+
     /// Sync the host's active parameter values into the DSP engine
+    /// WARNING: This allocates memory and should NOT be called from the audio thread!
+    #[allow(dead_code)]
     fn sync_plugin_params(&mut self) {
         // Envelopes
         self.voice_manager.set_attack(self.params.attack.value());
