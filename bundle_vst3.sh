@@ -2,7 +2,7 @@
 
 # Bundle script for RustInSynth VST3 plugin
 
-PLUGIN_NAME="RustInSynth"
+PLUGIN_NAME="rust_in_synth"
 DYLIB_PATH="target/release/lib${PLUGIN_NAME}.dylib"
 VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3/${PLUGIN_NAME}.vst3"
 CONTENTS_DIR="${VST3_DIR}/Contents"
