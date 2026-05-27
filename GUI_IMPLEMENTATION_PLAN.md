@@ -1,18 +1,18 @@
 # GUI Implementation Plan - Hybrid Approach
 
 ## ⚠️ Important: Framework Migration
-**nice-plug** is the actively maintained community fork of nih-plug. The original nih-plug is in maintenance mode. We should migrate to nice-plug before implementing the GUI.
+**BillyDM's nih-plug fork** is the actively maintained community fork of nih-plug. The original nih-plug is in maintenance mode. We should migrate to the BillyDM fork before implementing the GUI.
 
 ### Migration Steps (Phase 0):
-1. Update `Cargo.toml` dependencies from `nih_plug` → `nice_plug`
-2. Update imports in `src/plugin.rs` from `nih_plug` → `nice_plug`
-3. Update export macros: `nih_export_*!` → `nice_export_*!`
-4. Test that plugin still builds and works
+1. Update `Cargo.toml` dependencies from `robbert-vdh/nih-plug` → `BillyDM/nih-plug`
+2. Test that plugin still builds and works
 
-**Repository**: https://codeberg.org/RustAudio/nice-plug
+**Repository**: https://github.com/BillyDM/nih-plug
+
+**Status**: ✅ COMPLETED (May 27, 2026)
 
 ## Overview
-Port the standalone GUI to the plugin using `nice_plug_egui` widgets while preserving the visual design and layout from the existing standalone application.
+Port the standalone GUI to the plugin using `nih_plug_egui` widgets while preserving the visual design and layout from the existing standalone application.
 
 ## Architecture
 
@@ -21,49 +21,16 @@ Port the standalone GUI to the plugin using `nice_plug_egui` widgets while prese
 - **Plugin**: No GUI, uses NIH-plug's parameter system
 
 ### Target State
-- **Plugin GUI Module**: `src/plugin_gui/` with adapted widgets using nice-plug parameters
+- **Plugin GUI Module**: `src/plugin_gui/` with adapted widgets using nih-plug parameters
 - **Shared Resources**: Reuse theme and visual styling from `src/gui/theme.rs`
 
 ## Implementation Steps
 
-### Phase 0: Migrate to nice-plug (REQUIRED FIRST)
-**Goal**: Update from nih-plug to nice-plug before GUI work
-
-1. **Update Cargo.toml**
-   ```toml
-   # Change from:
-   nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] }
-   nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-   
-   # To:
-   nice_plug = { git = "https://codeberg.org/RustAudio/nice-plug.git", features = ["assert_process_allocs"] }
-   nice_plug_egui = { git = "https://codeberg.org/RustAudio/nice-plug.git" }
-   ```
-
-2. **Update plugin.rs imports**
-   ```rust
-   // Change from:
-   use nih_plug::prelude::*;
-   
-   // To:
-   use nice_plug::prelude::*;
-   ```
-
-3. **Update export macros at end of plugin.rs**
-   ```rust
-   // Change from:
-   nih_export_clap!(RustInSynthPlugin);
-   nih_export_vst3!(RustInSynthPlugin);
-   
-   // To:
-   nice_export_clap!(RustInSynthPlugin);
-   nice_export_vst3!(RustInSynthPlugin);
-   ```
-
-4. **Test the migration**
-   - Build: `cargo build --release`
-   - Bundle: `./bundle_vst3.sh`
-   - Test in Ableton Live
+### Phase 0: Migrate to BillyDM nih-plug fork ✅ COMPLETED
+**Status**: Completed May 27, 2026
+- Updated `Cargo.toml` to use `BillyDM/nih-plug` fork
+- Build tested successfully
+- No code changes required (API compatible)
 
 ### Phase 1: Setup & Structure
 **Goal**: Create the foundation for the plugin GUI
@@ -75,7 +42,7 @@ Port the standalone GUI to the plugin using `nice_plug_egui` widgets while prese
    - Add module declaration in `src/lib.rs`
 
 2. **Add editor state to plugin**
-   - Import `nice_plug_egui` types in `plugin.rs`
+   - Import `nih_plug_egui` types in `plugin.rs`
    - Add `editor_state: Arc<EguiState>` field to `RustInSynthPlugin`
    - Initialize with appropriate window size (e.g., 1000x700 to match standalone)
 
@@ -116,7 +83,7 @@ Port the standalone GUI to the plugin using `nice_plug_egui` widgets while prese
 
 **Key Pattern**:
 ```rust
-use nice_plug_egui::widgets;
+use nih_plug_egui::widgets;
 
 // In editor closure:
 ui.add(widgets::ParamSlider::for_param(&params.osc1_level, setter));
@@ -186,11 +153,11 @@ ui.add(widgets::ParamSlider::for_param(&params.osc1_level, setter));
 
 ## Technical Details
 
-### Using nice-plug Widgets
+### Using nih-plug Widgets
 
 **Basic slider:**
 ```rust
-use nice_plug_egui::widgets;
+use nih_plug_egui::widgets;
 
 ui.add(widgets::ParamSlider::for_param(&params.cutoff, setter)
     .with_width(200.0));
@@ -270,23 +237,23 @@ src/
 
 ## Benefits of This Approach
 
-1. **Active Development**: nice-plug is actively maintained (nih-plug is in maintenance mode)
+1. **Active Development**: BillyDM's nih-plug fork is actively maintained (original nih-plug is in maintenance mode)
 2. **Proper DAW Integration**: Parameters work with automation, presets, undo/redo
 3. **Reuse Visual Design**: Keep the look and feel of standalone
 4. **Maintainability**: Separate plugin GUI from standalone GUI
-5. **Performance**: nice-plug widgets are optimized for plugin use
+5. **Performance**: nih-plug widgets are optimized for plugin use
 6. **Future-proof**: Easy to add features like preset browser, visualizations
 
 ## Estimated Effort
 
-- **Phase 0 (Migration)**: 30 minutes
+- **Phase 0 (Migration)**: ✅ COMPLETED
 - **Phase 1 (Setup)**: 30 minutes
 - **Phase 2 (Layout)**: 1 hour
 - **Phase 3 (Widgets)**: 3-4 hours (incremental, can test each section)
 - **Phase 4 (Custom Widgets)**: 2-3 hours (optional)
 - **Phase 5 (Polish)**: 1-2 hours
 
-**Total**: 8-12 hours of focused work, can be done incrementally
+**Remaining**: 7.5-12 hours of focused work, can be done incrementally
 
 ## Testing Strategy
 
@@ -299,21 +266,19 @@ After each phase:
 
 ## Next Steps
 
-1. **FIRST**: Migrate to nice-plug (Phase 0) - this is essential
-2. Review this plan
-3. Confirm approach is acceptable
-4. Start with Phase 1 (setup & structure)
-5. Implement incrementally, testing after each section
+1. ✅ **DONE**: Migrate to BillyDM nih-plug fork (Phase 0)
+2. Start with Phase 1 (setup & structure)
+3. Implement incrementally, testing after each section
 
-## Why nice-plug?
+## Why BillyDM's nih-plug fork?
 
 From the original nih-plug README:
 > "NOTE: NIH-plug the plugin framework is currently in maintenance mode. If you are interested in the framework rather than the plugin, please check out this community fork instead."
 
-nice-plug is:
+BillyDM's nih-plug fork is:
 - ✅ Actively maintained by the RustAudio community
-- ✅ API-compatible with nih-plug (minimal migration effort)
+- ✅ API-compatible with original nih-plug (minimal migration effort)
 - ✅ Receives bug fixes and new features
 - ✅ Better long-term support
 
-The migration is straightforward - mainly updating import paths and macro names.
+The migration was straightforward - simply updating the git repository URL in Cargo.toml.

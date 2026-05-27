@@ -2,7 +2,7 @@
 //! 
 //! Graphical interface using egui with Minimoog-style aesthetic.
 
-use RustInSynth::gui::{run_gui, SharedState};
+use rust_in_synth::gui::{run_gui, SharedState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔊 Rust In Synth v0.4.0 - GUI Mode");
