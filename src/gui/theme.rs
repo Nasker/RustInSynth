@@ -6,7 +6,7 @@
 //! - Warning yellows/oranges
 //! - Electric blues for indicators
 
-use egui::{Color32, Stroke, Rounding};
+use egui::{Color32, Stroke, CornerRadius};
 
 /// Rust In Peace inspired color palette
 pub struct Theme {
@@ -184,20 +184,19 @@ pub static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(Theme::d
 pub fn panel_background(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     let theme = &THEME;
     
-    egui::Frame {
-        fill: theme.panel_bg,
-        inner_margin: egui::Margin::symmetric(12.0, 8.0),
-        outer_margin: egui::Margin::ZERO,
-        rounding: Rounding::same(4.0),
-        shadow: egui::epaint::Shadow {
-            offset: egui::vec2(2.0, 2.0),
-            blur: 4.0,
-            spread: 0.0,
+    egui::Frame::new()
+        .fill(theme.panel_bg)
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .outer_margin(egui::Margin::ZERO)
+        .corner_radius(egui::CornerRadius::same(4))
+        .shadow(egui::epaint::Shadow {
+            offset: [2, 2],
+            blur: 4,
+            spread: 0,
             color: theme.panel_shadow,
-        },
-        stroke: Stroke::new(1.0, theme.panel_border),
-    }
-    .show(ui, add_contents);
+        })
+        .stroke(Stroke::new(1.0, theme.panel_border))
+        .show(ui, add_contents);
 }
 
 pub fn section_header(ui: &mut egui::Ui, title: &str) {

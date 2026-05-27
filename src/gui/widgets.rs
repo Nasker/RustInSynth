@@ -171,8 +171,8 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
 
     // Background (switch track)
     let bg_color = THEME.toggle_switch(*value);
-    painter.rect_filled(rect, 4.0, bg_color);
-    painter.rect_stroke(rect, 4.0, Stroke::new(2.0, THEME.steel_medium));
+    painter.rect_filled(rect, egui::CornerRadius::same(4), bg_color);
+    painter.rect_stroke(rect, egui::CornerRadius::same(4), Stroke::new(2.0, THEME.steel_medium), egui::StrokeKind::Inside);
 
     // Switch position
     let thumb_radius = 8.0;
@@ -279,7 +279,7 @@ pub fn selector_switch(
             // Draw button
             ui.painter_at(button_area).rect_filled(
                 button_area,
-                2.0,
+                egui::CornerRadius::same(2),
                 if is_selected {
                     THEME.gold
                 } else {
@@ -288,8 +288,9 @@ pub fn selector_switch(
             );
             ui.painter_at(button_area).rect_stroke(
                 button_area,
-                2.0,
+                egui::CornerRadius::same(2),
                 Stroke::new(1.0, THEME.steel_medium),
+                egui::StrokeKind::Inside,
             );
             ui.painter_at(button_area).text(
                 button_area.center(),
@@ -323,8 +324,8 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
     let painter = ui.painter_at(rect);
 
     // Background
-    painter.rect_filled(rect, 2.0, THEME.steel_dark);
-    painter.rect_stroke(rect, 2.0, Stroke::new(2.0, THEME.steel_medium));
+    painter.rect_filled(rect, egui::CornerRadius::same(2), THEME.steel_dark);
+    painter.rect_stroke(rect, egui::CornerRadius::same(2), Stroke::new(2.0, THEME.steel_medium), egui::StrokeKind::Inside);
 
     // Level bar (from bottom up)
     let level = level.clamp(0.0, 1.0);
@@ -338,7 +339,7 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
     let color = THEME.vu_meter_color(level);
 
     if bar_height > 0.0 {
-        painter.rect_filled(bar_rect, 1.0, color);
+        painter.rect_filled(bar_rect, egui::CornerRadius::same(1), color);
     }
 
     // Label at bottom

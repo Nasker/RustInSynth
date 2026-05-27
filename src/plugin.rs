@@ -1,10 +1,12 @@
 use nih_plug::prelude::*;
+use nih_plug_egui::EguiState;
 use std::sync::Arc;
 
 use crate::core::effects::EffectsChain;
 use crate::core::event::{SynthEvent, WaveformType, SynthEventReceiver};
 use crate::core::lfo::{LfoDestination, LfoWaveform};
 use crate::core::voice::{PolyphonyMode, VoiceManager};
+use crate::plugin_gui::editor::{EDITOR_HEIGHT, EDITOR_WIDTH};
 
 /// The NIH-plug implementation of RustInSynth
 pub struct RustInSynthPlugin {
@@ -15,6 +17,8 @@ pub struct RustInSynthPlugin {
     last_osc1_waveform: i32,
     last_osc2_waveform: i32,
     last_osc3_waveform: i32,
+    // GUI editor state
+    editor_state: Arc<EguiState>,
 }
 
 #[derive(Params)]
@@ -389,6 +393,13 @@ impl Plugin for RustInSynthPlugin {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        crate::plugin_gui::editor::create_editor(
+            self.editor_state.clone(),
+            self.params.clone(),
+        )
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -482,6 +493,7 @@ impl RustInSynthPlugin {
             last_osc1_waveform: 0,
             last_osc2_waveform: 0,
             last_osc3_waveform: 0,
+            editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
         }
     }
 

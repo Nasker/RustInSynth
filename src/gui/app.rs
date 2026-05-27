@@ -873,40 +873,50 @@ impl SynthApp {
                     .show(ui, |ui| {
                         ui.set_min_height(ui.available_height());
                         
-                        ui.columns(6, |columns| {
+                        ui.horizontal_top(|ui| {
                             // Column 1: Oscillators
-                            columns[0].vertical(|ui| {
-                                ui.set_min_width(180.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(185.0);
                                 self.ui_oscillators_compact(ui);
                             });
                             
+                            ui.separator();
+                            
                             // Column 2: Filter
-                            columns[1].vertical(|ui| {
-                                ui.set_min_width(140.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(145.0);
                                 self.ui_filter_compact(ui);
                             });
                             
+                            ui.separator();
+                            
                             // Column 3: Envelopes
-                            columns[2].vertical(|ui| {
-                                ui.set_min_width(140.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(145.0);
                                 self.ui_envelopes_compact(ui);
                             });
                             
+                            ui.separator();
+                            
                             // Column 4: LFO
-                            columns[3].vertical(|ui| {
-                                ui.set_min_width(140.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(145.0);
                                 self.ui_lfo_compact(ui);
                             });
                             
+                            ui.separator();
+                            
                             // Column 5: Effects
-                            columns[4].vertical(|ui| {
-                                ui.set_min_width(150.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(155.0);
                                 self.ui_effects_compact(ui);
                             });
                             
+                            ui.separator();
+                            
                             // Column 6: Presets & MIDI
-                            columns[5].vertical(|ui| {
-                                ui.set_min_width(180.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(185.0);
                                 self.ui_presets_compact(ui);
                                 ui.add_space(16.0);
                                 ui.separator();
@@ -1471,7 +1481,7 @@ impl SynthApp {
             });
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         // Stop audio engine
         self.audio_engine.stop();
         println!("Audio engine stopped.");
@@ -1484,9 +1494,14 @@ impl eframe::App for SynthApp {
         SynthApp::update(self, ctx, frame);
     }
 
-    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         // Delegate to the SynthApp implementation
-        SynthApp::on_exit(self, gl);
+        SynthApp::on_exit(self);
+    }
+
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Optional: Draw custom UI within the window
+        // Currently not needed as we use the main update method
     }
 }
 
@@ -1494,9 +1509,9 @@ impl eframe::App for SynthApp {
 pub fn run_gui(shared: SharedState) -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1050.0, 480.0])
-            .with_min_inner_size([1000.0, 450.0])
-            .with_resizable(true),
+            .with_inner_size([1400.0, 580.0])
+            .with_min_inner_size([1350.0, 550.0])
+            .with_resizable(false),
         ..Default::default()
     };
 
