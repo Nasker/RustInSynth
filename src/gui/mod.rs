@@ -7,8 +7,16 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 pub mod app;
+pub mod backend;
 pub mod widgets;
 pub mod theme;
+
+#[cfg(not(feature = "plugin"))]
+pub mod backend_standalone;
+
+pub use backend::SynthBackend;
+#[cfg(not(feature = "plugin"))]
+pub use backend_standalone::StandaloneBackend;
 
 pub use app::run_gui;
 

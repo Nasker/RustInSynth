@@ -171,32 +171,78 @@ On startup, choose between keyboard or MIDI input mode.
 
 ```
 src/
-├── main.rs              # Entry point (GUI mode)
-├── lib.rs               # Library exports
+├── main.rs                       # Entry point (standalone GUI mode)
+├── lib.rs                        # Library exports
 ├── audio/
-│   └── engine.rs        # Audio stream + param sync
+│   └── engine.rs                 # Audio stream + param sync
 ├── core/
-│   ├── envelope.rs      # AR/ADSR envelopes
-│   ├── event.rs         # Note/CC event system
-│   ├── filter.rs        # State Variable Filter
-│   ├── lfo.rs           # Low Frequency Oscillator
-│   ├── oscillator.rs    # Waveform generators + bank
-│   ├── params.rs        # CC mapping system
-│   ├── presets.rs       # JSON preset save/load
-│   ├── types.rs         # Core type definitions
-│   └── voice.rs         # Voice manager
+│   ├── effects.rs                # Delay, Reverb, Chorus + EffectsChain
+│   ├── envelope.rs               # AR/ADSR envelopes
+│   ├── event.rs                  # Note/CC event system
+│   ├── filter.rs                 # State Variable Filter
+│   ├── lfo.rs                    # Low Frequency Oscillator
+│   ├── oscillator.rs             # Waveform generators + bank
+│   ├── params.rs                 # CC mapping system + SynthParam enum
+│   ├── presets.rs                # JSON preset save/load
+│   ├── types.rs                  # Core type definitions
+│   └── voice.rs                  # Voice manager (mono/poly)
 ├── gui/
-│   ├── mod.rs           # SharedState + ParamBank + CPU load
-│   ├── app.rs           # Main egui application
-│   ├── widgets.rs       # Custom knobs, toggles, meters
-│   └── theme.rs         # Centralized color theme
+│   ├── mod.rs                    # SharedState, exports
+│   ├── backend.rs                # SynthBackend trait (unified abstraction)
+│   ├── backend_standalone.rs     # StandaloneBackend (wraps AudioEngine)
+│   ├── app.rs                    # SynthApp — single GUI, backend-agnostic
+│   ├── widgets.rs                # Custom knobs, toggles, meters
+│   └── theme.rs                  # Centralized color theme
+├── plugin.rs                     # NIH-plug plugin definition + RustInSynthParams
+├── plugin_gui/
+│   ├── mod.rs                    # Module exports
+│   ├── backend_plugin.rs         # PluginBackend (wraps NIH-plug ParamSetter)
+│   ├── editor.rs                 # Plugin editor (unified GUI panels)
+│   ├── shared_state.rs           # PluginSharedState (lock-free CPU load)
+│   └── widgets.rs                # Plugin-specific widget helpers
 └── input/
-    └── midi.rs          # MIDI input handler
+    └── midi.rs                   # MIDI input handler (standalone only)
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
+## Unified GUI Architecture
+
+Both the **standalone application** and the **NIH-plug plugin** share a single GUI codebase through the `SynthBackend` trait abstraction.
+
+```
+              ┌──────────────────────────────┐
+              │        SynthApp              │
+              │  (one GUI, backend-agnostic) │
+              └──────────────┬───────────────┘
+                             │ Box<dyn SynthBackend>
+              ┌──────────────┴───────────────┐
+              │                              │
+   ┌──────────▼──────────┐      ┌────────────▼────────────┐
+   │  StandaloneBackend  │      │     PluginBackend<'a>    │
+   │  (owns AudioEngine, │      │  (wraps Arc<Params> +   │
+   │   SharedState, MIDI)│      │   &'a ParamSetter)       │
+   └─────────────────────┘      └─────────────────────────┘
+```
+
+### Key design decisions
+
+- **`SynthBackend` trait** (`src/gui/backend.rs`) — defines `get_param()`, `set_param()`, effects, voice management, stereo, MIDI, and CPU load. No `'static` bound on the trait itself.
+- **`StandaloneBackend`** — owns `AudioEngine` + `SharedState`. Implements MIDI polling and CC-learn. `'static` because all owned types are `'static`.
+- **`PluginBackend<'a>`** — holds `Arc<RustInSynthParams>` + `&'a ParamSetter`. Recreated cheaply each frame. MIDI methods are no-ops (host handles routing).
+- **`SynthApp`** stores `Box<dyn SynthBackend + 'static>`, satisfying `eframe::App`'s `'static` requirement for standalone. For the plugin, `PluginBackend` is used as `&mut dyn SynthBackend` without boxing.
+- **Adding a new feature**: implement it in `SynthBackend`, add to `StandaloneBackend` and `PluginBackend`, add UI in `app.rs` — one change covers both modes.
+
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementation history.
 
 ## Current Status
+
+**v1.0.1** - Unified GUI Architecture:
+- [x] `SynthBackend` trait abstraction — single GUI codebase for both standalone and plugin
+- [x] `StandaloneBackend` wrapping `AudioEngine`, `SharedState`, and MIDI handler
+- [x] `PluginBackend<'a>` wrapping NIH-plug `RustInSynthParams` + `ParamSetter`
+- [x] Effects parameters (delay/reverb/chorus) exposed via NIH-plug automation
+- [x] `EffectsChain` unified setter/getter API
+- [x] Plugin editor using identical panel functions as standalone GUI
+- [x] `PluginSharedState` for lock-free CPU load sharing
 
 **v1.0.0** - True Stereo Output:
 - [x] Per-oscillator panning (L/R positioning)

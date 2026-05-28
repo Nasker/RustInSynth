@@ -15,7 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dirs = "5.0"
 egui = "0.34"
-eframe = { version = "0.34", features = ["default"] }
+eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts", "accesskit"] }
 dashmap = "6.1"
 nih_plug = { git = "https://github.com/BillyDM/nih-plug.git", features = ["assert_process_allocs"] }
 nih_plug_egui = { git = "https://github.com/BillyDM/nih-plug.git" }

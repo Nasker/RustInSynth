@@ -112,6 +112,36 @@ pub struct RustInSynthParams {
     // Polyphony mode: 0 = Mono, 1 = Poly
     #[id = "polyphony_mode"]
     pub polyphony_mode: IntParam,
+
+    // Delay
+    #[id = "delay_enabled"]
+    pub delay_enabled: BoolParam,
+    #[id = "delay_time"]
+    pub delay_time: FloatParam,
+    #[id = "delay_feedback"]
+    pub delay_feedback: FloatParam,
+    #[id = "delay_mix"]
+    pub delay_mix: FloatParam,
+
+    // Reverb
+    #[id = "reverb_enabled"]
+    pub reverb_enabled: BoolParam,
+    #[id = "reverb_room_size"]
+    pub reverb_room_size: FloatParam,
+    #[id = "reverb_damping"]
+    pub reverb_damping: FloatParam,
+    #[id = "reverb_mix"]
+    pub reverb_mix: FloatParam,
+
+    // Chorus
+    #[id = "chorus_enabled"]
+    pub chorus_enabled: BoolParam,
+    #[id = "chorus_rate"]
+    pub chorus_rate: FloatParam,
+    #[id = "chorus_depth"]
+    pub chorus_depth: FloatParam,
+    #[id = "chorus_mix"]
+    pub chorus_mix: FloatParam,
 }
 
 impl Default for RustInSynthParams {
@@ -350,6 +380,60 @@ impl Default for RustInSynthParams {
                 1, // 0 = Mono, 1 = Poly
                 IntRange::Linear { min: 0, max: 1 },
             ),
+
+            delay_enabled: BoolParam::new("Delay Enabled", false),
+            delay_time: FloatParam::new(
+                "Delay Time",
+                0.375,
+                FloatRange::Linear { min: 0.05, max: 1.0 },
+            )
+            .with_unit(" s"),
+            delay_feedback: FloatParam::new(
+                "Delay Feedback",
+                0.4,
+                FloatRange::Linear { min: 0.0, max: 0.9 },
+            ),
+            delay_mix: FloatParam::new(
+                "Delay Mix",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+
+            reverb_enabled: BoolParam::new("Reverb Enabled", false),
+            reverb_room_size: FloatParam::new(
+                "Reverb Room Size",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            reverb_damping: FloatParam::new(
+                "Reverb Damping",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            reverb_mix: FloatParam::new(
+                "Reverb Mix",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+
+            chorus_enabled: BoolParam::new("Chorus Enabled", false),
+            chorus_rate: FloatParam::new(
+                "Chorus Rate",
+                1.0,
+                FloatRange::Linear { min: 0.1, max: 5.0 },
+            )
+            .with_unit(" Hz"),
+            chorus_depth: FloatParam::new(
+                "Chorus Depth",
+                3.0,
+                FloatRange::Linear { min: 0.0, max: 10.0 },
+            )
+            .with_unit(" ms"),
+            chorus_mix: FloatParam::new(
+                "Chorus Mix",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
         }
     }
 }
@@ -566,6 +650,22 @@ impl RustInSynthPlugin {
             PolyphonyMode::Poly
         };
         self.voice_manager.set_polyphony_mode(mode);
+
+        // Effects
+        self.effects_chain.set_delay_enabled(self.params.delay_enabled.value());
+        self.effects_chain.set_delay_time(self.params.delay_time.value());
+        self.effects_chain.set_delay_feedback(self.params.delay_feedback.value());
+        self.effects_chain.set_delay_mix(self.params.delay_mix.value());
+
+        self.effects_chain.set_reverb_enabled(self.params.reverb_enabled.value());
+        self.effects_chain.set_reverb_room_size(self.params.reverb_room_size.value());
+        self.effects_chain.set_reverb_damping(self.params.reverb_damping.value());
+        self.effects_chain.set_reverb_mix(self.params.reverb_mix.value());
+
+        self.effects_chain.set_chorus_enabled(self.params.chorus_enabled.value());
+        self.effects_chain.set_chorus_rate(self.params.chorus_rate.value());
+        self.effects_chain.set_chorus_depth(self.params.chorus_depth.value());
+        self.effects_chain.set_chorus_mix(self.params.chorus_mix.value());
     }
 
     /// Sync the host's active parameter values into the DSP engine

@@ -1,166 +1,62 @@
-//! Main egui application
+//! Main egui application — backend-agnostic version.
+//!
+//! All audio/MIDI access goes through `Box<dyn SynthBackend>`.
 
-use crate::audio::AudioEngine;
 use crate::core::event::WaveformType;
-use crate::core::filter::{cc_to_cutoff, cc_to_resonance};
 use crate::core::lfo::{LfoDestination, LfoWaveform};
-use crate::core::params::{
-    cc_to_filter_env_amount, cc_to_lfo_depth, cc_to_lfo_rate, cc_to_portamento_time, cc_to_sustain, cc_to_time,
-    SynthParam,
-};
-use crate::core::voice::{
-    MIN_ATTACK_TIME, MAX_ATTACK_TIME, MIN_DECAY_TIME, MAX_DECAY_TIME,
-    MIN_RELEASE_TIME, MAX_RELEASE_TIME, PolyphonyMode,
-};
-use crate::core::presets::{list_presets, load_preset, save_preset, install_factory_presets, Preset};
-use crate::gui::widgets::*;
-use crate::gui::theme::{THEME, panel_background, section_header};
-use crate::gui::SharedState;
-use crate::input::midi::MidiInputHandler;
+use crate::core::params::SynthParam;
+use crate::core::presets::{install_factory_presets, list_presets, load_preset, save_preset, Preset};
+use crate::core::voice::PolyphonyMode;
+use crate::gui::backend::{MidiLearnState, SynthBackend};
+use crate::gui::theme::{panel_background, section_header, THEME};
 use egui::*;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
-/// Get the CC mappings file path
-fn cc_mappings_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".rustinsynth")
-        .join("cc_mappings.json")
-}
-
-/// Load custom CC mappings from disk
-fn load_cc_mappings() -> Option<HashMap<u8, SynthParam>> {
-    let path = cc_mappings_path();
-    let content = fs::read_to_string(&path).ok()?;
-    let raw: HashMap<u8, String> = serde_json::from_str(&content).ok()?;
-    
-    let mut map = HashMap::new();
-    for (cc, param_name) in raw {
-        if let Some(param) = SynthParam::from_name(&param_name) {
-            map.insert(cc, param);
-        }
-    }
-    Some(map)
-}
-
-/// Save custom CC mappings to disk
-fn save_cc_mappings(map: &HashMap<u8, SynthParam>) -> Result<(), std::io::Error> {
-    let path = cc_mappings_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    
-    let raw: HashMap<u8, String> = map.iter()
-        .map(|(cc, param)| (*cc, param.name().to_string()))
-        .collect();
-    
-    let content = serde_json::to_string_pretty(&raw)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    fs::write(&path, content)
-}
-
-/// Main synth application
+/// Main synth application — owns the backend abstraction
 pub struct SynthApp {
-    /// Shared state with audio thread
-    shared: SharedState,
-    
-    /// Audio engine
-    audio_engine: AudioEngine,
-    
-    /// MIDI input handler (optional)
-    midi_handler: Option<MidiInputHandler>,
-    
-    /// Available MIDI ports
-    midi_ports: Vec<String>,
-    
-    /// Selected MIDI port index
-    selected_midi_port: Option<usize>,
-    
-    /// Preset name input
+    /// Backend abstraction (standalone or plugin)
+    backend: Box<dyn SynthBackend + 'static>,
+
+    /// UI-only state
     preset_name: String,
-    
-    /// Available presets list
     available_presets: Vec<String>,
-    
-    /// Selected preset index
     selected_preset: Option<usize>,
-    
-    /// MIDI Learn: which parameter is waiting for CC assignment
-    midi_learn_target: Option<SynthParam>,
-    
-    /// Custom CC mappings (user overrides)
-    custom_cc_map: HashMap<u8, SynthParam>,
 }
 
 impl SynthApp {
-    pub fn new(shared: SharedState) -> Self {
-        // Install factory presets on first run
+    pub fn new(backend: Box<dyn SynthBackend + 'static>) -> Self {
         match install_factory_presets() {
             Ok(n) if n > 0 => println!("Installed {} factory presets", n),
             Err(e) => eprintln!("Failed to install factory presets: {}", e),
             _ => {}
         }
-        
+
         let available_presets = list_presets().unwrap_or_default();
 
-        // Get available MIDI ports
-        let midi_ports = MidiInputHandler::list_ports().unwrap_or_default();
-        let selected_midi_port = if !midi_ports.is_empty() { Some(0) } else { None };
-
-        // Initialize audio engine with CPU load measurement
-        let cpu_load = std::sync::Arc::clone(&shared.cpu_load);
-        let mut audio_engine = match AudioEngine::new(cpu_load) {
-            Ok(mut engine) => {
-                engine.set_master_volume(0.5);
-                if let Err(e) = engine.start() {
-                    eprintln!("Failed to start audio: {}", e);
-                }
-                engine
-            }
-            Err(e) => {
-                eprintln!("Failed to create audio engine: {}", e);
-                panic!("Audio engine required: {}", e);
-            }
-        };
-
-        // Try to connect MIDI (auto-connect to first port)
-        let midi_handler = MidiInputHandler::connect_auto().ok();
-        if midi_handler.is_some() {
-            println!("MIDI connected!");
-        }
-
-        // Load custom CC mappings if they exist
-        let custom_cc_map = load_cc_mappings().unwrap_or_default();
-        
         Self {
-            shared,
-            audio_engine,
-            midi_handler,
-            midi_ports,
-            selected_midi_port,
+            backend,
             preset_name: "New Preset".to_string(),
             available_presets,
             selected_preset: None,
-            midi_learn_target: None,
-            custom_cc_map,
         }
     }
 
-    /// Update parameter from UI
-    fn set_param(&self, param: SynthParam, value: f32) {
-        self.shared.params.set(param, value);
+    // ========================================================================
+    // Parameter helpers
+    // ========================================================================
+
+    fn set_param(&mut self, param: SynthParam, value: f32) {
+        self.backend.set_param(param, value);
     }
 
-    /// Get parameter value
     fn get_param(&self, param: SynthParam) -> f32 {
-        self.shared.params.get(param)
+        self.backend.get_param(param)
     }
 
-    /// Apply a loaded preset to the synth
+    // ========================================================================
+    // Preset helpers
+    // ========================================================================
+
     fn apply_preset(&mut self, preset: &Preset) {
-        // Apply all parameters
         self.set_param(SynthParam::Osc1Waveform, preset.osc1_waveform as u8 as f32);
         self.set_param(SynthParam::Osc1Level, preset.osc1_level);
         self.set_param(SynthParam::Osc1Phase, preset.osc1_phase);
@@ -201,7 +97,6 @@ impl SynthApp {
         self.set_param(SynthParam::MasterVolume, preset.master_volume);
     }
 
-    /// Create a preset from current settings
     fn create_preset(&self) -> Preset {
         Preset {
             name: self.preset_name.clone(),
@@ -254,667 +149,109 @@ impl SynthApp {
             },
 
             pitch_bend_range: self.get_param(SynthParam::PitchBendRange) as u8,
-
             portamento_time: self.get_param(SynthParam::PortamentoTime),
-
             master_volume: self.get_param(SynthParam::MasterVolume),
         }
     }
 
-    /// Update ParamBank from incoming MIDI CC to keep GUI in sync
-    fn update_param_from_cc(&mut self, cc: u8, value: u8) {
-        // Check custom mappings first (user overrides)
-        if let Some(&param) = self.custom_cc_map.get(&cc) {
-            self.apply_cc_to_param(param, value);
-            return;
-        }
-        
-        // Default mappings
-        match cc {
-            // ADSR Envelope
-            73 => self.set_param(SynthParam::Attack, cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME)),
-            83 => self.set_param(SynthParam::Decay, cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME)),
-            84 => self.set_param(SynthParam::Sustain, cc_to_sustain(value)),
-            72 => self.set_param(SynthParam::Release, cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME)),
-            
-            // Filter
-            74 => self.set_param(SynthParam::FilterCutoff, cc_to_cutoff(value)),
-            71 => self.set_param(SynthParam::FilterResonance, cc_to_resonance(value)),
-            
-            // Filter Envelope
-            103 => self.set_param(SynthParam::FilterAttack, cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME)),
-            104 => self.set_param(SynthParam::FilterDecay, cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME)),
-            105 => self.set_param(SynthParam::FilterSustain, cc_to_sustain(value)),
-            106 => self.set_param(SynthParam::FilterRelease, cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME)),
-            107 => self.set_param(SynthParam::FilterEnvAmount, cc_to_filter_env_amount(value)),
-            
-            // LFO
-            108 => self.set_param(SynthParam::LfoRate, cc_to_lfo_rate(value)),
-            109 => self.set_param(SynthParam::LfoDepth, cc_to_lfo_depth(value)),
-            110 => self.set_param(SynthParam::LfoWaveform, (value / 26).min(4) as f32), // 0-4
-            111 => self.set_param(SynthParam::LfoDestination, (value / 32).min(3) as f32), // 0-3
-
-            // Portamento
-            5 => self.set_param(SynthParam::PortamentoTime, cc_to_portamento_time(value)),
-
-            // Oscillator levels
-            80 => self.set_param(SynthParam::Osc1Level, value as f32 / 127.0),
-            81 => self.set_param(SynthParam::Osc2Level, value as f32 / 127.0),
-            82 => self.set_param(SynthParam::Osc3Level, value as f32 / 127.0),
-            
-            // Oscillator waveforms
-            75 => self.set_param(SynthParam::Osc1Waveform, (value / 26).min(4) as f32),
-            76 => self.set_param(SynthParam::Osc2Waveform, (value / 26).min(4) as f32),
-            77 => self.set_param(SynthParam::Osc3Waveform, (value / 26).min(4) as f32),
-            
-            _ => {} // Ignore unmapped CCs
-        }
-    }
-    
-    /// Apply CC value to a specific parameter with appropriate scaling
-    fn apply_cc_to_param(&mut self, param: SynthParam, value: u8) {
-        let scaled = match param {
-            // Time-based parameters
-            SynthParam::Attack => cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
-            SynthParam::Decay => cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
-            SynthParam::Release => cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
-            SynthParam::FilterAttack => cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
-            SynthParam::FilterDecay => cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
-            SynthParam::FilterRelease => cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
-            SynthParam::PortamentoTime => cc_to_portamento_time(value),
-            
-            // 0-1 range parameters
-            SynthParam::Sustain | SynthParam::FilterSustain => cc_to_sustain(value),
-            SynthParam::FilterEnvAmount => cc_to_filter_env_amount(value),
-            SynthParam::LfoDepth => cc_to_lfo_depth(value),
-            SynthParam::Osc1Level | SynthParam::Osc2Level | SynthParam::Osc3Level => value as f32 / 127.0,
-            SynthParam::Osc1Phase | SynthParam::Osc2Phase | SynthParam::Osc3Phase => value as f32 / 127.0,
-            SynthParam::MasterVolume => value as f32 / 127.0,
-            
-            // Filter
-            SynthParam::FilterCutoff => cc_to_cutoff(value),
-            SynthParam::FilterResonance => cc_to_resonance(value),
-            
-            // LFO
-            SynthParam::LfoRate => cc_to_lfo_rate(value),
-            SynthParam::LfoWaveform => (value / 26).min(4) as f32,
-            SynthParam::LfoDestination => (value / 32).min(3) as f32,
-            
-            // Oscillator waveforms
-            SynthParam::Osc1Waveform | SynthParam::Osc2Waveform | SynthParam::Osc3Waveform => {
-                (value / 26).min(4) as f32
-            }
-            
-            // Semitones (-24 to +24)
-            SynthParam::Osc2Semitones | SynthParam::Osc3Semitones => {
-                ((value as f32 / 127.0) * 48.0 - 24.0).round()
-            }
-            
-            // Cents (-100 to +100)
-            SynthParam::Osc2Cents | SynthParam::Osc3Cents => {
-                ((value as f32 / 127.0) * 200.0 - 100.0).round()
-            }
-            
-            // Pitch bend range (1-24)
-            SynthParam::PitchBendRange => ((value as f32 / 127.0) * 23.0 + 1.0).round(),
-        };
-        self.set_param(param, scaled);
-    }
-
-    fn ui_oscillators(&mut self, ui: &mut Ui) {
-        panel_background(ui, |ui| {
-            section_header(ui, "OSCILLATORS");
-
-            // OSC 1
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("OSC 1").size(12.0).strong());
-            });
-            ui.add_space(8.0);
-
-            let mut osc1_wave = self.get_param(SynthParam::Osc1Waveform) as u8;
-            if selector_switch(
-                ui,
-                &mut (osc1_wave as usize),
-                &["Sine", "Square", "Saw", "Tri", "Noise"],
-                "Waveform",
-            ).changed() {
-                self.set_param(SynthParam::Osc1Waveform, osc1_wave as f32);
-            }
-
-            ui.horizontal(|ui| {
-                let mut level = self.get_param(SynthParam::Osc1Level);
-                if knob(ui, &mut level, 0.0..=1.0, "Level", "").changed() {
-                    self.set_param(SynthParam::Osc1Level, level);
-                }
-
-                let mut phase = self.get_param(SynthParam::Osc1Phase);
-                if knob(ui, &mut phase, 0.0..=1.0, "Phase", "°").changed() {
-                    self.set_param(SynthParam::Osc1Phase, phase);
-                }
-            });
-
-            ui.add_space(16.0);
-
-            // OSC 2
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("OSC 2").size(12.0).strong());
-            });
-            ui.add_space(8.0);
-
-            let mut osc2_wave = self.get_param(SynthParam::Osc2Waveform) as u8;
-            if selector_switch(
-                ui,
-                &mut (osc2_wave as usize),
-                &["Sine", "Square", "Saw", "Tri", "Noise"],
-                "Waveform",
-            ).changed() {
-                self.set_param(SynthParam::Osc2Waveform, osc2_wave as f32);
-            }
-
-            ui.horizontal(|ui| {
-                let mut level = self.get_param(SynthParam::Osc2Level);
-                if knob(ui, &mut level, 0.0..=1.0, "Level", "").changed() {
-                    self.set_param(SynthParam::Osc2Level, level);
-                }
-
-                let mut semi = self.get_param(SynthParam::Osc2Semitones);
-                if knob(ui, &mut semi, -24.0..=24.0, "Semitones", "st").changed() {
-                    self.set_param(SynthParam::Osc2Semitones, semi);
-                }
-
-                let mut cents = self.get_param(SynthParam::Osc2Cents);
-                if knob(ui, &mut cents, -100.0..=100.0, "Detune", "¢").changed() {
-                    self.set_param(SynthParam::Osc2Cents, cents);
-                }
-
-                let mut phase = self.get_param(SynthParam::Osc2Phase);
-                if knob(ui, &mut phase, 0.0..=1.0, "Phase", "°").changed() {
-                    self.set_param(SynthParam::Osc2Phase, phase);
-                }
-            });
-
-            ui.add_space(16.0);
-
-            // OSC 3
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("OSC 3").size(12.0).strong());
-            });
-            ui.add_space(8.0);
-
-            let mut osc3_wave = self.get_param(SynthParam::Osc3Waveform) as u8;
-            if selector_switch(
-                ui,
-                &mut (osc3_wave as usize),
-                &["Sine", "Square", "Saw", "Tri", "Noise"],
-                "Waveform",
-            ).changed() {
-                self.set_param(SynthParam::Osc3Waveform, osc3_wave as f32);
-            }
-
-            ui.horizontal(|ui| {
-                let mut level = self.get_param(SynthParam::Osc3Level);
-                if knob(ui, &mut level, 0.0..=1.0, "Level", "").changed() {
-                    self.set_param(SynthParam::Osc3Level, level);
-                }
-
-                let mut semi = self.get_param(SynthParam::Osc3Semitones);
-                if knob(ui, &mut semi, -24.0..=24.0, "Semitones", "st").changed() {
-                    self.set_param(SynthParam::Osc3Semitones, semi);
-                }
-
-                let mut cents = self.get_param(SynthParam::Osc3Cents);
-                if knob(ui, &mut cents, -100.0..=100.0, "Detune", "¢").changed() {
-                    self.set_param(SynthParam::Osc3Cents, cents);
-                }
-
-                let mut phase = self.get_param(SynthParam::Osc3Phase);
-                if knob(ui, &mut phase, 0.0..=1.0, "Phase", "°").changed() {
-                    self.set_param(SynthParam::Osc3Phase, phase);
-                }
-            });
-        });
-    }
-
-    fn ui_filter(&mut self, ui: &mut Ui) {
-        panel_background(ui, |ui| {
-            section_header(ui, "FILTER");
-
-            ui.horizontal(|ui| {
-                let mut cutoff = self.get_param(SynthParam::FilterCutoff);
-                if knob(ui, &mut cutoff, 20.0..=20000.0, "Cutoff", "Hz").changed() {
-                    self.set_param(SynthParam::FilterCutoff, cutoff);
-                }
-
-                let mut res = self.get_param(SynthParam::FilterResonance);
-                if knob(ui, &mut res, 0.0..=1.0, "Resonance", "").changed() {
-                    self.set_param(SynthParam::FilterResonance, res);
-                }
-            });
-
-            ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            ui.label(RichText::new("FILTER ENVELOPE").size(11.0).strong());
-
-            ui.horizontal(|ui| {
-                let mut attack = self.get_param(SynthParam::FilterAttack);
-                if knob(ui, &mut attack, 0.001..=2.0, "Attack", "s").changed() {
-                    self.set_param(SynthParam::FilterAttack, attack);
-                }
-
-                let mut decay = self.get_param(SynthParam::FilterDecay);
-                if knob(ui, &mut decay, 0.001..=5.0, "Decay", "s").changed() {
-                    self.set_param(SynthParam::FilterDecay, decay);
-                }
-
-                let mut sustain = self.get_param(SynthParam::FilterSustain);
-                if knob(ui, &mut sustain, 0.0..=1.0, "Sustain", "").changed() {
-                    self.set_param(SynthParam::FilterSustain, sustain);
-                }
-
-                let mut release = self.get_param(SynthParam::FilterRelease);
-                if knob(ui, &mut release, 0.001..=5.0, "Release", "s").changed() {
-                    self.set_param(SynthParam::FilterRelease, release);
-                }
-
-                let mut amount = self.get_param(SynthParam::FilterEnvAmount);
-                if knob(ui, &mut amount, 0.0..=1.0, "Amount", "").changed() {
-                    self.set_param(SynthParam::FilterEnvAmount, amount);
-                }
-            });
-        });
-    }
-
-    fn ui_envelopes(&mut self, ui: &mut Ui) {
-        panel_background(ui, |ui| {
-            section_header(ui, "AMPLITUDE ENVELOPE");
-
-            ui.horizontal(|ui| {
-                let mut attack = self.get_param(SynthParam::Attack);
-                if knob(ui, &mut attack, 0.001..=2.0, "Attack", "s").changed() {
-                    self.set_param(SynthParam::Attack, attack);
-                }
-
-                let mut decay = self.get_param(SynthParam::Decay);
-                if knob(ui, &mut decay, 0.001..=5.0, "Decay", "s").changed() {
-                    self.set_param(SynthParam::Decay, decay);
-                }
-
-                let mut sustain = self.get_param(SynthParam::Sustain);
-                if knob(ui, &mut sustain, 0.0..=1.0, "Sustain", "").changed() {
-                    self.set_param(SynthParam::Sustain, sustain);
-                }
-
-                let mut release = self.get_param(SynthParam::Release);
-                if knob(ui, &mut release, 0.001..=5.0, "Release", "s").changed() {
-                    self.set_param(SynthParam::Release, release);
-                }
-            });
-        });
-    }
-
-    fn ui_lfo(&mut self, ui: &mut Ui) {
-        panel_background(ui, |ui| {
-            section_header(ui, "LFO");
-
-            let mut wave = self.get_param(SynthParam::LfoWaveform) as u8;
-            if selector_switch(
-                ui,
-                &mut (wave as usize),
-                &["Sine", "Triangle", "Square", "Saw", "Random"],
-                "Waveform",
-            ).changed() {
-                self.set_param(SynthParam::LfoWaveform, wave as f32);
-            }
-
-            let mut dest = self.get_param(SynthParam::LfoDestination) as u8;
-            if selector_switch(
-                ui,
-                &mut (dest as usize),
-                &["Off", "Pitch", "Filter", "Amp"],
-                "Destination",
-            ).changed() {
-                self.set_param(SynthParam::LfoDestination, dest as f32);
-            }
-
-            ui.horizontal(|ui| {
-                let mut rate = self.get_param(SynthParam::LfoRate);
-                if knob(ui, &mut rate, 0.1..=20.0, "Rate", "Hz").changed() {
-                    self.set_param(SynthParam::LfoRate, rate);
-                }
-
-                let mut depth = self.get_param(SynthParam::LfoDepth);
-                if knob(ui, &mut depth, 0.0..=1.0, "Depth", "").changed() {
-                    self.set_param(SynthParam::LfoDepth, depth);
-                }
-            });
-        });
-    }
-
-    fn ui_midi(&mut self, ui: &mut Ui) {
-        panel_background(ui, |ui| {
-            section_header(ui, "MIDI INPUT");
-
-            // MIDI Port Selection
-            ui.label(RichText::new("MIDI Port:").size(11.0).strong());
-            ui.add_space(4.0);
-
-            egui::ComboBox::from_label("Select Port")
-                .selected_text(
-                    self.selected_midi_port
-                        .and_then(|i| self.midi_ports.get(i))
-                        .map(|s| s.as_str())
-                        .unwrap_or("No MIDI ports available")
-                )
-                .show_ui(ui, |ui| {
-                    for (i, port_name) in self.midi_ports.iter().enumerate() {
-                        let is_selected = self.selected_midi_port == Some(i);
-                        if ui.selectable_label(is_selected, port_name).clicked() {
-                            self.selected_midi_port = Some(i);
-                        }
-                    }
-                });
-
-            ui.add_space(8.0);
-
-            // Connect/Refresh buttons
-            ui.horizontal(|ui| {
-                if ui.button("🔄 Refresh Ports").clicked() {
-                    self.midi_ports = MidiInputHandler::list_ports().unwrap_or_default();
-                    if self.midi_ports.is_empty() {
-                        self.selected_midi_port = None;
-                    }
-                }
-
-                if ui.button("🔌 Connect").clicked() {
-                    if let Some(port_idx) = self.selected_midi_port {
-                        match MidiInputHandler::connect(port_idx, None) {
-                            Ok(handler) => {
-                                self.midi_handler = Some(handler);
-                                println!("Connected to MIDI port {}", port_idx);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to connect MIDI: {}", e);
-                            }
-                        }
-                    }
-                }
-            });
-
-            // Show connection status
-            ui.add_space(8.0);
-            let status_text = if self.midi_handler.is_some() {
-                "✅ Connected"
-            } else {
-                "❌ Not connected"
-            };
-            ui.label(RichText::new(status_text).size(12.0));
-
-            ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            ui.label(RichText::new("Recent CC Messages:").size(11.0));
-            ui.add_space(4.0);
-
-            // Show recent MIDI CC feedback
-            let cc_mappings = [
-                (73, "Attack"),
-                (83, "Decay"),
-                (84, "Sustain"),
-                (72, "Release"),
-                (74, "Cutoff"),
-                (71, "Resonance"),
-                (5, "Portamento"),
-            ];
-
-            for (cc, name) in &cc_mappings {
-                let value = self.shared.midi_feedback.get(cc).map(|e| *e.value());
-                midi_indicator(ui, *cc, value, name);
-            }
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            let mut bend_range = self.get_param(SynthParam::PitchBendRange);
-            if knob(ui, &mut bend_range, 1.0..=24.0, "Pitch Bend Range", "st").changed() {
-                self.set_param(SynthParam::PitchBendRange, bend_range);
-            }
-        });
-    }
-
-    fn ui_presets(&mut self, ui: &mut Ui) {
-        panel_background(ui, |ui| {
-            section_header(ui, "PRESETS");
-
-            // Preset name input
-            ui.horizontal(|ui| {
-                ui.label("Name:");
-                ui.text_edit_singleline(&mut self.preset_name);
-            });
-
-            ui.add_space(8.0);
-
-            // Save button
-            if ui.button(RichText::new("💾 Save").size(12.0)).clicked() {
-                let preset = self.create_preset();
-                if let Err(e) = save_preset(&preset) {
-                    eprintln!("Failed to save preset: {}", e);
-                } else {
-                    // Refresh list
-                    self.available_presets = list_presets().unwrap_or_default();
-                }
-            }
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            // Preset list
-            ui.label(RichText::new("Load Preset:").size(11.0));
-
-            // Collect clicked preset info first to avoid borrow issues
-            let mut clicked_preset: Option<(usize, String)> = None;
-
-            egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                for (i, name) in self.available_presets.iter().enumerate() {
-                    let is_selected = self.selected_preset == Some(i);
-                    let response = ui.selectable_label(
-                        is_selected,
-                        RichText::new(name).size(11.0),
-                    );
-
-                    if response.clicked() {
-                        clicked_preset = Some((i, name.clone()));
-                    }
-                }
-            });
-
-            // Apply preset outside of the closure
-            if let Some((i, name)) = clicked_preset {
-                self.selected_preset = Some(i);
-                if let Ok(preset) = load_preset(&name) {
-                    self.apply_preset(&preset);
-                }
-            }
-
-            ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            // Master volume
-            ui.label(RichText::new("MASTER").size(12.0).strong());
-            let mut port_time = self.get_param(SynthParam::PortamentoTime);
-            if knob(ui, &mut port_time, 0.0..=3.0, "Porta", "s").changed() {
-                self.set_param(SynthParam::PortamentoTime, port_time);
-            }
-            let mut vol = self.get_param(SynthParam::MasterVolume);
-            if knob(ui, &mut vol, 0.0..=1.0, "Volume", "").changed() {
-                self.set_param(SynthParam::MasterVolume, vol);
-            }
-        });
-    }
+    // ========================================================================
+    // UI panels
+    // ========================================================================
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Set dark theme with our custom colors
         ctx.set_visuals(egui::Visuals {
             window_fill: THEME.bg_blue,
             panel_fill: THEME.panel_bg,
             ..egui::Visuals::dark()
         });
-        
-        // Request continuous repaints for responsive MIDI handling
+
         ctx.request_repaint();
-        
-        // Poll MIDI input and process ALL pending events
-        // Collect events first to avoid borrow issues
-        let events: Vec<_> = if let Some(ref midi) = self.midi_handler {
-            let mut evts = Vec::new();
-            for _ in 0..64 {
-                match midi.poll() {
-                    Some(event) => evts.push(event),
-                    None => break,
-                }
-            }
-            evts
-        } else {
-            Vec::new()
-        };
-        
-        // Process collected events
-        for event in events {
-            // Send note events to audio engine immediately
-            self.audio_engine.send_event(event.clone());
-            
-            // Update MIDI feedback map and ParamBank for CC messages
-            if let crate::core::event::NoteEventKind::ControlChange { cc, value } = event.kind {
-                // Always update feedback map for ALL CCs
-                self.shared.midi_feedback.insert(cc, value);
-                
-                // Check if we're in MIDI learn mode
-                if let Some(target_param) = self.midi_learn_target.take() {
-                    // Assign this CC to the target parameter
-                    self.custom_cc_map.insert(cc, target_param);
-                    // Save to disk
-                    if let Err(e) = save_cc_mappings(&self.custom_cc_map) {
-                        eprintln!("Failed to save CC mappings: {}", e);
-                    }
-                    println!("Mapped CC {} → {}", cc, target_param.name());
-                }
-                
-                // Update ParamBank for mapped CCs so sync_params doesn't overwrite
-                self.update_param_from_cc(cc, value);
-            }
-        }
 
-        // Sync GUI parameters to audio engine (every frame for responsiveness)
-        self.audio_engine.sync_params(&self.shared.params);
+        // Let the backend poll MIDI and sync params every frame
+        self.backend.update();
 
-        // Set Rust In Peace theme
-        let mut visuals = ctx.style().visuals.clone();
-        visuals.dark_mode = true;
-        visuals.window_fill = THEME.bg_blue;
-        visuals.panel_fill = THEME.panel_bg;
-        ctx.set_visuals(visuals);
-
-        // Top bar with title
+        // ── Top bar ──────────────────────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("🔊 Rust In Synth")
                         .size(18.0)
                         .strong()
-                        .color(THEME.gold)
+                        .color(THEME.gold),
                 );
                 ui.label(
                     RichText::new("v0.5.0")
                         .size(10.0)
-                        .color(Color32::from_gray(120))
+                        .color(Color32::from_gray(120)),
                 );
-                
+
                 ui.separator();
-                
-                // CPU Load meter
-                let cpu_load = self.shared.get_cpu_load();
+
+                let cpu_load = self.backend.get_cpu_load();
                 let cpu_color = if cpu_load < 50.0 {
-                    Color32::from_rgb(100, 200, 100) // Green
+                    Color32::from_rgb(100, 200, 100)
                 } else if cpu_load < 80.0 {
-                    Color32::from_rgb(200, 200, 100) // Yellow
+                    Color32::from_rgb(200, 200, 100)
                 } else {
-                    Color32::from_rgb(200, 100, 100) // Red
+                    Color32::from_rgb(200, 100, 100)
                 };
                 ui.label(RichText::new("CPU:").size(10.0).color(Color32::from_gray(150)));
                 ui.add(
                     egui::ProgressBar::new(cpu_load / 100.0)
                         .desired_width(60.0)
-                        .fill(cpu_color)
+                        .fill(cpu_color),
                 );
-                ui.label(RichText::new(format!("{:.1}%", cpu_load)).size(10.0).monospace());
-                
+                ui.label(
+                    RichText::new(format!("{:.1}%", cpu_load))
+                        .size(10.0)
+                        .monospace(),
+                );
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        RichText::new("Monophonic Synthesizer")
+                        RichText::new("Analog-Modeled Subtractive Synthesizer")
                             .size(11.0)
-                            .color(Color32::from_gray(180))
+                            .color(Color32::from_gray(180)),
                     );
                 });
             });
         });
 
-        // Main panel - Single window layout with all sections
+        // ── Main panel ───────────────────────────────────────────────────────
         egui::CentralPanel::default()
             .frame(Frame::none().fill(THEME.bg_blue))
             .show(ctx, |ui| {
-                // Fill available space with scroll area
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.set_min_height(ui.available_height());
-                        
+
                         ui.horizontal_top(|ui| {
-                            // Column 1: Oscillators
                             ui.vertical(|ui| {
                                 ui.set_width(185.0);
                                 self.ui_oscillators_compact(ui);
                             });
-                            
                             ui.separator();
-                            
-                            // Column 2: Filter
                             ui.vertical(|ui| {
                                 ui.set_width(145.0);
                                 self.ui_filter_compact(ui);
                             });
-                            
                             ui.separator();
-                            
-                            // Column 3: Envelopes
                             ui.vertical(|ui| {
                                 ui.set_width(145.0);
                                 self.ui_envelopes_compact(ui);
                             });
-                            
                             ui.separator();
-                            
-                            // Column 4: LFO
                             ui.vertical(|ui| {
                                 ui.set_width(145.0);
                                 self.ui_lfo_compact(ui);
                             });
-                            
                             ui.separator();
-                            
-                            // Column 5: Effects
                             ui.vertical(|ui| {
                                 ui.set_width(155.0);
                                 self.ui_effects_compact(ui);
                             });
-                            
                             ui.separator();
-                            
-                            // Column 6: Presets & MIDI
                             ui.vertical(|ui| {
                                 ui.set_width(185.0);
                                 self.ui_presets_compact(ui);
@@ -928,16 +265,22 @@ impl SynthApp {
             });
     }
 
-    /// Compact oscillators panel
+    // ── Oscillators ──────────────────────────────────────────────────────────
+
     fn ui_oscillators_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "OSCILLATORS");
-        
+
         let wf_labels = ["Sin", "Tri", "Saw", "Sqr", "Nse"];
-        
+
         // OSC 1
         ui.group(|ui| {
-            ui.label(RichText::new("OSC 1").size(10.0).strong().color(Color32::from_rgb(255, 180, 60)));
-            
+            ui.label(
+                RichText::new("OSC 1")
+                    .size(10.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 180, 60)),
+            );
+
             let mut wf1 = self.get_param(SynthParam::Osc1Waveform) as usize;
             egui::ComboBox::from_id_source("osc1_wf")
                 .width(60.0)
@@ -949,29 +292,43 @@ impl SynthApp {
                         }
                     }
                 });
-            
+
             let mut lvl1 = self.get_param(SynthParam::Osc1Level);
-            if ui.add(egui::Slider::new(&mut lvl1, 0.0..=1.0).text("Level")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut lvl1, 0.0..=1.0).text("Level"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc1Level, lvl1);
             }
-            
+
             let mut phase1 = self.get_param(SynthParam::Osc1Phase);
-            if ui.add(egui::Slider::new(&mut phase1, 0.0..=1.0).text("Phase")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut phase1, 0.0..=1.0).text("Phase"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc1Phase, phase1);
             }
-            
-            let mut pan1 = self.audio_engine.osc_pan(1);
-            if ui.add(egui::Slider::new(&mut pan1, -1.0..=1.0).text("Pan")).changed() {
-                self.audio_engine.set_osc_pan(1, pan1);
+
+            let mut pan1 = self.backend.osc_pan(1);
+            if ui
+                .add(egui::Slider::new(&mut pan1, -1.0..=1.0).text("Pan"))
+                .changed()
+            {
+                self.backend.set_osc_pan(1, pan1);
             }
         });
-        
+
         ui.add_space(4.0);
-        
+
         // OSC 2
         ui.group(|ui| {
-            ui.label(RichText::new("OSC 2").size(10.0).strong().color(Color32::from_rgb(255, 180, 60)));
-            
+            ui.label(
+                RichText::new("OSC 2")
+                    .size(10.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 180, 60)),
+            );
+
             let mut wf2 = self.get_param(SynthParam::Osc2Waveform) as usize;
             egui::ComboBox::from_id_source("osc2_wf")
                 .width(60.0)
@@ -983,39 +340,59 @@ impl SynthApp {
                         }
                     }
                 });
-            
+
             let mut lvl2 = self.get_param(SynthParam::Osc2Level);
-            if ui.add(egui::Slider::new(&mut lvl2, 0.0..=1.0).text("Level")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut lvl2, 0.0..=1.0).text("Level"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc2Level, lvl2);
             }
-            
+
             let mut semi2 = self.get_param(SynthParam::Osc2Semitones);
-            if ui.add(egui::Slider::new(&mut semi2, -24.0..=24.0).text("Semi")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut semi2, -24.0..=24.0).text("Semi"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc2Semitones, semi2);
             }
-            
+
             let mut cents2 = self.get_param(SynthParam::Osc2Cents);
-            if ui.add(egui::Slider::new(&mut cents2, -100.0..=100.0).text("Cents")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut cents2, -100.0..=100.0).text("Cents"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc2Cents, cents2);
             }
-            
+
             let mut phase2 = self.get_param(SynthParam::Osc2Phase);
-            if ui.add(egui::Slider::new(&mut phase2, 0.0..=1.0).text("Phase")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut phase2, 0.0..=1.0).text("Phase"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc2Phase, phase2);
             }
-            
-            let mut pan2 = self.audio_engine.osc_pan(2);
-            if ui.add(egui::Slider::new(&mut pan2, -1.0..=1.0).text("Pan")).changed() {
-                self.audio_engine.set_osc_pan(2, pan2);
+
+            let mut pan2 = self.backend.osc_pan(2);
+            if ui
+                .add(egui::Slider::new(&mut pan2, -1.0..=1.0).text("Pan"))
+                .changed()
+            {
+                self.backend.set_osc_pan(2, pan2);
             }
         });
-        
+
         ui.add_space(4.0);
-        
+
         // OSC 3
         ui.group(|ui| {
-            ui.label(RichText::new("OSC 3").size(10.0).strong().color(Color32::from_rgb(255, 180, 60)));
-            
+            ui.label(
+                RichText::new("OSC 3")
+                    .size(10.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 180, 60)),
+            );
+
             let mut wf3 = self.get_param(SynthParam::Osc3Waveform) as usize;
             egui::ComboBox::from_id_source("osc3_wf")
                 .width(60.0)
@@ -1027,143 +404,245 @@ impl SynthApp {
                         }
                     }
                 });
-            
+
             let mut lvl3 = self.get_param(SynthParam::Osc3Level);
-            if ui.add(egui::Slider::new(&mut lvl3, 0.0..=1.0).text("Level")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut lvl3, 0.0..=1.0).text("Level"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc3Level, lvl3);
             }
-            
+
             let mut semi3 = self.get_param(SynthParam::Osc3Semitones);
-            if ui.add(egui::Slider::new(&mut semi3, -24.0..=24.0).text("Semi")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut semi3, -24.0..=24.0).text("Semi"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc3Semitones, semi3);
             }
-            
+
             let mut cents3 = self.get_param(SynthParam::Osc3Cents);
-            if ui.add(egui::Slider::new(&mut cents3, -100.0..=100.0).text("Cents")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut cents3, -100.0..=100.0).text("Cents"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc3Cents, cents3);
             }
-            
+
             let mut phase3 = self.get_param(SynthParam::Osc3Phase);
-            if ui.add(egui::Slider::new(&mut phase3, 0.0..=1.0).text("Phase")).changed() {
+            if ui
+                .add(egui::Slider::new(&mut phase3, 0.0..=1.0).text("Phase"))
+                .changed()
+            {
                 self.set_param(SynthParam::Osc3Phase, phase3);
             }
-            
-            let mut pan3 = self.audio_engine.osc_pan(3);
-            if ui.add(egui::Slider::new(&mut pan3, -1.0..=1.0).text("Pan")).changed() {
-                self.audio_engine.set_osc_pan(3, pan3);
+
+            let mut pan3 = self.backend.osc_pan(3);
+            if ui
+                .add(egui::Slider::new(&mut pan3, -1.0..=1.0).text("Pan"))
+                .changed()
+            {
+                self.backend.set_osc_pan(3, pan3);
             }
         });
-        
+
         ui.add_space(4.0);
-        
+
         // Stereo Width
         ui.group(|ui| {
-            ui.label(RichText::new("STEREO").size(10.0).strong().color(Color32::from_rgb(100, 200, 255)));
-            
-            let mut width = self.audio_engine.stereo_width();
-            if ui.add(egui::Slider::new(&mut width, 0.0..=2.0).text("Width")).changed() {
-                self.audio_engine.set_stereo_width(width);
+            ui.label(
+                RichText::new("STEREO")
+                    .size(10.0)
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
+            );
+            let mut width = self.backend.stereo_width();
+            if ui
+                .add(egui::Slider::new(&mut width, 0.0..=2.0).text("Width"))
+                .changed()
+            {
+                self.backend.set_stereo_width(width);
             }
         });
     }
-    
-    /// Compact filter panel
+
+    // ── Filter ───────────────────────────────────────────────────────────────
+
     fn ui_filter_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "FILTER");
-        
+
         let mut cutoff = self.get_param(SynthParam::FilterCutoff);
-        if ui.add(egui::Slider::new(&mut cutoff, 20.0..=20000.0).text("Cutoff").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut cutoff, 20.0..=20000.0)
+                    .text("Cutoff")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::FilterCutoff, cutoff);
         }
-        
+
         let mut res = self.get_param(SynthParam::FilterResonance);
-        if ui.add(egui::Slider::new(&mut res, 0.0..=1.0).text("Res")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut res, 0.0..=1.0).text("Res"))
+            .changed()
+        {
             self.set_param(SynthParam::FilterResonance, res);
         }
-        
+
         ui.add_space(8.0);
         ui.label(RichText::new("Env Amount").size(10.0));
         let mut env_amt = self.get_param(SynthParam::FilterEnvAmount);
-        if ui.add(egui::Slider::new(&mut env_amt, -1.0..=1.0).text("Amt")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut env_amt, -1.0..=1.0).text("Amt"))
+            .changed()
+        {
             self.set_param(SynthParam::FilterEnvAmount, env_amt);
         }
     }
-    
-    /// Compact envelopes panel
+
+    // ── Envelopes ────────────────────────────────────────────────────────────
+
     fn ui_envelopes_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "AMP ENV");
-        
+
         let mut atk = self.get_param(SynthParam::Attack);
-        if ui.add(egui::Slider::new(&mut atk, 0.001..=5.0).text("Attack").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut atk, 0.001..=5.0)
+                    .text("Attack")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::Attack, atk);
         }
-        
+
         let mut dec = self.get_param(SynthParam::Decay);
-        if ui.add(egui::Slider::new(&mut dec, 0.001..=5.0).text("Decay").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut dec, 0.001..=5.0)
+                    .text("Decay")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::Decay, dec);
         }
-        
+
         let mut sus = self.get_param(SynthParam::Sustain);
-        if ui.add(egui::Slider::new(&mut sus, 0.0..=1.0).text("Sustain")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut sus, 0.0..=1.0).text("Sustain"))
+            .changed()
+        {
             self.set_param(SynthParam::Sustain, sus);
         }
-        
+
         let mut rel = self.get_param(SynthParam::Release);
-        if ui.add(egui::Slider::new(&mut rel, 0.001..=5.0).text("Release").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut rel, 0.001..=5.0)
+                    .text("Release")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::Release, rel);
         }
-        
+
         ui.add_space(12.0);
         section_header(ui, "FILTER ENV");
-        
+
         let mut fatk = self.get_param(SynthParam::FilterAttack);
-        if ui.add(egui::Slider::new(&mut fatk, 0.001..=5.0).text("Attack").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut fatk, 0.001..=5.0)
+                    .text("Attack")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::FilterAttack, fatk);
         }
-        
+
         let mut fdec = self.get_param(SynthParam::FilterDecay);
-        if ui.add(egui::Slider::new(&mut fdec, 0.001..=5.0).text("Decay").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut fdec, 0.001..=5.0)
+                    .text("Decay")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::FilterDecay, fdec);
         }
-        
+
         let mut fsus = self.get_param(SynthParam::FilterSustain);
-        if ui.add(egui::Slider::new(&mut fsus, 0.0..=1.0).text("Sustain")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut fsus, 0.0..=1.0).text("Sustain"))
+            .changed()
+        {
             self.set_param(SynthParam::FilterSustain, fsus);
         }
-        
+
         let mut frel = self.get_param(SynthParam::FilterRelease);
-        if ui.add(egui::Slider::new(&mut frel, 0.001..=5.0).text("Release").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut frel, 0.001..=5.0)
+                    .text("Release")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::FilterRelease, frel);
         }
-        
+
         ui.add_space(12.0);
         section_header(ui, "MASTER");
 
         let mut port_time = self.get_param(SynthParam::PortamentoTime);
-        if ui.add(egui::Slider::new(&mut port_time, 0.0..=3.0).text("Portamento").logarithmic(true)).changed() {
+        if ui
+            .add(
+                egui::Slider::new(&mut port_time, 0.0..=3.0)
+                    .text("Portamento")
+                    .logarithmic(true),
+            )
+            .changed()
+        {
             self.set_param(SynthParam::PortamentoTime, port_time);
         }
 
         let mut vol = self.get_param(SynthParam::MasterVolume);
-        if ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume"))
+            .changed()
+        {
             self.set_param(SynthParam::MasterVolume, vol);
         }
     }
-    
-    /// Compact LFO panel
+
+    // ── LFO ──────────────────────────────────────────────────────────────────
+
     fn ui_lfo_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "LFO");
-        
+
         let mut rate = self.get_param(SynthParam::LfoRate);
-        if ui.add(egui::Slider::new(&mut rate, 0.1..=20.0).text("Rate")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut rate, 0.1..=20.0).text("Rate"))
+            .changed()
+        {
             self.set_param(SynthParam::LfoRate, rate);
         }
-        
+
         let mut depth = self.get_param(SynthParam::LfoDepth);
-        if ui.add(egui::Slider::new(&mut depth, 0.0..=1.0).text("Depth")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut depth, 0.0..=1.0).text("Depth"))
+            .changed()
+        {
             self.set_param(SynthParam::LfoDepth, depth);
         }
-        
+
         ui.label(RichText::new("Waveform").size(10.0));
         let lfo_wf_labels = ["Sin", "Tri", "Sqr", "Saw", "Rnd"];
         let mut lfo_wf = self.get_param(SynthParam::LfoWaveform) as usize;
@@ -1177,7 +656,7 @@ impl SynthApp {
                     }
                 }
             });
-        
+
         ui.label(RichText::new("Destination").size(10.0));
         let lfo_dest_labels = ["Off", "Pitch", "Filter", "Amp"];
         let mut lfo_dest = self.get_param(SynthParam::LfoDestination) as usize;
@@ -1191,128 +670,183 @@ impl SynthApp {
                     }
                 }
             });
-        
+
         ui.add_space(12.0);
         section_header(ui, "PITCH / VOICE");
-        
-        // Polyphony mode toggle
-        let current_mode = self.audio_engine.polyphony_mode();
+
+        let current_mode = self.backend.polyphony_mode();
         ui.horizontal(|ui| {
             ui.label("Mode:");
             let mono_selected = current_mode == PolyphonyMode::Mono;
             if ui.selectable_label(mono_selected, "MONO").clicked() && !mono_selected {
-                self.audio_engine.set_polyphony_mode(PolyphonyMode::Mono);
+                self.backend.set_polyphony_mode(PolyphonyMode::Mono);
             }
             let poly_selected = current_mode == PolyphonyMode::Poly;
             if ui.selectable_label(poly_selected, "POLY").clicked() && !poly_selected {
-                self.audio_engine.set_polyphony_mode(PolyphonyMode::Poly);
+                self.backend.set_polyphony_mode(PolyphonyMode::Poly);
             }
         });
-        
-        // Voice count display
-        let active = self.audio_engine.active_voice_count();
-        let max = self.audio_engine.max_voices();
-        ui.label(RichText::new(format!("Voices: {}/{}", active, max)).size(10.0).color(Color32::from_gray(150)));
-        
+
+        let active = self.backend.active_voice_count();
+        let max = self.backend.max_voices();
+        ui.label(
+            RichText::new(format!("Voices: {}/{}", active, max))
+                .size(10.0)
+                .color(Color32::from_gray(150)),
+        );
+
         let mut bend = self.get_param(SynthParam::PitchBendRange);
-        if ui.add(egui::Slider::new(&mut bend, 1.0..=24.0).text("Bend Range")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut bend, 1.0..=24.0).text("Bend Range"))
+            .changed()
+        {
             self.set_param(SynthParam::PitchBendRange, bend);
         }
     }
-    
-    /// Compact effects panel
+
+    // ── Effects ──────────────────────────────────────────────────────────────
+
     fn ui_effects_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "EFFECTS");
-        
+
         // DELAY
         ui.group(|ui| {
-            let mut delay_on = self.audio_engine.delay_enabled();
-            if ui.checkbox(&mut delay_on, RichText::new("DELAY").size(10.0).strong()).changed() {
-                self.audio_engine.set_delay_enabled(delay_on);
+            let mut delay_on = self.backend.delay_enabled();
+            if ui
+                .checkbox(&mut delay_on, RichText::new("DELAY").size(10.0).strong())
+                .changed()
+            {
+                self.backend.set_delay_enabled(delay_on);
             }
-            
+
             if delay_on {
-                let mut time = self.audio_engine.delay_time();
-                if ui.add(egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s")).changed() {
-                    self.audio_engine.set_delay_time(time);
+                let mut time = self.backend.delay_time();
+                if ui
+                    .add(
+                        egui::Slider::new(&mut time, 0.05..=1.0)
+                            .text("Time")
+                            .suffix("s"),
+                    )
+                    .changed()
+                {
+                    self.backend.set_delay_time(time);
                 }
-                
-                let mut feedback = self.audio_engine.delay_feedback();
-                if ui.add(egui::Slider::new(&mut feedback, 0.0..=0.9).text("Feedback")).changed() {
-                    self.audio_engine.set_delay_feedback(feedback);
+
+                let mut feedback = self.backend.delay_feedback();
+                if ui
+                    .add(egui::Slider::new(&mut feedback, 0.0..=0.9).text("Feedback"))
+                    .changed()
+                {
+                    self.backend.set_delay_feedback(feedback);
                 }
-                
-                let mut mix = self.audio_engine.delay_mix();
-                if ui.add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix")).changed() {
-                    self.audio_engine.set_delay_mix(mix);
+
+                let mut mix = self.backend.delay_mix();
+                if ui
+                    .add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix"))
+                    .changed()
+                {
+                    self.backend.set_delay_mix(mix);
                 }
             }
         });
-        
+
         ui.add_space(4.0);
-        
+
         // REVERB
         ui.group(|ui| {
-            let mut reverb_on = self.audio_engine.reverb_enabled();
-            if ui.checkbox(&mut reverb_on, RichText::new("REVERB").size(10.0).strong()).changed() {
-                self.audio_engine.set_reverb_enabled(reverb_on);
+            let mut reverb_on = self.backend.reverb_enabled();
+            if ui
+                .checkbox(&mut reverb_on, RichText::new("REVERB").size(10.0).strong())
+                .changed()
+            {
+                self.backend.set_reverb_enabled(reverb_on);
             }
-            
+
             if reverb_on {
-                let mut room = self.audio_engine.reverb_room_size();
-                if ui.add(egui::Slider::new(&mut room, 0.0..=1.0).text("Room")).changed() {
-                    self.audio_engine.set_reverb_room_size(room);
+                let mut room = self.backend.reverb_room_size();
+                if ui
+                    .add(egui::Slider::new(&mut room, 0.0..=1.0).text("Room"))
+                    .changed()
+                {
+                    self.backend.set_reverb_room_size(room);
                 }
-                
-                let mut damp = self.audio_engine.reverb_damping();
-                if ui.add(egui::Slider::new(&mut damp, 0.0..=1.0).text("Damp")).changed() {
-                    self.audio_engine.set_reverb_damping(damp);
+
+                let mut damp = self.backend.reverb_damping();
+                if ui
+                    .add(egui::Slider::new(&mut damp, 0.0..=1.0).text("Damp"))
+                    .changed()
+                {
+                    self.backend.set_reverb_damping(damp);
                 }
-                
-                let mut mix = self.audio_engine.reverb_mix();
-                if ui.add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix")).changed() {
-                    self.audio_engine.set_reverb_mix(mix);
+
+                let mut mix = self.backend.reverb_mix();
+                if ui
+                    .add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix"))
+                    .changed()
+                {
+                    self.backend.set_reverb_mix(mix);
                 }
             }
         });
-        
+
         ui.add_space(4.0);
-        
+
         // CHORUS
         ui.group(|ui| {
-            let mut chorus_on = self.audio_engine.chorus_enabled();
-            if ui.checkbox(&mut chorus_on, RichText::new("CHORUS").size(10.0).strong()).changed() {
-                self.audio_engine.set_chorus_enabled(chorus_on);
+            let mut chorus_on = self.backend.chorus_enabled();
+            if ui
+                .checkbox(&mut chorus_on, RichText::new("CHORUS").size(10.0).strong())
+                .changed()
+            {
+                self.backend.set_chorus_enabled(chorus_on);
             }
-            
+
             if chorus_on {
-                let mut rate = self.audio_engine.chorus_rate();
-                if ui.add(egui::Slider::new(&mut rate, 0.1..=5.0).text("Rate").suffix("Hz")).changed() {
-                    self.audio_engine.set_chorus_rate(rate);
+                let mut rate = self.backend.chorus_rate();
+                if ui
+                    .add(
+                        egui::Slider::new(&mut rate, 0.1..=5.0)
+                            .text("Rate")
+                            .suffix("Hz"),
+                    )
+                    .changed()
+                {
+                    self.backend.set_chorus_rate(rate);
                 }
-                
-                let mut depth = self.audio_engine.chorus_depth();
-                if ui.add(egui::Slider::new(&mut depth, 0.0..=10.0).text("Depth").suffix("ms")).changed() {
-                    self.audio_engine.set_chorus_depth(depth);
+
+                let mut depth = self.backend.chorus_depth();
+                if ui
+                    .add(
+                        egui::Slider::new(&mut depth, 0.0..=10.0)
+                            .text("Depth")
+                            .suffix("ms"),
+                    )
+                    .changed()
+                {
+                    self.backend.set_chorus_depth(depth);
                 }
-                
-                let mut mix = self.audio_engine.chorus_mix();
-                if ui.add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix")).changed() {
-                    self.audio_engine.set_chorus_mix(mix);
+
+                let mut mix = self.backend.chorus_mix();
+                if ui
+                    .add(egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix"))
+                    .changed()
+                {
+                    self.backend.set_chorus_mix(mix);
                 }
             }
         });
     }
-    
-    /// Compact presets panel
+
+    // ── Presets ───────────────────────────────────────────────────────────────
+
     fn ui_presets_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "PRESETS");
-        
+
         ui.horizontal(|ui| {
             ui.label("Name:");
             ui.text_edit_singleline(&mut self.preset_name);
         });
-        
+
         if ui.button("💾 Save").clicked() {
             let preset = self.create_preset();
             if let Err(e) = save_preset(&preset) {
@@ -1321,10 +855,10 @@ impl SynthApp {
                 self.available_presets = list_presets().unwrap_or_default();
             }
         }
-        
+
         ui.add_space(8.0);
         ui.label("Load:");
-        
+
         let mut clicked_name: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_source("preset_list")
@@ -1345,58 +879,56 @@ impl SynthApp {
             }
         }
     }
-    
-    /// Compact MIDI panel
+
+    // ── MIDI ─────────────────────────────────────────────────────────────────
+
     fn ui_midi_compact(&mut self, ui: &mut Ui) {
         section_header(ui, "MIDI");
-        
-        // Connection status
-        let status = if self.midi_handler.is_some() { "✅ Connected" } else { "❌ Disconnected" };
+
+        let status = if self.backend.midi_connected() {
+            "✅ Connected"
+        } else {
+            "❌ Disconnected"
+        };
         ui.label(RichText::new(status).size(11.0));
-        
-        // Port selector
+
+        // Port selector (not relevant for plugin, but rendered anyway for unified GUI)
+        let ports = self.backend.midi_ports();
+        let selected_port = self.backend.selected_midi_port();
         egui::ComboBox::from_id_source("midi_port")
             .selected_text(
-                self.selected_midi_port
-                    .and_then(|i| self.midi_ports.get(i))
+                selected_port
+                    .and_then(|i| ports.get(i))
                     .map(|s| s.as_str())
-                    .unwrap_or("No ports")
+                    .unwrap_or("No ports"),
             )
             .show_ui(ui, |ui| {
-                for (i, port_name) in self.midi_ports.iter().enumerate() {
-                    let is_selected = self.selected_midi_port == Some(i);
+                for (i, port_name) in ports.iter().enumerate() {
+                    let is_selected = selected_port == Some(i);
                     if ui.selectable_label(is_selected, port_name).clicked() {
-                        self.selected_midi_port = Some(i);
+                        self.backend.connect_midi_port(i);
                     }
                 }
             });
-        
+
         ui.horizontal(|ui| {
             if ui.button("🔄").on_hover_text("Refresh ports").clicked() {
-                self.midi_ports = MidiInputHandler::list_ports().unwrap_or_default();
+                self.backend.refresh_midi_ports();
             }
             if ui.button("🔌 Connect").clicked() {
-                if let Some(port_idx) = self.selected_midi_port {
-                    match MidiInputHandler::connect(port_idx, None) {
-                        Ok(handler) => {
-                            self.midi_handler = Some(handler);
-                        }
-                        Err(e) => {
-                            eprintln!("MIDI connect failed: {}", e);
-                        }
-                    }
+                if let Some(port_idx) = self.backend.selected_midi_port() {
+                    self.backend.connect_midi_port(port_idx);
                 }
             }
         });
-        
-        // MIDI Channel selector
+
+        // MIDI Channel
         ui.add_space(4.0);
-        let channel_labels = ["All", "1", "2", "3", "4", "5", "6", "7", "8", 
-                              "9", "10", "11", "12", "13", "14", "15", "16"];
-        let current_channel = self.midi_handler.as_ref()
-            .map(|h| h.channel_display())
-            .unwrap_or(0) as usize;
-        
+        let channel_labels = [
+            "All", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+            "15", "16",
+        ];
+        let current_channel = self.backend.midi_channel_display() as usize;
         ui.horizontal(|ui| {
             ui.label(RichText::new("Channel:").size(10.0));
             egui::ComboBox::from_id_source("midi_channel")
@@ -1404,109 +936,115 @@ impl SynthApp {
                 .selected_text(channel_labels[current_channel.min(16)])
                 .show_ui(ui, |ui| {
                     for (i, label) in channel_labels.iter().enumerate() {
-                        if ui.selectable_label(current_channel == i, *label).clicked() {
-                            if let Some(ref handler) = self.midi_handler {
-                                handler.set_channel_from_display(i as u8);
-                            }
+                        if ui
+                            .selectable_label(current_channel == i, *label)
+                            .clicked()
+                        {
+                            self.backend.set_midi_channel(i as u8);
                         }
                     }
                 });
         });
-        
-        // MIDI Learn section
+
+        // MIDI Learn
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(4.0);
-        
-        // Learn status indicator
-        if let Some(param) = &self.midi_learn_target {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("🎯 Learning:").size(10.0).color(Color32::YELLOW));
-                ui.label(RichText::new(param.name()).size(10.0).strong());
-            });
-            if ui.button("Cancel").clicked() {
-                self.midi_learn_target = None;
-            }
-        } else {
-            ui.label(RichText::new("CC Learn:").size(10.0));
-            
-            // Parameter selector for learn
-            egui::ComboBox::from_id_source("midi_learn_param")
-                .selected_text("Select param...")
-                .width(120.0)
-                .show_ui(ui, |ui| {
-                    for param in SynthParam::all() {
-                        if ui.selectable_label(false, param.name()).clicked() {
-                            self.midi_learn_target = Some(*param);
-                        }
-                    }
+
+        match self.backend.midi_learn_state() {
+            MidiLearnState::Waiting(param) => {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("🎯 Learning:")
+                            .size(10.0)
+                            .color(Color32::YELLOW),
+                    );
+                    ui.label(RichText::new(param.name()).size(10.0).strong());
                 });
-        }
-        
-        // Show custom mappings count
-        if !self.custom_cc_map.is_empty() {
-            ui.add_space(4.0);
-            ui.label(RichText::new(format!("{} custom mappings", self.custom_cc_map.len())).size(9.0).color(Color32::from_gray(120)));
-            if ui.small_button("Clear all").clicked() {
-                self.custom_cc_map.clear();
-                let _ = save_cc_mappings(&self.custom_cc_map);
+                if ui.button("Cancel").clicked() {
+                    self.backend.cancel_midi_learn();
+                }
+            }
+            MidiLearnState::Idle => {
+                ui.label(RichText::new("CC Learn:").size(10.0));
+                egui::ComboBox::from_id_source("midi_learn_param")
+                    .selected_text("Select param...")
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for param in SynthParam::all() {
+                            if ui.selectable_label(false, param.name()).clicked() {
+                                self.backend.start_midi_learn(*param);
+                            }
+                        }
+                    });
             }
         }
-        
-        // Recent CCs - show all received CCs
+
+        // Custom mappings
+        let mappings = self.backend.custom_cc_mappings();
+        if !mappings.is_empty() {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!("{} custom mappings", mappings.len()))
+                    .size(9.0)
+                    .color(Color32::from_gray(120)),
+            );
+            if ui.small_button("Clear all").clicked() {
+                self.backend.clear_cc_mappings();
+            }
+        }
+
+        // CC Activity
         ui.add_space(8.0);
         ui.label(RichText::new("CC Activity:").size(10.0));
-        
-        // Collect and sort CCs for consistent display
-        let mut cc_list: Vec<_> = self.shared.midi_feedback.iter().map(|e| (*e.key(), *e.value())).collect();
-        cc_list.sort_by_key(|(cc, _)| *cc);
-        
+
+        let cc_list = self.backend.midi_cc_activity();
         egui::ScrollArea::vertical()
             .id_source("midi_cc_activity")
             .max_height(80.0)
             .show(ui, |ui| {
                 for (cc, val) in cc_list.iter().take(10) {
+                    let mapped = mappings.iter().find(|m| m.cc == *cc).map(|m| m.param.short_name());
+                    let cc_text = if let Some(param_name) = mapped {
+                        format!("CC {:>3} → {}", cc, param_name)
+                    } else {
+                        format!("CC {:>3}:", cc)
+                    };
                     ui.horizontal(|ui| {
-                        // Show if this CC has a custom mapping
-                        let mapped = self.custom_cc_map.get(cc).map(|p| p.short_name());
-                        let cc_text = if let Some(param_name) = mapped {
-                            format!("CC {:>3} → {}", cc, param_name)
-                        } else {
-                            format!("CC {:>3}:", cc)
-                        };
                         ui.label(RichText::new(cc_text).size(9.0).monospace());
-                        ui.add(egui::ProgressBar::new(*val as f32 / 127.0).desired_width(40.0));
+                        ui.add(
+                            egui::ProgressBar::new(*val as f32 / 127.0).desired_width(40.0),
+                        );
                     });
                 }
             });
     }
 
     fn on_exit(&mut self) {
-        // Stop audio engine
-        self.audio_engine.stop();
-        println!("Audio engine stopped.");
+        // The backend owns the audio engine; when it drops, audio stops automatically.
+        println!("Goodbye!");
     }
 }
 
 impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Delegate to the SynthApp implementation
         SynthApp::update(self, ctx, frame);
     }
 
-    fn on_exit(&mut self) {
-        // Delegate to the SynthApp implementation
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         SynthApp::on_exit(self);
     }
 
-    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Optional: Draw custom UI within the window
-        // Currently not needed as we use the main update method
-    }
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
 
-/// Run the GUI application
-pub fn run_gui(shared: SharedState) -> Result<(), eframe::Error> {
+/// Run the standalone GUI application.
+///
+/// Creates a `StandaloneBackend`, wraps it in `SynthApp`, and runs eframe.
+#[cfg(not(feature = "plugin"))]
+pub fn run_gui(shared: crate::gui::SharedState) -> Result<(), eframe::Error> {
+    use crate::gui::StandaloneBackend;
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1400.0, 580.0])
@@ -1518,6 +1056,9 @@ pub fn run_gui(shared: SharedState) -> Result<(), eframe::Error> {
     eframe::run_native(
         "Rust In Synth",
         options,
-        Box::new(|_cc| Ok(Box::new(SynthApp::new(shared)))),
+        Box::new(|_cc| {
+            let backend = Box::new(StandaloneBackend::new(shared));
+            Ok(Box::new(SynthApp::new(backend)))
+        }),
     )
 }

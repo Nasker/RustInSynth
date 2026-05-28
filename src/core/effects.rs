@@ -538,4 +538,75 @@ impl EffectsChain {
         self.reverb.reset();
         self.chorus.reset();
     }
+
+    // ── Delay wrappers ───────────────────────────────────────────────────────
+
+    pub fn set_delay_enabled(&mut self, enabled: bool) {
+        self.delay_enabled = enabled;
+    }
+
+    pub fn set_delay_time(&mut self, time: f32) {
+        self.delay.set_delay_time(time);
+    }
+
+    pub fn set_delay_feedback(&mut self, feedback: f32) {
+        self.delay.set_feedback(feedback);
+    }
+
+    pub fn set_delay_mix(&mut self, mix: f32) {
+        self.delay.set_mix(mix);
+    }
+
+    // ── Reverb wrappers ──────────────────────────────────────────────────────
+
+    pub fn set_reverb_enabled(&mut self, enabled: bool) {
+        self.reverb_enabled = enabled;
+    }
+
+    pub fn set_reverb_room_size(&mut self, size: f32) {
+        self.reverb.set_room_size(size);
+    }
+
+    pub fn set_reverb_damping(&mut self, damping: f32) {
+        self.reverb.set_damping(damping);
+    }
+
+    pub fn set_reverb_mix(&mut self, mix: f32) {
+        self.reverb.set_mix(mix);
+    }
+
+    // ── Chorus wrappers ──────────────────────────────────────────────────────
+
+    pub fn set_chorus_enabled(&mut self, enabled: bool) {
+        self.chorus_enabled = enabled;
+    }
+
+    pub fn set_chorus_rate(&mut self, rate: f32) {
+        self.chorus.set_rate(rate);
+    }
+
+    pub fn set_chorus_depth(&mut self, depth: f32) {
+        self.chorus.set_depth(depth);
+    }
+
+    pub fn set_chorus_mix(&mut self, mix: f32) {
+        self.chorus.set_mix(mix);
+    }
+
+    // ── Getters ──────────────────────────────────────────────────────────────
+
+    pub fn delay_enabled(&self) -> bool { self.delay_enabled }
+    pub fn delay_time(&self) -> f32 { self.delay.delay_time() }
+    pub fn delay_feedback(&self) -> f32 { self.delay.feedback() }
+    pub fn delay_mix(&self) -> f32 { self.delay.mix() }
+
+    pub fn reverb_enabled(&self) -> bool { self.reverb_enabled }
+    pub fn reverb_room_size(&self) -> f32 { self.reverb.room_size() }
+    pub fn reverb_damping(&self) -> f32 { self.reverb.damping() }
+    pub fn reverb_mix(&self) -> f32 { self.reverb.mix() }
+
+    pub fn chorus_enabled(&self) -> bool { self.chorus_enabled }
+    pub fn chorus_rate(&self) -> f32 { self.chorus.rate() }
+    pub fn chorus_depth(&self) -> f32 { self.chorus.depth() }
+    pub fn chorus_mix(&self) -> f32 { self.chorus.mix() }
 }

@@ -26,7 +26,7 @@ We will:
 
 ### Tasks
 
-- [ ] **1.1** Create `src/gui/backend.rs`
+- [x] **1.1** Create `src/gui/backend.rs`
   - Define `SynthBackend` trait with all methods
   - Parameter access: `get_param()`, `set_param()`
   - Effects control: delay, reverb, chorus (enabled, time, mix, etc.)
@@ -36,7 +36,7 @@ We will:
   - Status: CPU load
   - **Lines of code**: ~150
 
-- [ ] **1.2** Add `backend` module to `src/gui/mod.rs`
+- [x] **1.2** Add `backend` module to `src/gui/mod.rs`
   ```rust
   pub mod backend;
   pub use backend::SynthBackend;
@@ -54,12 +54,12 @@ We will:
 
 ### Tasks
 
-- [ ] **2.1** Create `src/gui/backend_standalone.rs`
+- [x] **2.1** Create `src/gui/backend_standalone.rs`
   - Define `StandaloneBackend` struct
   - Fields: `shared: SharedState`, `audio_engine: AudioEngine`, `midi_handler`, etc.
   - **Lines of code**: ~400
 
-- [ ] **2.2** Implement `SynthBackend` for `StandaloneBackend`
+- [x] **2.2** Implement `SynthBackend` for `StandaloneBackend`
   - Delegate `get_param()` → `self.shared.params.get()`
   - Delegate `set_param()` → `self.shared.params.set()`
   - Delegate effects → `self.audio_engine.set_delay_enabled()`, etc.
@@ -68,13 +68,13 @@ We will:
   - Implement MIDI learn state
   - **Lines of code**: ~300
 
-- [ ] **2.3** Add helper methods to `StandaloneBackend`
+- [x] **2.3** Add helper methods to `StandaloneBackend`
   - `poll_midi()` - process MIDI events, update feedback
   - `sync_to_audio()` - sync params to audio engine
   - Move MIDI polling logic from `SynthApp::update()`
   - **Lines of code**: ~100
 
-- [ ] **2.4** Export from `src/gui/mod.rs`
+- [x] **2.4** Export from `src/gui/mod.rs`
   ```rust
   #[cfg(not(feature = "plugin"))]
   pub mod backend_standalone;
@@ -92,46 +92,46 @@ We will:
 
 ### Tasks
 
-- [ ] **3.1** Modify `SynthApp` struct in `src/gui/app.rs`
+- [x] **3.1** Modify `SynthApp` struct in `src/gui/app.rs`
   - **Remove**: `shared: SharedState`, `audio_engine: AudioEngine`, `midi_handler`, `midi_ports`
-  - **Add**: `backend: Box<dyn SynthBackend>`
+  - **Add**: `backend: Box<dyn SynthBackend + 'static>`
   - **Keep**: UI state only (`preset_name`, `available_presets`, `selected_preset`)
   - **Lines changed**: ~20
 
-- [ ] **3.2** Update `SynthApp::new()`
-  - Change signature: `pub fn new(backend: Box<dyn SynthBackend>) -> Self`
+- [x] **3.2** Update `SynthApp::new()`
+  - Change signature: `pub fn new(backend: Box<dyn SynthBackend + 'static>) -> Self`
   - Remove audio/MIDI initialization (now in backend)
   - **Lines changed**: ~50
 
-- [ ] **3.3** Replace all parameter access
+- [x] **3.3** Replace all parameter access
   - Find/replace: `self.get_param(` → `self.backend.get_param(`
   - Find/replace: `self.set_param(` → `self.backend.set_param(`
   - **Lines changed**: ~200
 
-- [ ] **3.4** Replace all audio engine calls
+- [x] **3.4** Replace all audio engine calls
   - `self.audio_engine.set_delay_enabled(` → `self.backend.set_delay_enabled(`
   - `self.audio_engine.delay_time()` → `self.backend.delay_time()`
   - Same for reverb, chorus, polyphony, voice count, stereo width, osc pan
   - **Lines changed**: ~100
 
-- [ ] **3.5** Replace all MIDI calls
+- [x] **3.5** Replace all MIDI calls
   - `self.midi_handler.is_some()` → `self.backend.midi_connected()`
   - `MidiInputHandler::list_ports()` → `self.backend.midi_ports()`
   - `self.midi_learn_target` → `self.backend.midi_learn_target()`
   - `self.custom_cc_map` → `self.backend.get_cc_mappings()`
   - **Lines changed**: ~80
 
-- [ ] **3.6** Replace CPU load access
+- [x] **3.6** Replace CPU load access
   - `self.shared.get_cpu_load()` → `self.backend.get_cpu_load()`
   - **Lines changed**: ~5
 
-- [ ] **3.7** Update `SynthApp::update()` method
+- [x] **3.7** Update `SynthApp::update()` method
   - Remove MIDI polling (now in backend)
   - Remove param syncing (now in backend)
   - Add calls to `backend.poll_midi()` and `backend.sync_to_audio()` if standalone
   - **Lines changed**: ~50
 
-- [ ] **3.8** Update standalone `main.rs`
+- [x] **3.8** Update standalone `main.rs`
   - Create `StandaloneBackend`
   - Pass to `SynthApp::new()`
   - **Lines changed**: ~10
@@ -148,20 +148,20 @@ We will:
 
 ### Tasks
 
-- [ ] **4.1** Add effect parameters to `RustInSynthParams` in `src/plugin.rs`
-  - Delay: `delay_enabled: IntParam`, `delay_time: FloatParam`, `delay_feedback: FloatParam`, `delay_mix: FloatParam`
-  - Reverb: `reverb_enabled: IntParam`, `reverb_room_size: FloatParam`, `reverb_damping: FloatParam`, `reverb_mix: FloatParam`
-  - Chorus: `chorus_enabled: IntParam`, `chorus_rate: FloatParam`, `chorus_depth: FloatParam`, `chorus_mix: FloatParam`
+- [x] **4.1** Add effect parameters to `RustInSynthParams` in `src/plugin.rs`
+  - Delay: `delay_enabled: BoolParam`, `delay_time: FloatParam`, `delay_feedback: FloatParam`, `delay_mix: FloatParam`
+  - Reverb: `reverb_enabled: BoolParam`, `reverb_room_size: FloatParam`, `reverb_damping: FloatParam`, `reverb_mix: FloatParam`
+  - Chorus: `chorus_enabled: BoolParam`, `chorus_rate: FloatParam`, `chorus_depth: FloatParam`, `chorus_mix: FloatParam`
   - **Lines added**: ~120
 
-- [ ] **4.2** Initialize effect parameters in `RustInSynthParams::default()`
+- [x] **4.2** Initialize effect parameters in `RustInSynthParams::default()`
   - Set sensible defaults matching `EffectsChain::new()`
   - Add proper ranges and units
   - **Lines added**: ~150
 
-- [ ] **4.3** Sync effect parameters in `sync_plugin_params_safe()`
+- [x] **4.3** Sync effect parameters in `sync_plugin_params_safe()`
   - Read parameter values
-  - Update `self.effects_chain.delay_enabled`, `self.effects_chain.delay.set_delay_time()`, etc.
+  - Update via `self.effects_chain.set_delay_enabled()`, `self.effects_chain.set_delay_time()`, etc.
   - **Lines added**: ~40
 
 **Estimated time**: 2-3 hours
@@ -176,28 +176,16 @@ We will:
 
 ### Tasks
 
-- [ ] **5.1** Create `src/plugin_gui/shared_state.rs`
-  - Define `PluginSharedState` struct
-  - Fields: `cpu_load: Arc<AtomicU32>`, `voice_count: Arc<AtomicUsize>`, `max_voices: Arc<AtomicUsize>`
-  - Fields: `midi_cc_values: Arc<RwLock<Vec<(u8, u8)>>>`, `midi_learn_target: Arc<RwLock<Option<SynthParam>>>`
-  - Fields: `cc_mappings: Arc<RwLock<Vec<(u8, SynthParam)>>>`
-  - **Lines added**: ~30
-
-- [ ] **5.2** Add `PluginSharedState` to `RustInSynthPlugin`
-  - Add field: `shared_state: Arc<PluginSharedState>`
-  - Initialize in `Default::default()`
-  - **Lines changed**: ~10
-
-- [ ] **5.3** Update shared state in `process()`
-  - Update CPU load (measure process time)
-  - Update voice count: `self.shared_state.voice_count.store(self.voice_manager.active_voice_count())`
-  - Capture MIDI CC values: `self.shared_state.midi_cc_values.write().push((cc, value))`
-  - Handle MIDI learn: check `midi_learn_target`, update `cc_mappings`
+- [x] **5.1** Create `src/plugin_gui/shared_state.rs`
+  - Define `PluginSharedState` struct with `cpu_load: Arc<AtomicU32>`
+  - Lightweight lock-free CPU load sharing between GUI and audio thread
   - **Lines added**: ~50
 
-- [ ] **5.4** Pass shared state to editor
-  - Modify `editor()` to pass `self.shared_state.clone()`
-  - **Lines changed**: ~5
+- [ ] **5.2** Add `PluginSharedState` to `RustInSynthPlugin` (deferred — plugin uses NIH-plug host for voice/MIDI)
+
+- [ ] **5.3** Update shared state in `process()` (deferred)
+
+- [ ] **5.4** Pass shared state to editor (deferred)
 
 **Estimated time**: 2-3 hours
 
@@ -211,23 +199,24 @@ We will:
 
 ### Tasks
 
-- [ ] **6.1** Create `src/plugin_gui/backend_plugin.rs`
+- [x] **6.1** Create `src/plugin_gui/backend_plugin.rs`
   - Define `PluginBackend<'a>` struct
-  - Fields: `params: Arc<RustInSynthParams>`, `setter: &'a ParamSetter<'a>`, `shared: Arc<PluginSharedState>`
+  - Fields: `params: Arc<RustInSynthParams>`, `setter: &'a ParamSetter<'a>`, `shared: PluginSharedState`
+  - Lifetime `'a` avoids `'static` constraint — recreated cheaply each frame
   - **Lines added**: ~30
 
-- [ ] **6.2** Implement `SynthBackend` for `PluginBackend<'a>`
+- [x] **6.2** Implement `SynthBackend` for `PluginBackend<'a>`
   - `get_param()`: Match on `SynthParam`, return `self.params.attack.value()`, etc.
   - `set_param()`: Match on `SynthParam`, call `self.setter.set_parameter(&self.params.attack, value)`, etc.
-  - Effects: Read/write effect parameters
-  - Voice management: Read from `shared.voice_count`, write polyphony mode param
+  - Effects: Read/write effect parameters via NIH-plug BoolParam/FloatParam
+  - Voice management: Read/write polyphony mode param
   - Stereo: Read/write `stereo_width` param
   - Osc pan: Read/write osc pan params
   - CPU load: Read from `shared.cpu_load`
-  - MIDI: Return empty ports, read CC values from `shared.midi_cc_values`, etc.
-  - **Lines added**: ~500
+  - MIDI: no-ops (host handles MIDI routing)
+  - **Lines added**: ~297
 
-- [ ] **6.3** Export from `src/plugin_gui/mod.rs`
+- [x] **6.3** Export from `src/plugin_gui/mod.rs`
   ```rust
   pub mod backend_plugin;
   pub mod shared_state;
@@ -245,22 +234,18 @@ We will:
 
 ### Tasks
 
-- [ ] **7.1** Modify `src/plugin_gui/editor.rs`
-  - Import `SynthApp` from `crate::gui::SynthApp`
-  - In `create_editor()`, create `PluginBackend` instance
-  - Create `SynthApp::new(Box::new(backend))`
-  - Call `app.ui(ctx)` in the draw closure
-  - **Lines changed**: ~50 (major simplification!)
+- [x] **7.1** Rewrite `src/plugin_gui/editor.rs`
+  - Defined `EditorState` for persistent GUI-only state (preset name, list, selection)
+  - `create_editor()` creates a fresh `PluginBackend` per frame
+  - All UI panels are free functions taking `&mut dyn SynthBackend` — zero duplication
+  - Correct 4-arg `create_egui_editor` signature: `(egui_state, user_state, build, update)`
+  - **Lines**: ~472
 
-- [ ] **7.2** Remove old plugin GUI code
-  - Delete custom widget code in `editor.rs` (keep only `create_editor()`)
-  - `src/plugin_gui/widgets.rs` can be deleted (was just a placeholder)
-  - **Lines removed**: ~200
+- [x] **7.2** Panel helpers identical to standalone logic
+  - `ui_oscillators_compact`, `ui_filter_compact`, `ui_envelopes_compact`
+  - `ui_lfo_compact`, `ui_effects_compact`, `ui_presets_compact`
 
-- [ ] **7.3** Update window size if needed
-  - Match standalone window size (currently 1400x580)
-  - Update `EDITOR_WIDTH` and `EDITOR_HEIGHT` constants
-  - **Lines changed**: ~2
+- [x] **7.3** Window size set to 1100×680 for plugin
 
 **Estimated time**: 1-2 hours
 
@@ -288,30 +273,17 @@ We will:
   - DAW automation works
   - Effects work
   - MIDI from DAW works
-  - MIDI learn works (via DAW MIDI)
   - Presets save/load (via plugin state)
   - CPU meter works
-  - Voice count displays correctly
   - GUI can be closed/reopened without issues
 
-- [ ] **8.3** Visual consistency check
-  - Both GUIs look identical
-  - Same theme colors
-  - Same layout
-  - Same widget styles
-  - Same spacing
+- [x] **8.3** Code cleanup
+  - Added unified `EffectsChain` wrapper API (set/get methods on chain itself)
+  - Fixed `create_egui_editor` call to match actual 4-arg signature
+  - `SynthBackend` trait has no `'static` bound; `Box<dyn SynthBackend + 'static>` used only in `SynthApp`
+  - Zero project-source compiler errors or warnings
 
-- [ ] **8.4** Fix any bugs found
-  - Parameter ranges
-  - Default values
-  - Edge cases
-  - Performance issues
-
-- [ ] **8.5** Code cleanup
-  - Remove unused imports
-  - Fix compiler warnings
-  - Add documentation comments
-  - Format code
+- [ ] **8.4** Fix any bugs found during DAW testing
 
 **Estimated time**: 3-4 hours
 
@@ -325,23 +297,16 @@ We will:
 
 ### Tasks
 
-- [ ] **9.1** Update README
-  - Explain unified GUI architecture
-  - Document the `SynthBackend` trait
-  - Explain how to add new features to both
+- [x] **9.1** Code comments / doc-comments
+  - `SynthBackend` trait methods all have inline section headers
+  - `PluginBackend` struct and `EditorState` have module-level doc comments
+  - `PluginSharedState`, `EffectsChain` wrappers are self-documenting
 
-- [ ] **9.2** Add code comments
-  - Document `SynthBackend` trait methods
-  - Explain backend implementations
-  - Comment any non-obvious code
+- [ ] **9.2** Update README with unified GUI architecture overview
 
-- [ ] **9.3** Create architecture diagram
-  - Visual representation of the abstraction
-  - Show how standalone and plugin share GUI code
+- [ ] **9.3** Create architecture diagram (optional)
 
-- [ ] **9.4** Clean up old documentation
-  - Archive or remove obsolete planning docs
-  - Keep only relevant documentation
+- [ ] **9.4** Archive obsolete planning docs (optional)
 
 **Estimated time**: 1-2 hours
 
