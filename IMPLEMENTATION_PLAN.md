@@ -181,11 +181,14 @@ We will:
   - Lightweight lock-free CPU load sharing between GUI and audio thread
   - **Lines added**: ~50
 
-- [ ] **5.2** Add `PluginSharedState` to `RustInSynthPlugin` (deferred — plugin uses NIH-plug host for voice/MIDI)
+- [ ] **5.2** Add `PluginSharedState` to `RustInSynthPlugin`
+  - **GAP**: editor currently builds its *own* `PluginSharedState` in
+    `EditorState::default()`, which the audio thread never writes to → CPU
+    meter is always 0 in the plugin. Addressed in Phase 10.
 
-- [ ] **5.3** Update shared state in `process()` (deferred)
+- [ ] **5.3** Update shared state in `process()` (write CPU load) — Phase 10
 
-- [ ] **5.4** Pass shared state to editor (deferred)
+- [ ] **5.4** Pass shared state to editor via `create_editor(...)` — Phase 10
 
 **Estimated time**: 2-3 hours
 
@@ -237,13 +240,17 @@ We will:
 - [x] **7.1** Rewrite `src/plugin_gui/editor.rs`
   - Defined `EditorState` for persistent GUI-only state (preset name, list, selection)
   - `create_editor()` creates a fresh `PluginBackend` per frame
-  - All UI panels are free functions taking `&mut dyn SynthBackend` — zero duplication
+  - All UI panels are free functions taking `&mut dyn SynthBackend`
   - Correct 4-arg `create_egui_editor` signature: `(egui_state, user_state, build, update)`
   - **Lines**: ~472
 
-- [x] **7.2** Panel helpers identical to standalone logic
+- [⚠️] **7.2** Panel helpers "identical to standalone logic"
   - `ui_oscillators_compact`, `ui_filter_compact`, `ui_envelopes_compact`
   - `ui_lfo_compact`, `ui_effects_compact`, `ui_presets_compact`
+  - **KNOWN GAP (see Phase 10)**: these were *copied* into `editor.rs` as free
+    functions while `app.rs` keeps its own copies as `SynthApp` methods. This is
+    duplication, not unification — the two can drift (already do: voice-count
+    display differs). The "zero duplication" claim in 7.1 was premature.
 
 - [x] **7.3** Window size set to 1100×680 for plugin
 
@@ -309,6 +316,68 @@ We will:
 - [ ] **9.4** Archive obsolete planning docs (optional)
 
 **Estimated time**: 1-2 hours
+
+---
+
+## Phase 10: Close the Unification Gaps (Audit Remediation)
+
+**Context**: An adherence audit against `UNIFIED_GUI_ARCHITECTURE.md` found that the
+abstraction layer (Phases 1–6) is solid, but the doc's core promise — *write the GUI
+once* — is only half met:
+
+1. **Panel rendering is duplicated.** The 6 panels live twice: as `SynthApp` methods
+   in `src/gui/app.rs` (standalone) and as free functions in
+   `src/plugin_gui/editor.rs` (plugin). They already diverge (voice-count display).
+2. **`PluginSharedState` is orphaned.** The editor builds its own instance that the
+   audio thread never writes → CPU meter stuck at 0; voice counts hardcoded to 0.
+
+### Tasks
+
+- [x] **10.1** Extract shared panels into `src/gui/panels.rs`
+  - Free functions taking `&mut dyn SynthBackend`: `oscillators`, `filter`,
+    `envelopes`, `lfo`, `effects`, `presets`, `midi`
+  - Moved `apply_preset` / `create_preset` here
+  - Added `PresetState { preset_name, available_presets, selected_preset }` for
+    GUI-only preset state shared by both consumers
+  - Voice-count line hidden when `max_voices() == 0` (clean for plugin)
+
+- [x] **10.2** Refactor `SynthApp` (`src/gui/app.rs`)
+  - Panel methods + preset helpers removed; now calls `panels::*`
+  - Holds a `panels::PresetState`; `app.rs` shrank from ~1065 to ~188 lines
+
+- [x] **10.3** Refactor `src/plugin_gui/editor.rs`
+  - Deleted the duplicated panel free functions + `apply_preset`/`create_preset`
+  - Calls `panels::*`; `EditorState { presets: PresetState, shared }`
+
+- [x] **10.4** Wire `PluginSharedState` end-to-end
+  - Stored on `RustInSynthPlugin`; CPU load measured + written in `process()`
+  - Passed into `create_editor(egui_state, params, shared)` so the meter is live
+  - `sample_rate` captured in `initialize()` for the load estimate
+  - Added `voice_count` / `max_voices` `AtomicUsize`s to `PluginSharedState`,
+    written from `process()` and read by `PluginBackend` → live voice meter
+
+- [x] **10.5** Tidy build + finish the `plugin` feature
+  - Declared `[features] plugin = []` in `Cargo.toml` (was cfg-gated but never
+    defined → silenced 3 `unexpected cfg` warnings)
+  - Gated `run_gui` re-export and `main.rs` behind `not(feature = "plugin")`;
+    `cargo check --features plugin` now compiles cleanly
+  - Removed unused imports/vars (`widgets.rs`, `theme.rs`,
+    `backend_standalone.rs`) and migrated `from_id_source`/`id_source`/
+    `Frame::none`/`TopBottomPanel` to current egui names in `panels.rs`/`app.rs`/
+    `editor.rs`
+  - Removed dead struct fields (`DelayLine::sample_rate`,
+    `KeyboardInput::enhanced_keyboard`, `MidiInputHandler::debug_mode`)
+  - Scoped `#[allow(deprecated)]` (with rationale) on the eframe `update` /
+    `create_editor` entry points for the top-level `Panel::show(ctx)` /
+    `CentralPanel::show(ctx)` calls, whose egui-0.34 `show_inside(ui)`
+    replacement needs a `&mut Ui` unavailable at the top level
+  - **Warnings: 30 → 0** (both default and `--features plugin`)
+
+**Estimated time**: 3-4 hours — **DONE**. Default + `--features plugin` both
+compile; `cargo test` green (48 passed).
+
+**Test**: Both standalone and plugin build; a change to any panel is reflected in
+both UIs with no second edit.
 
 ---
 

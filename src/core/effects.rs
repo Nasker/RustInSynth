@@ -34,7 +34,6 @@ pub trait StereoEffect: Send {
 struct DelayLine {
     buffer: Vec<Sample>,
     write_pos: usize,
-    sample_rate: SampleRate,
 }
 
 impl DelayLine {
@@ -43,7 +42,6 @@ impl DelayLine {
         Self {
             buffer: vec![0.0; size],
             write_pos: 0,
-            sample_rate,
         }
     }
     

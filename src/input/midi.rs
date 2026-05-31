@@ -40,7 +40,6 @@ pub struct MidiInputHandler {
     _connection: MidiInputConnection<()>,
     receiver: Receiver<NoteEvent>,
     channel_filter: Arc<AtomicU8>,  // 255 = all channels, 0-15 = specific channel
-    debug_mode: bool,
 }
 
 impl MidiInputHandler {
@@ -173,7 +172,6 @@ impl MidiInputHandler {
             _connection: connection,
             receiver,
             channel_filter: filter_atomic,
-            debug_mode,
         })
     }
 

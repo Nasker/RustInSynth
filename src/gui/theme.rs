@@ -6,7 +6,7 @@
 //! - Warning yellows/oranges
 //! - Electric blues for indicators
 
-use egui::{Color32, Stroke, CornerRadius};
+use egui::{Color32, Stroke};
 
 /// Rust In Peace inspired color palette
 pub struct Theme {

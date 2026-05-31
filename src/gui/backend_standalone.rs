@@ -80,7 +80,7 @@ impl StandaloneBackend {
     /// Create and start the standalone backend (starts audio, auto-connects MIDI).
     pub fn new(shared: SharedState) -> Self {
         let cpu_load = std::sync::Arc::clone(&shared.cpu_load);
-        let mut audio_engine = match AudioEngine::new(cpu_load) {
+        let audio_engine = match AudioEngine::new(cpu_load) {
             Ok(mut engine) => {
                 engine.set_master_volume(0.5);
                 if let Err(e) = engine.start() {

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub mod app;
 pub mod backend;
+pub mod panels;
 pub mod widgets;
 pub mod theme;
 
@@ -18,6 +19,7 @@ pub use backend::SynthBackend;
 #[cfg(not(feature = "plugin"))]
 pub use backend_standalone::StandaloneBackend;
 
+#[cfg(not(feature = "plugin"))]
 pub use app::run_gui;
 
 use crate::core::params::SynthParam;

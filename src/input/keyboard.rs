@@ -109,7 +109,6 @@ impl Default for KeyboardMapping {
 pub struct KeyboardInput {
     mapping: KeyboardMapping,
     current_note: Option<MidiNote>,
-    enhanced_keyboard: bool,
 }
 
 impl KeyboardInput {
@@ -127,7 +126,6 @@ impl KeyboardInput {
         Self {
             mapping: KeyboardMapping::new(),
             current_note: None,
-            enhanced_keyboard,
         }
     }
 

@@ -239,10 +239,10 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         self.setter.set_parameter(&self.params.polyphony_mode, val);
     }
     fn active_voice_count(&self) -> usize {
-        0 // Plugin voice count not exposed via params; return 0
+        self.shared.voice_count()
     }
     fn max_voices(&self) -> usize {
-        0
+        self.shared.max_voices()
     }
 
     // ── Stereo ───────────────────────────────────────────────────────────────

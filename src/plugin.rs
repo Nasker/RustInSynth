@@ -7,6 +7,7 @@ use crate::core::event::{SynthEvent, WaveformType, SynthEventReceiver};
 use crate::core::lfo::{LfoDestination, LfoWaveform};
 use crate::core::voice::{PolyphonyMode, VoiceManager};
 use crate::plugin_gui::editor::{EDITOR_HEIGHT, EDITOR_WIDTH};
+use crate::plugin_gui::shared_state::PluginSharedState;
 
 /// The NIH-plug implementation of RustInSynth
 pub struct RustInSynthPlugin {
@@ -19,6 +20,10 @@ pub struct RustInSynthPlugin {
     last_osc3_waveform: i32,
     // GUI editor state
     editor_state: Arc<EguiState>,
+    // Shared GUI metrics (CPU load) written from the audio thread
+    gui_shared: PluginSharedState,
+    // Sample rate captured at initialize() for CPU-load estimation
+    sample_rate: f32,
 }
 
 #[derive(Params)]
@@ -481,6 +486,7 @@ impl Plugin for RustInSynthPlugin {
         crate::plugin_gui::editor::create_editor(
             self.editor_state.clone(),
             self.params.clone(),
+            self.gui_shared.clone(),
         )
     }
 
@@ -491,6 +497,7 @@ impl Plugin for RustInSynthPlugin {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         let sample_rate = buffer_config.sample_rate as u32;
+        self.sample_rate = buffer_config.sample_rate;
         self.voice_manager.set_sample_rate(sample_rate);
         self.effects_chain.set_sample_rate(sample_rate);
         
@@ -547,20 +554,36 @@ impl Plugin for RustInSynthPlugin {
             }
         }
 
-        // 3. Synthesize and process audio block
+        // 3. Synthesize and process audio block (timed for CPU-load estimate)
         let num_samples = buffer.samples();
-        let outputs = buffer.as_slice();
+        let block_start = std::time::Instant::now();
+        {
+            let outputs = buffer.as_slice();
+            for i in 0..num_samples {
+                // Generate raw stereo sample from the active voices
+                let stereo_raw = self.voice_manager.next_sample_stereo();
+                // Process it through our stereo effects chain (delay, reverb, chorus)
+                let processed = self.effects_chain.process_stereo(stereo_raw);
 
-        for i in 0..num_samples {
-            // Generate raw stereo sample from the active voices
-            let stereo_raw = self.voice_manager.next_sample_stereo();
-            // Process it through our stereo effects chain (delay, reverb, chorus)
-            let processed = self.effects_chain.process_stereo(stereo_raw);
-
-            // Output to the DAW buffer
-            outputs[0][i] = processed.left;
-            outputs[1][i] = processed.right;
+                // Output to the DAW buffer
+                outputs[0][i] = processed.left;
+                outputs[1][i] = processed.right;
+            }
         }
+
+        // 4. Estimate CPU load = (time spent) / (audio time available) * 100
+        if self.sample_rate > 0.0 && num_samples > 0 {
+            let elapsed = block_start.elapsed().as_secs_f32();
+            let budget = num_samples as f32 / self.sample_rate;
+            if budget > 0.0 {
+                let load = (elapsed / budget * 100.0).min(100.0);
+                self.gui_shared.set_cpu_load(load);
+            }
+        }
+
+        // 5. Publish voice counts for the GUI meter
+        self.gui_shared.set_voice_count(self.voice_manager.active_voice_count());
+        self.gui_shared.set_max_voices(self.voice_manager.max_voices());
 
         ProcessStatus::Normal
     }
@@ -578,6 +601,8 @@ impl RustInSynthPlugin {
             last_osc2_waveform: 0,
             last_osc3_waveform: 0,
             editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
+            gui_shared: PluginSharedState::new(),
+            sample_rate: sample_rate as f32,
         }
     }
 

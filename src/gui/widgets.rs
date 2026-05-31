@@ -4,7 +4,7 @@
 //! the vintage synthesizer aesthetic with Rust In Peace theming.
 
 use egui::*;
-use super::theme::{THEME, panel_background, section_header};
+use super::theme::THEME;
 
 /// A Minimoog-style rotary knob
 /// 
@@ -43,7 +43,6 @@ pub fn knob(
     let t = t.clamp(0.0, 1.0);
 
     // Draw the knob
-    let visuals = ui.style().interact(&response);
     let painter = ui.painter_at(rect);
 
     let center = rect.center();
@@ -167,7 +166,6 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
     }
 
     let painter = ui.painter_at(rect);
-    let visuals = ui.style().interact(&response);
 
     // Background (switch track)
     let bg_color = THEME.toggle_switch(*value);
@@ -252,7 +250,7 @@ pub fn selector_switch(
             let button_pos = button_rect.left_top() + vec2(x_offset, 0.0);
             let button_area = Rect::from_min_size(button_pos, vec2(button_width, height));
 
-            let text = RichText::new(*option)
+            let _text = RichText::new(*option)
                 .size(10.0)
                 .color(if is_selected {
                     THEME.text_primary
@@ -353,7 +351,7 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
 }
 
 /// MIDI feedback indicator - shows last received CC value
-pub fn midi_indicator(ui: &mut Ui, cc: u8, value: Option<u8>, name: &str) {
+pub fn midi_indicator(ui: &mut Ui, _cc: u8, value: Option<u8>, name: &str) {
     ui.horizontal(|ui| {
         // LED-style indicator
         let (rect, _response) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
