@@ -77,8 +77,8 @@ pub fn run_gui(shared: crate::gui::SharedState) -> Result<(), eframe::Error> {
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 580.0])
-            .with_min_inner_size([1350.0, 550.0])
+            .with_inner_size([1500.0, 550.0])
+            .with_min_inner_size([1450.0, 520.0])
             .with_resizable(false),
         ..Default::default()
     };

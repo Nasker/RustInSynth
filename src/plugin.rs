@@ -500,7 +500,12 @@ impl Plugin for RustInSynthPlugin {
         self.sample_rate = buffer_config.sample_rate;
         self.voice_manager.set_sample_rate(sample_rate);
         self.effects_chain.set_sample_rate(sample_rate);
-        
+
+        // Sync all parameters to ensure envelope sustain and other values are applied
+        // before the first audio callback. This fixes the issue where the plugin
+        // envelope would never sustain because parameters weren't synced at init.
+        self.sync_plugin_params_safe();
+
         // Initialize oscillator waveforms here (safe to allocate outside audio thread)
         let w1 = WaveformType::from_index(self.params.osc1_waveform.value() as u8);
         let w2 = WaveformType::from_index(self.params.osc2_waveform.value() as u8);
@@ -508,12 +513,12 @@ impl Plugin for RustInSynthPlugin {
         self.voice_manager.set_osc_waveform(1, w1);
         self.voice_manager.set_osc_waveform(2, w2);
         self.voice_manager.set_osc_waveform(3, w3);
-        
+
         // Track current waveforms
         self.last_osc1_waveform = self.params.osc1_waveform.value();
         self.last_osc2_waveform = self.params.osc2_waveform.value();
         self.last_osc3_waveform = self.params.osc3_waveform.value();
-        
+
         true
     }
 

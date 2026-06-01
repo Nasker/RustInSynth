@@ -15,9 +15,9 @@ use crate::plugin::RustInSynthParams;
 use crate::plugin_gui::backend_plugin::PluginBackend;
 use crate::plugin_gui::shared_state::PluginSharedState;
 
-/// Size of the editor window
-pub const EDITOR_WIDTH: u32 = 1100;
-pub const EDITOR_HEIGHT: u32 = 680;
+/// Size of the editor window (matches standalone dimensions)
+pub const EDITOR_WIDTH: u32 = 1420;
+pub const EDITOR_HEIGHT: u32 = 720;
 
 /// Persistent GUI-only state that lives across frames.
 pub struct EditorState {
