@@ -25,7 +25,7 @@ pub use app::run_gui;
 use crate::core::params::SynthParam;
 
 /// Number of parameters in the synth
-pub const NUM_PARAMS: usize = 31;
+pub const NUM_PARAMS: usize = 35;
 
 /// Lock-free parameter bank for audio thread communication
 /// Each parameter is stored as an atomic u32 (f32 bits) for lock-free reads/writes
@@ -67,6 +67,10 @@ impl ParamBank {
             -12.0_f32, // Osc3Semitones
             0.0_f32,   // Osc3Cents
             0.0_f32,   // Osc3Phase
+            0.0_f32,   // Osc1Pan (Center)
+            -0.3_f32,  // Osc2Pan (Slightly left)
+            0.3_f32,   // Osc3Pan (Slightly right)
+            1.0_f32,   // StereoWidth (Normal)
             0.5_f32,   // MasterVolume
             0.0_f32,   // PortamentoTime
         ];
@@ -139,8 +143,12 @@ fn param_index(param: SynthParam) -> usize {
         SynthParam::Osc3Semitones => 26,
         SynthParam::Osc3Cents => 27,
         SynthParam::Osc3Phase => 28,
-        SynthParam::MasterVolume => 29,
-        SynthParam::PortamentoTime => 30,
+        SynthParam::Osc1Pan => 29,
+        SynthParam::Osc2Pan => 30,
+        SynthParam::Osc3Pan => 31,
+        SynthParam::StereoWidth => 32,
+        SynthParam::MasterVolume => 33,
+        SynthParam::PortamentoTime => 34,
     }
 }
 
@@ -176,8 +184,12 @@ pub fn index_to_param(index: usize) -> Option<SynthParam> {
         26 => Some(SynthParam::Osc3Semitones),
         27 => Some(SynthParam::Osc3Cents),
         28 => Some(SynthParam::Osc3Phase),
-        29 => Some(SynthParam::MasterVolume),
-        30 => Some(SynthParam::PortamentoTime),
+        29 => Some(SynthParam::Osc1Pan),
+        30 => Some(SynthParam::Osc2Pan),
+        31 => Some(SynthParam::Osc3Pan),
+        32 => Some(SynthParam::StereoWidth),
+        33 => Some(SynthParam::MasterVolume),
+        34 => Some(SynthParam::PortamentoTime),
         _ => None,
     }
 }

@@ -50,6 +50,12 @@ pub enum SynthParam {
     Osc3Cents,
     Osc3Phase,
 
+    // Stereo
+    Osc1Pan,
+    Osc2Pan,
+    Osc3Pan,
+    StereoWidth,
+
     // Master
     MasterVolume,
 }
@@ -88,6 +94,10 @@ impl SynthParam {
             SynthParam::Osc3Semitones => "OSC3 Semitones",
             SynthParam::Osc3Cents => "OSC3 Cents",
             SynthParam::Osc3Phase => "OSC3 Phase",
+            SynthParam::Osc1Pan => "OSC1 Pan",
+            SynthParam::Osc2Pan => "OSC2 Pan",
+            SynthParam::Osc3Pan => "OSC3 Pan",
+            SynthParam::StereoWidth => "Stereo Width",
             SynthParam::MasterVolume => "Master Volume",
         }
     }
@@ -125,6 +135,10 @@ impl SynthParam {
             SynthParam::Osc3Semitones => "O3S",
             SynthParam::Osc3Cents => "O3C",
             SynthParam::Osc3Phase => "O3P",
+            SynthParam::Osc1Pan => "O1PN",
+            SynthParam::Osc2Pan => "O2PN",
+            SynthParam::Osc3Pan => "O3PN",
+            SynthParam::StereoWidth => "WTH",
             SynthParam::MasterVolume => "VOL",
         }
     }
@@ -177,6 +191,11 @@ impl SynthParam {
             SynthParam::Osc3Semitones,
             SynthParam::Osc3Cents,
             SynthParam::Osc3Phase,
+            // Stereo
+            SynthParam::Osc1Pan,
+            SynthParam::Osc2Pan,
+            SynthParam::Osc3Pan,
+            SynthParam::StereoWidth,
             // Master
             SynthParam::MasterVolume,
         ]

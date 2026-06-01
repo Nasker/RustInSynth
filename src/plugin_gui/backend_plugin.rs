@@ -75,6 +75,10 @@ impl<'a> SynthBackend for PluginBackend<'a> {
             SynthParam::Osc3Semitones => self.params.osc3_semitones.value() as f32,
             SynthParam::Osc3Cents => self.params.osc3_cents.value() as f32,
             SynthParam::Osc3Phase => self.params.osc3_phase.value(),
+            SynthParam::Osc1Pan => self.params.osc1_pan.value(),
+            SynthParam::Osc2Pan => self.params.osc2_pan.value(),
+            SynthParam::Osc3Pan => self.params.osc3_pan.value(),
+            SynthParam::StereoWidth => self.params.stereo_width.value(),
             SynthParam::PortamentoTime => self.params.portamento.value(),
             SynthParam::PitchBendRange => self.params.pitch_bend_range.value() as f32,
             SynthParam::MasterVolume => self.params.master_volume.value(),
@@ -129,6 +133,10 @@ impl<'a> SynthBackend for PluginBackend<'a> {
                 self.setter.set_parameter(&self.params.osc3_cents, value as i32)
             }
             SynthParam::Osc3Phase => self.setter.set_parameter(&self.params.osc3_phase, value),
+            SynthParam::Osc1Pan => self.setter.set_parameter(&self.params.osc1_pan, value),
+            SynthParam::Osc2Pan => self.setter.set_parameter(&self.params.osc2_pan, value),
+            SynthParam::Osc3Pan => self.setter.set_parameter(&self.params.osc3_pan, value),
+            SynthParam::StereoWidth => self.setter.set_parameter(&self.params.stereo_width, value),
             SynthParam::PortamentoTime => {
                 self.setter.set_parameter(&self.params.portamento, value)
             }

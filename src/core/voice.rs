@@ -1152,6 +1152,22 @@ impl VoiceManager {
             SynthParam::Osc3Phase => {
                 self.set_osc_phase(3, cc_to_phase(value));
             }
+            SynthParam::Osc1Pan => {
+                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
+                self.set_osc_pan(1, pan);
+            }
+            SynthParam::Osc2Pan => {
+                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
+                self.set_osc_pan(2, pan);
+            }
+            SynthParam::Osc3Pan => {
+                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
+                self.set_osc_pan(3, pan);
+            }
+            SynthParam::StereoWidth => {
+                let width = (value as f32 / 127.0) * 2.0;
+                self.set_stereo_width(width);
+            }
             SynthParam::MasterVolume => {
                 self.set_master_volume(cc_to_level(value));
             }

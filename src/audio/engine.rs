@@ -252,6 +252,12 @@ impl AudioEngine {
         vm.set_osc_phase(2, params.get(SynthParam::Osc2Phase));
         vm.set_osc_phase(3, params.get(SynthParam::Osc3Phase));
 
+        // Stereo imaging
+        vm.set_osc_pan(1, params.get(SynthParam::Osc1Pan));
+        vm.set_osc_pan(2, params.get(SynthParam::Osc2Pan));
+        vm.set_osc_pan(3, params.get(SynthParam::Osc3Pan));
+        vm.set_stereo_width(params.get(SynthParam::StereoWidth));
+
         // Pitch bend range
         vm.set_pitch_bend_range(params.get(SynthParam::PitchBendRange) as u8);
 

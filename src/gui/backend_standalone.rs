@@ -150,6 +150,10 @@ impl StandaloneBackend {
             SynthParam::Osc2Cents | SynthParam::Osc3Cents => {
                 ((value as f32 / 127.0) * 200.0 - 100.0).round()
             }
+            SynthParam::Osc1Pan | SynthParam::Osc2Pan | SynthParam::Osc3Pan => {
+                (value as f32 / 127.0) * 2.0 - 1.0
+            }
+            SynthParam::StereoWidth => (value as f32 / 127.0) * 2.0,
             SynthParam::PitchBendRange => ((value as f32 / 127.0) * 23.0 + 1.0).round(),
         };
         self.shared.params.set(param, scaled);
@@ -365,16 +369,26 @@ impl SynthBackend for StandaloneBackend {
     // ── Stereo ───────────────────────────────────────────────────────────────
 
     fn stereo_width(&self) -> f32 {
-        self.audio_engine.stereo_width()
+        self.shared.params.get(SynthParam::StereoWidth)
     }
     fn set_stereo_width(&mut self, width: f32) {
-        self.audio_engine.set_stereo_width(width);
+        self.shared.params.set(SynthParam::StereoWidth, width);
     }
     fn osc_pan(&self, osc_num: u8) -> f32 {
-        self.audio_engine.osc_pan(osc_num)
+        match osc_num {
+            1 => self.shared.params.get(SynthParam::Osc1Pan),
+            2 => self.shared.params.get(SynthParam::Osc2Pan),
+            3 => self.shared.params.get(SynthParam::Osc3Pan),
+            _ => 0.0,
+        }
     }
     fn set_osc_pan(&mut self, osc_num: u8, pan: f32) {
-        self.audio_engine.set_osc_pan(osc_num, pan);
+        match osc_num {
+            1 => self.shared.params.set(SynthParam::Osc1Pan, pan),
+            2 => self.shared.params.set(SynthParam::Osc2Pan, pan),
+            3 => self.shared.params.set(SynthParam::Osc3Pan, pan),
+            _ => {}
+        }
     }
 
     // ── MIDI ─────────────────────────────────────────────────────────────────

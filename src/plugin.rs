@@ -216,7 +216,7 @@ impl Default for RustInSynthParams {
             .with_unit(" s"),
             f_decay: FloatParam::new(
                 "Filter Decay",
-                0.1,
+                0.3, // Match ParamBank default
                 FloatRange::Skewed {
                     min: 0.001,
                     max: 5.0,
@@ -226,7 +226,7 @@ impl Default for RustInSynthParams {
             .with_unit(" s"),
             f_sustain: FloatParam::new(
                 "Filter Sustain",
-                0.7,
+                0.0, // Match ParamBank default
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
             f_release: FloatParam::new(
@@ -247,7 +247,7 @@ impl Default for RustInSynthParams {
 
             lfo_rate: FloatParam::new(
                 "LFO Rate",
-                1.0,
+                6.0, // Match ParamBank default
                 FloatRange::Skewed {
                     min: 0.1,
                     max: 20.0,
@@ -278,7 +278,7 @@ impl Default for RustInSynthParams {
             ),
             osc1_level: FloatParam::new(
                 "OSC1 Level",
-                0.7,
+                1.0, // Match ParamBank default
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
             osc1_phase: FloatParam::new(
@@ -288,7 +288,7 @@ impl Default for RustInSynthParams {
             ),
             osc1_pan: FloatParam::new(
                 "OSC1 Pan",
-                0.0,
+                0.0, // Center (matches VoiceManager default)
                 FloatRange::Linear { min: -1.0, max: 1.0 },
             ),
 
@@ -299,7 +299,7 @@ impl Default for RustInSynthParams {
             ),
             osc2_level: FloatParam::new(
                 "OSC2 Level",
-                0.0,
+                0.8, // Match ParamBank default
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
             osc2_semitones: IntParam::new(
@@ -309,7 +309,7 @@ impl Default for RustInSynthParams {
             ),
             osc2_cents: IntParam::new(
                 "OSC2 Cents",
-                0,
+                7, // Match ParamBank default
                 IntRange::Linear { min: -100, max: 100 },
             ),
             osc2_phase: FloatParam::new(
@@ -319,23 +319,23 @@ impl Default for RustInSynthParams {
             ),
             osc2_pan: FloatParam::new(
                 "OSC2 Pan",
-                0.0,
+                -0.3, // Slightly left (matches VoiceManager default)
                 FloatRange::Linear { min: -1.0, max: 1.0 },
             ),
 
             osc3_waveform: IntParam::new(
                 "OSC3 Waveform",
-                2,
+                1, // Match ParamBank default (Square)
                 IntRange::Linear { min: 0, max: 4 },
             ),
             osc3_level: FloatParam::new(
                 "OSC3 Level",
-                0.0,
+                0.5, // Match ParamBank default
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
             osc3_semitones: IntParam::new(
                 "OSC3 Semitones",
-                0,
+                -12, // Match ParamBank default
                 IntRange::Linear { min: -24, max: 24 },
             ),
             osc3_cents: IntParam::new(
@@ -350,7 +350,7 @@ impl Default for RustInSynthParams {
             ),
             osc3_pan: FloatParam::new(
                 "OSC3 Pan",
-                0.0,
+                0.3, // Slightly right (matches VoiceManager default)
                 FloatRange::Linear { min: -1.0, max: 1.0 },
             ),
 
@@ -366,7 +366,7 @@ impl Default for RustInSynthParams {
             .with_unit(" s"),
             pitch_bend_range: IntParam::new(
                 "Pitch Bend Range",
-                2,
+                12, // Match ParamBank default
                 IntRange::Linear { min: 1, max: 24 },
             ),
             stereo_width: FloatParam::new(
@@ -376,20 +376,20 @@ impl Default for RustInSynthParams {
             ),
             master_volume: FloatParam::new(
                 "Master Volume",
-                0.7,
+                0.5, // Match ParamBank default
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
             polyphony_mode: IntParam::new(
                 "Polyphony Mode",
-                1, // 0 = Mono, 1 = Poly
+                0, // 0 = Mono, 1 = Poly (match standalone default)
                 IntRange::Linear { min: 0, max: 1 },
             ),
 
             delay_enabled: BoolParam::new("Delay Enabled", false),
             delay_time: FloatParam::new(
                 "Delay Time",
-                0.375,
+                0.3, // Match EffectsChain default
                 FloatRange::Linear { min: 0.05, max: 1.0 },
             )
             .with_unit(" s"),
@@ -424,19 +424,19 @@ impl Default for RustInSynthParams {
             chorus_enabled: BoolParam::new("Chorus Enabled", false),
             chorus_rate: FloatParam::new(
                 "Chorus Rate",
-                1.0,
+                1.5, // Match Chorus default
                 FloatRange::Linear { min: 0.1, max: 5.0 },
             )
             .with_unit(" Hz"),
             chorus_depth: FloatParam::new(
                 "Chorus Depth",
-                3.0,
+                3.0, // Match Chorus default
                 FloatRange::Linear { min: 0.0, max: 10.0 },
             )
             .with_unit(" ms"),
             chorus_mix: FloatParam::new(
                 "Chorus Mix",
-                0.3,
+                0.5, // Match Chorus default
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
         }
@@ -498,13 +498,15 @@ impl Plugin for RustInSynthPlugin {
     ) -> bool {
         let sample_rate = buffer_config.sample_rate as u32;
         self.sample_rate = buffer_config.sample_rate;
+
+        // Sync all parameters FIRST to ensure envelope sustain and other values are applied
+        // before set_sample_rate is called. This is critical because set_sample_rate calls
+        // update_increments() on envelopes, which uses the current sustain level.
+        self.sync_plugin_params_safe();
+
+        // Now set sample rate after parameters are synced
         self.voice_manager.set_sample_rate(sample_rate);
         self.effects_chain.set_sample_rate(sample_rate);
-
-        // Sync all parameters to ensure envelope sustain and other values are applied
-        // before the first audio callback. This fixes the issue where the plugin
-        // envelope would never sustain because parameters weren't synced at init.
-        self.sync_plugin_params_safe();
 
         // Initialize oscillator waveforms here (safe to allocate outside audio thread)
         let w1 = WaveformType::from_index(self.params.osc1_waveform.value() as u8);
@@ -600,7 +602,7 @@ impl RustInSynthPlugin {
         let sample_rate = 44100u32;
         Self {
             params: Arc::new(RustInSynthParams::default()),
-            voice_manager: VoiceManager::polyphonic(sample_rate),
+            voice_manager: VoiceManager::monophonic(sample_rate),
             effects_chain: EffectsChain::new(sample_rate),
             last_osc1_waveform: 0,
             last_osc2_waveform: 0,
@@ -650,7 +652,14 @@ impl RustInSynthPlugin {
         };
         self.voice_manager.set_lfo_destination(lfo_dest);
 
-        // Oscillator levels, detune, phase, pan (no allocations)
+        // Oscillator waveforms, levels, detune, phase, pan (no allocations)
+        let w1 = WaveformType::from_index(self.params.osc1_waveform.value() as u8);
+        let w2 = WaveformType::from_index(self.params.osc2_waveform.value() as u8);
+        let w3 = WaveformType::from_index(self.params.osc3_waveform.value() as u8);
+        self.voice_manager.set_osc_waveform(1, w1);
+        self.voice_manager.set_osc_waveform(2, w2);
+        self.voice_manager.set_osc_waveform(3, w3);
+
         self.voice_manager.set_osc_level(1, self.params.osc1_level.value());
         self.voice_manager.set_osc_level(2, self.params.osc2_level.value());
         self.voice_manager.set_osc_level(3, self.params.osc3_level.value());
