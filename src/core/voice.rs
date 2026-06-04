@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
 use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
@@ -18,7 +20,8 @@ pub const MAX_RELEASE_TIME: f32 = 5.0;   // 5 seconds
 /// A single synthesizer voice containing an oscillator bank, filter, envelopes, and LFO
 pub struct Voice {
     osc_bank: OscillatorBank,
-    filter: Box<dyn Filter>,
+    filter_left: Box<dyn Filter>,
+    filter_right: Box<dyn Filter>,
     envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
     filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
     lfo: LFO,                          // Low frequency oscillator for modulation
@@ -40,7 +43,8 @@ impl Voice {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
             osc_bank: OscillatorBank::new(sample_rate),
-            filter: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
+            filter_left: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
+            filter_right: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
             envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
             filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
             lfo: LFO::new(sample_rate),
@@ -124,10 +128,12 @@ impl Voice {
         } else {
             self.base_cutoff
         };
-        self.filter.set_cutoff(modulated_cutoff);
+        // For mono output, use left filter (both filters have same parameters)
+        self.filter_left.set_cutoff(modulated_cutoff);
+        self.filter_right.set_cutoff(modulated_cutoff);
 
         let osc_sample = self.osc_bank.next_sample();
-        let filtered_sample = self.filter.process(osc_sample);
+        let filtered_sample = self.filter_left.process(osc_sample);
         let env_amplitude = self.envelope.next_amplitude();
 
         // Apply LFO amplitude modulation (tremolo) if enabled
@@ -191,17 +197,20 @@ impl Voice {
         } else {
             self.base_cutoff
         };
-        self.filter.set_cutoff(modulated_cutoff);
+        // Set cutoff on both filters for stereo processing
+        self.filter_left.set_cutoff(modulated_cutoff);
+        self.filter_right.set_cutoff(modulated_cutoff);
 
         // Get individual oscillator samples and pan them
         let (s1, s2, s3) = self.osc_bank.next_samples_individual();
+
         let stereo_osc = StereoSample::from_mono_panned(s1, pans.0)
             + StereoSample::from_mono_panned(s2, pans.1)
             + StereoSample::from_mono_panned(s3, pans.2);
         
-        // Filter the stereo signal (process L and R separately)
-        let filtered_left = self.filter.process(stereo_osc.left);
-        let filtered_right = self.filter.process(stereo_osc.right);
+        // Filter the stereo signal (process L and R separately with independent filters)
+        let filtered_left = self.filter_left.process(stereo_osc.left);
+        let filtered_right = self.filter_right.process(stereo_osc.right);
         let filtered_stereo = StereoSample::new(filtered_left, filtered_right);
         
         let env_amplitude = self.envelope.next_amplitude();
@@ -235,7 +244,8 @@ impl Voice {
             self.osc_bank.reset();
         }
 
-        self.filter.reset();
+        self.filter_left.reset();
+        self.filter_right.reset();
         self.filter_envelope.reset();
         self.envelope.trigger();
         self.filter_envelope.trigger();
@@ -266,7 +276,8 @@ impl Voice {
     /// Reset the voice to initial state
     pub fn reset(&mut self) {
         self.osc_bank.reset();
-        self.filter.reset();
+        self.filter_left.reset();
+        self.filter_right.reset();
         self.envelope.reset();
         self.filter_envelope.reset();
         self.lfo.reset();
@@ -277,7 +288,8 @@ impl Voice {
     pub fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
         self.osc_bank.set_sample_rate(sample_rate);
-        self.filter.set_sample_rate(sample_rate);
+        self.filter_left.set_sample_rate(sample_rate);
+        self.filter_right.set_sample_rate(sample_rate);
         self.envelope.set_sample_rate(sample_rate);
         self.filter_envelope.set_sample_rate(sample_rate);
         self.lfo.set_sample_rate(sample_rate);
@@ -356,7 +368,8 @@ impl Voice {
     /// Set the base filter cutoff (also updates base_cutoff for envelope modulation)
     pub fn set_filter_cutoff(&mut self, cutoff: Frequency) {
         self.base_cutoff = cutoff;
-        self.filter.set_cutoff(cutoff);
+        self.filter_left.set_cutoff(cutoff);
+        self.filter_right.set_cutoff(cutoff);
     }
 
     /// Set the attack time
@@ -381,7 +394,8 @@ impl Voice {
 
     /// Set the filter resonance
     pub fn set_filter_resonance(&mut self, resonance: f32) {
-        self.filter.set_resonance(resonance);
+        self.filter_left.set_resonance(resonance);
+        self.filter_right.set_resonance(resonance);
     }
 }
 
@@ -424,7 +438,7 @@ impl Default for OscBankState {
 }
 
 /// Polyphony mode for the voice manager
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolyphonyMode {
     /// Single voice with key stacking (returns to previous note)
     Mono,
@@ -1355,6 +1369,17 @@ impl VoiceManager {
 
         // Master volume
         self.master_volume = preset.master_volume.clamp(0.0, 1.0);
+
+        // Stereo / Pan
+        self.set_osc_pan(1, preset.osc1_pan);
+        self.set_osc_pan(2, preset.osc2_pan);
+        self.set_osc_pan(3, preset.osc3_pan);
+        self.set_stereo_width(preset.stereo_width);
+
+        // Polyphony mode
+        self.set_polyphony_mode(preset.polyphony_mode);
+
+        // Note: Effects are handled by the AudioEngine, not VoiceManager
     }
 
     /// Create a preset from current settings
@@ -1407,6 +1432,18 @@ impl VoiceManager {
             portamento_time: self.portamento_time,
 
             master_volume: self.master_volume,
+
+            // Stereo / Pan
+            osc1_pan: self.osc1_pan,
+            osc2_pan: self.osc2_pan,
+            osc3_pan: self.osc3_pan,
+            stereo_width: self.stereo_width,
+
+            // Polyphony mode
+            polyphony_mode: self.polyphony_mode,
+
+            // Effects are not stored in VoiceManager, use defaults
+            ..Default::default()
         }
     }
 }
@@ -1414,6 +1451,174 @@ impl VoiceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test that sustain level is correctly applied to voices
+    #[test]
+    fn test_voice_manager_sustain_behavior() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Set sustain to 50%
+        vm.set_sustain(0.5);
+
+        // Trigger note
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Run through attack (0.01s = 441 samples at 44.1kHz)
+        for _ in 0..500 {
+            let _ = vm.next_sample_stereo();
+        }
+
+        // Run through decay (0.1s = 4410 samples)
+        for _ in 0..5000 {
+            let _ = vm.next_sample_stereo();
+        }
+
+        // Now should be in sustain phase - get samples
+        let mut samples_at_sustain = Vec::new();
+        for _ in 0..1000 {
+            samples_at_sustain.push(vm.next_sample_stereo());
+        }
+
+        // All samples should have similar amplitude (sustaining)
+        // With sustain at 0.5 and velocity 1.0, we should see significant amplitude
+        let avg_left: f32 = samples_at_sustain.iter().map(|s| s.left.abs()).sum::<f32>() / samples_at_sustain.len() as f32;
+        let avg_right: f32 = samples_at_sustain.iter().map(|s| s.right.abs()).sum::<f32>() / samples_at_sustain.len() as f32;
+
+        // Should have significant output (not near zero)
+        assert!(avg_left > 0.01 || avg_right > 0.01,
+            "Sustain should produce audible output, got avg_left={}, avg_right={}", avg_left, avg_right);
+    }
+
+    /// Test that oscillator panning creates stereo separation
+    #[test]
+    fn test_oscillator_panning_stereo_separation() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Set up: osc1 hard left, osc2 hard right, osc3 center
+        // Only enable osc1 and osc2 for clearer test
+        vm.set_osc_level(1, 1.0);
+        vm.set_osc_level(2, 1.0);
+        vm.set_osc_level(3, 0.0);  // Disable osc3
+
+        vm.set_osc_pan(1, -1.0);  // Hard left
+        vm.set_osc_pan(2, 1.0);   // Hard right
+        vm.set_osc_pan(3, 0.0);   // Center (but disabled)
+
+        // Trigger note
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Collect stereo samples
+        let mut left_channel_sum = 0.0f32;
+        let mut right_channel_sum = 0.0f32;
+        let sample_count = 1000;
+
+        for _ in 0..sample_count {
+            let sample = vm.next_sample_stereo();
+            left_channel_sum += sample.left.abs();
+            right_channel_sum += sample.right.abs();
+        }
+
+        let left_avg = left_channel_sum / sample_count as f32;
+        let right_avg = right_channel_sum / sample_count as f32;
+
+        // With osc1 panned left and osc2 panned right, we should have
+        // significant energy in both channels
+        assert!(left_avg > 0.001, "Left channel should have energy with osc1 panned left, got {}", left_avg);
+        assert!(right_avg > 0.001, "Right channel should have energy with osc2 panned right, got {}", right_avg);
+
+        // The channels should be somewhat balanced since we have one osc on each side
+        let ratio = if left_avg > right_avg { left_avg / right_avg } else { right_avg / left_avg };
+        assert!(ratio < 10.0, "Left and right should be relatively balanced (ratio < 10), got ratio={}", ratio);
+    }
+
+    /// Test that extreme panning works correctly
+    #[test]
+    fn test_extreme_panning() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Only osc1 enabled, panned hard left
+        vm.set_osc_level(1, 1.0);
+        vm.set_osc_level(2, 0.0);
+        vm.set_osc_level(3, 0.0);
+        vm.set_osc_pan(1, -1.0);
+
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        let mut left_sum = 0.0f32;
+        let mut right_sum = 0.0f32;
+
+        for _ in 0..1000 {
+            let sample = vm.next_sample_stereo();
+            left_sum += sample.left.abs();
+            right_sum += sample.right.abs();
+        }
+
+        // With osc1 hard panned left, left should be significantly louder than right
+        assert!(left_sum > right_sum * 2.0,
+            "Hard left pan should have left > 2x right, got left={}, right={}", left_sum, right_sum);
+    }
+
+    /// Test that sustain can be changed dynamically during a playing note (like in a DAW)
+    #[test]
+    fn test_sustain_dynamic_change() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Set initial sustain to 0.0
+        vm.set_sustain(0.0);
+
+        // Trigger note
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Run through attack + decay to get to sustain phase
+        for _ in 0..6000 {
+            let _ = vm.next_sample_stereo();
+        }
+
+        // Now change sustain to 0.8 (like user moving the knob in DAW)
+        vm.set_sustain(0.8);
+
+        // Collect samples after sustain change
+        let mut samples_after_change = Vec::new();
+        for _ in 0..1000 {
+            samples_after_change.push(vm.next_sample_stereo());
+        }
+
+        // Calculate average amplitude after sustain change
+        let avg_amp: f32 = samples_after_change.iter()
+            .map(|s| (s.left.abs() + s.right.abs()) / 2.0)
+            .sum::<f32>() / samples_after_change.len() as f32;
+
+        // With sustain at 0.8, we should have significant output
+        assert!(avg_amp > 0.05,
+            "After changing sustain to 0.8, output should be audible, got avg_amp={}", avg_amp);
+
+        // Now test starting with high sustain, then lowering it
+        let mut vm2 = VoiceManager::monophonic(44100);
+        vm2.set_sustain(0.9);
+        vm2.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Run to sustain phase
+        for _ in 0..6000 {
+            let _ = vm2.next_sample_stereo();
+        }
+
+        // Lower sustain to 0.1
+        vm2.set_sustain(0.1);
+
+        let mut samples_after_lower = Vec::new();
+        for _ in 0..1000 {
+            samples_after_lower.push(vm2.next_sample_stereo());
+        }
+
+        let avg_amp_lower: f32 = samples_after_lower.iter()
+            .map(|s| (s.left.abs() + s.right.abs()) / 2.0)
+            .sum::<f32>() / samples_after_lower.len() as f32;
+
+        // With sustain lowered to 0.1, output should be much lower
+        assert!(avg_amp_lower < avg_amp * 0.5,
+            "Lowering sustain should reduce output, got avg_amp_lower={} vs previous {}"
+            , avg_amp_lower, avg_amp);
+    }
 
     #[test]
     fn test_voice_lifecycle() {

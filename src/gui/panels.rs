@@ -41,9 +41,9 @@ impl Default for PresetState {
 /// Uses "k" notation for values >= 1000 to keep width consistent
 fn format_slider_value(value: f64, _range: std::ops::RangeInclusive<usize>) -> String {
     if value.abs() >= 1000.0 {
-        format!("{:.1}k", value / 1000.0)
+        format!("{:.2}k", value / 1000.0)
     } else {
-        format!("{:.1}", value)
+        format!("{:.2}", value)
     }
 }
 
@@ -425,7 +425,7 @@ pub fn envelopes(ui: &mut Ui, b: &mut dyn SynthBackend) {
 
     let mut port_time = b.get_param(SynthParam::PortamentoTime);
     if ui
-        .add_sized([100.0, 20.0], egui::Slider::new(&mut port_time, 0.0..=3.0).text("Portamento").logarithmic(true).custom_formatter(format_slider_value))
+        .add_sized([100.0, 20.0], egui::Slider::new(&mut port_time, 0.001..=3.0).text("Portamento").logarithmic(true).custom_formatter(format_slider_value))
         .changed()
     {
         b.set_param(SynthParam::PortamentoTime, port_time);
@@ -811,6 +811,33 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_param(SynthParam::PitchBendRange, preset.pitch_bend_range as f32);
     b.set_param(SynthParam::PortamentoTime, preset.portamento_time);
     b.set_param(SynthParam::MasterVolume, preset.master_volume);
+
+    // Stereo / Pan
+    b.set_osc_pan(1, preset.osc1_pan);
+    b.set_osc_pan(2, preset.osc2_pan);
+    b.set_osc_pan(3, preset.osc3_pan);
+    b.set_stereo_width(preset.stereo_width);
+
+    // Polyphony mode
+    b.set_polyphony_mode(preset.polyphony_mode);
+
+    // Effects - Delay
+    b.set_delay_enabled(preset.delay_enabled);
+    b.set_delay_time(preset.delay_time);
+    b.set_delay_feedback(preset.delay_feedback);
+    b.set_delay_mix(preset.delay_mix);
+
+    // Effects - Reverb
+    b.set_reverb_enabled(preset.reverb_enabled);
+    b.set_reverb_room_size(preset.reverb_room_size);
+    b.set_reverb_damping(preset.reverb_damping);
+    b.set_reverb_mix(preset.reverb_mix);
+
+    // Effects - Chorus
+    b.set_chorus_enabled(preset.chorus_enabled);
+    b.set_chorus_rate(preset.chorus_rate);
+    b.set_chorus_depth(preset.chorus_depth);
+    b.set_chorus_mix(preset.chorus_mix);
 }
 
 pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
@@ -867,5 +894,32 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
         pitch_bend_range: b.get_param(SynthParam::PitchBendRange) as u8,
         portamento_time: b.get_param(SynthParam::PortamentoTime),
         master_volume: b.get_param(SynthParam::MasterVolume),
+
+        // Stereo / Pan
+        osc1_pan: b.osc_pan(1),
+        osc2_pan: b.osc_pan(2),
+        osc3_pan: b.osc_pan(3),
+        stereo_width: b.stereo_width(),
+
+        // Polyphony mode
+        polyphony_mode: b.polyphony_mode(),
+
+        // Effects - Delay
+        delay_enabled: b.delay_enabled(),
+        delay_time: b.delay_time(),
+        delay_feedback: b.delay_feedback(),
+        delay_mix: b.delay_mix(),
+
+        // Effects - Reverb
+        reverb_enabled: b.reverb_enabled(),
+        reverb_room_size: b.reverb_room_size(),
+        reverb_damping: b.reverb_damping(),
+        reverb_mix: b.reverb_mix(),
+
+        // Effects - Chorus
+        chorus_enabled: b.chorus_enabled(),
+        chorus_rate: b.chorus_rate(),
+        chorus_depth: b.chorus_depth(),
+        chorus_mix: b.chorus_mix(),
     }
 }

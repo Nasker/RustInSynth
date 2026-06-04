@@ -600,17 +600,28 @@ impl RustInSynthPlugin {
     /// Create a new instance of the NIH-plug wrapper
     pub fn new() -> Self {
         let sample_rate = 44100u32;
-        Self {
-            params: Arc::new(RustInSynthParams::default()),
-            voice_manager: VoiceManager::monophonic(sample_rate),
-            effects_chain: EffectsChain::new(sample_rate),
+        let params = Arc::new(RustInSynthParams::default());
+        let voice_manager = VoiceManager::monophonic(sample_rate);
+        let effects_chain = EffectsChain::new(sample_rate);
+
+        // Create plugin instance
+        let mut plugin = Self {
+            params: Arc::clone(&params),
+            voice_manager,
+            effects_chain,
             last_osc1_waveform: 0,
             last_osc2_waveform: 0,
             last_osc3_waveform: 0,
             editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
             gui_shared: PluginSharedState::new(),
             sample_rate: sample_rate as f32,
-        }
+        };
+
+        // Sync parameters immediately to ensure voice_manager has correct initial values
+        // This is critical for sustain and other envelope parameters
+        plugin.sync_plugin_params_safe();
+
+        plugin
     }
 
     /// Sync parameters that are safe to change in the audio thread (no allocations)

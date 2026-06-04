@@ -56,4 +56,4 @@ echo "BNDL????" > "${CONTENTS_DIR}/PkgInfo"
 
 echo "✅ VST3 bundle created successfully at: $VST3_DIR"
 echo ""
-echo "You can now load the plugin in Ableton Live."
+echo "You can now load the plugin in your DAW and rock!"
