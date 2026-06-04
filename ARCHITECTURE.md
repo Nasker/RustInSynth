@@ -2,14 +2,14 @@
 
 ## Overview
 
-RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lock-free communication between the audio thread and the UI thread.
+RustInSynth is a real-time polyphonic synthesizer with a GUI, designed around lock-free communication between the audio thread and the UI thread. It supports both standalone and plugin (VST3/CLAP) operation through a unified `SynthBackend` trait.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         GUI Thread                               │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
-│  │   egui      │───▶│  SynthApp   │───▶│  ParamBank          │  │
-│  │  (render)   │    │  (logic)    │    │  (AtomicU32 array)  │  │
+│  │   egui      │───▶│  panels::*  │───▶│  ParamBank          │  │
+│  │  (render)   │    │  (shared UI)│    │  (AtomicU32 array)  │  │
 │  └─────────────┘    └─────────────┘    └──────────┬──────────┘  │
 └───────────────────────────────────────────────────┼─────────────┘
                                                     │ lock-free
@@ -17,7 +17,7 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 │                       Audio Thread                │              │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────▼──────────┐   │
 │  │   cpal      │◀───│AudioEngine  │◀───│  VoiceManager      │   │
-│  │  (output)   │    │  (stream)   │    │  (synthesis)       │   │
+│  │  (output)   │    │  (stream)   │    │  (mono/poly DSP)   │   │
 │  └─────────────┘    └─────────────┘    └────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -32,11 +32,20 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 - Lock-free reads/writes using `Ordering::Relaxed`
 - `get_cpu_load()` / `set_cpu_load()` for real-time CPU measurement
 
-#### `app.rs` - Main Application
-- **`SynthApp`**: Owns `AudioEngine`, `MidiInputHandler`, and `SharedState`
-- Polls MIDI events every frame (up to 64 per frame)
-- Syncs `ParamBank` → `VoiceManager` every frame
-- Updates `ParamBank` from incoming MIDI CCs to prevent overwrite
+#### `app.rs` - Main Application (Standalone)
+- **`SynthApp`**: Owns `Box<dyn SynthBackend>` for backend-agnostic GUI
+- Delegates to shared `panels::*` functions for all UI rendering
+- `run_gui()`: Entry point for standalone application with X11/Wayland handling
+
+#### `backend.rs` - Unified Backend Trait
+- **`SynthBackend`**: Core trait abstracting all parameter access
+- Methods for: parameters, effects (delay/reverb/chorus), voice management, stereo, MIDI, CPU load
+- Implemented by both `StandaloneBackend` and `PluginBackend<'a>`
+
+#### `backend_standalone.rs` - Standalone Implementation
+- **`StandaloneBackend`**: Owns `AudioEngine`, `SharedState`, `MidiInputHandler`
+- MIDI CC learn with persistence to `~/.rustinsynth/cc_mappings.json`
+- Polls MIDI and syncs `ParamBank` → `VoiceManager` every frame
 
 #### `widgets.rs` - Custom Controls
 - Rotary knobs with drag interaction
@@ -62,12 +71,12 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 ### 3. Core DSP (`src/core/`)
 
 #### `voice.rs` - Voice Manager
-- Manages monophonic voice allocation with key stacking
-- Contains: `OscillatorBank`, `SVFilter`, `ADSREnvelope` (×2), `LFO`
-- **Key Stack**: `Vec<(MidiNote, Amplitude)>` for proper note priority
-- **Portamento**: Linear glide between notes (0-3 seconds)
+- **Polyphonic mode**: 8 voices with voice stealing, or monophonic with key stacking
+- Contains per-voice: `OscillatorBank`, `SVFilter` (L/R), `ADSREnvelope` (×2), `LFO`
+- **Key Stack**: `Vec<(MidiNote, Amplitude)>` for proper note priority (mono mode)
+- **Portamento**: Exponential glide between notes (0.005-2.0 seconds)
 - Implements `SynthEventReceiver` trait for note/CC handling
-- `next_sample()`: Called by audio thread ~44100×/sec
+- `next_sample_stereo()`: Generates stereo output with per-oscillator panning
 
 #### `oscillator.rs` - Oscillator Bank
 - 3 independent oscillators with:
@@ -76,9 +85,10 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 - Band-limited waveforms using PolyBLEP anti-aliasing
 
 #### `filter.rs` - State Variable Filter
-- 12dB/oct lowpass with resonance
+- 12dB/oct lowpass with resonance (per-channel filters for stereo)
 - Analog-style saturation (tanh)
 - Cutoff range: 20Hz - 20kHz (exponential)
+- **Filter envelope**: 6-octave range, musical (not linear Hz)
 
 #### `envelope.rs` - ADSR Envelope
 - Attack, Decay, Sustain, Release stages
@@ -99,7 +109,8 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 #### `presets.rs` - Preset System
 - JSON serialization via `serde`
 - Stored in `~/.rustsynth/presets/`
-- Contains all oscillator, filter, envelope, LFO settings
+- Contains all oscillator, filter, envelope, LFO, stereo, effects, and polyphony settings
+- 15+ factory presets included (bass, lead, pad, FX, keys)
 
 ### 4. Input Layer (`src/input/`)
 
@@ -108,6 +119,20 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 - Runs callback on MIDI thread, sends events via `mpsc::channel`
 - `poll()`: Non-blocking receive for GUI thread
 - Parses Note On/Off, CC, Pitch Bend
+
+### 5. Plugin Layer (`src/plugin*.rs`)
+
+#### `plugin.rs` - NIH-plug Integration
+- **`RustInSynthPlugin`**: Main plugin struct implementing `Plugin` trait
+- **`RustInSynthParams`**: All parameters exposed to DAW (32+ automatable params)
+- **`sync_plugin_params_safe()`**: Audio-thread-safe parameter sync
+- VST3 and CLAP export via `nih_export_vst3!` / `nih_export_clap!`
+
+#### `plugin_gui/` - Plugin Editor
+- **`PluginBackend<'a>`**: Implements `SynthBackend` using `Arc<RustInSynthParams>` + `ParamSetter`
+- **`create_editor()`**: Builds plugin UI using shared `panels::*` functions
+- **`PluginSharedState`**: Lock-free CPU load sharing from audio to GUI thread
+- Identical UI to standalone (same `panels.rs` code)
 
 ## Data Flow
 
@@ -162,14 +187,22 @@ RustInSynth is a real-time monophonic synthesizer with a GUI, designed around lo
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `gui/app.rs` | ~1100 | Main GUI application |
-| `gui/widgets.rs` | ~400 | Custom egui widgets |
-| `gui/theme.rs` | ~50 | Centralized color theme |
-| `gui/mod.rs` | ~210 | SharedState, ParamBank, CPU load |
-| `core/voice.rs` | ~1150 | Voice manager + DSP + key stacking |
+| `gui/app.rs` | ~110 | Main GUI app (backend-agnostic) |
+| `gui/backend.rs` | ~165 | `SynthBackend` trait definition |
+| `gui/backend_standalone.rs` | ~525 | Standalone backend implementation |
+| `gui/panels.rs` | ~930 | Shared UI panels (standalone + plugin) |
+| `gui/widgets.rs` | ~385 | Custom egui widgets |
+| `gui/theme.rs` | ~210 | Centralized color theme |
+| `gui/mod.rs` | ~235 | SharedState, ParamBank |
+| `core/voice.rs` | ~1650 | Voice manager + DSP + polyphony |
 | `core/oscillator.rs` | ~500 | Oscillator bank |
 | `core/filter.rs` | ~200 | SVF implementation |
-| `core/envelope.rs` | ~200 | ADSR envelope |
-| `core/params.rs` | ~540 | CC mapping system + portamento |
+| `core/envelope.rs` | ~285 | ADSR envelope |
+| `core/effects.rs` | ~200 | Delay, Reverb, Chorus |
+| `core/params.rs` | ~540 | CC mapping system |
+| `core/presets.rs` | ~1055 | Preset system + factory presets |
 | `audio/engine.rs` | ~230 | Audio stream management |
-| `input/midi.rs` | ~440 | MIDI input handling |
+| `input/midi.rs` | ~480 | MIDI input handling |
+| `plugin.rs` | ~825 | NIH-plug plugin definition |
+| `plugin_gui/backend_plugin.rs` | ~305 | Plugin backend implementation |
+| `plugin_gui/editor.rs` | ~65 | Plugin editor (shared UI) |

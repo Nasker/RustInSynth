@@ -47,15 +47,15 @@
   - Wide stereo chorus (90° LFO phase offset)
   - GUI sliders for pan and width
 
-- [ ] **2.4 Additional Filter Types** ⬅️ NEXT
-  - Highpass, Bandpass modes
-  - 24dB/oct Ladder filter option
-  - Filter drive/saturation control
-
-- [ ] **2.5 Arpeggiator**
+- [ ] **2.4 Arpeggiator** ⬅️ NEXT
   - Up/Down/Random patterns
   - Tempo sync
   - Octave range
+
+- [ ] **2.5 Additional Filter Types**
+  - Highpass, Bandpass modes
+  - 24dB/oct Ladder filter option
+  - Filter drive/saturation control
 
 ### Phase 3: Visual Feedback (Nice to Have)
 - [ ] **3.1 Oscilloscope / Waveform Display**
@@ -128,6 +128,7 @@ struct SynthApp {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-06-04 | v1.0.1 | Fixed stereo separation with independent L/R filters, added comprehensive panning tests, fixed plugin sustain initialization, unified stereo parameters across standalone/plugin |
 | 2026-05-25 | v1.0.1 | Fixed filter envelope clicks/discontinuities on retrigger, mapped filter envelope & LFO to octaves, true exponential portamento resolution |
 | 2026-05-21 | v1.0.0 | True stereo output (per-osc pan, width, stereo FX) |
 | 2026-05-21 | v0.9.0 | Effects chain (Delay, Reverb, Chorus) |

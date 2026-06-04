@@ -1,27 +1,28 @@
 # RustInSynth
 
-A Minimoog-style synthesizer written in pure Rust with a real-time GUI and **true stereo output**.
+A Minimoog-style synthesizer written in pure Rust with a real-time GUI, **true stereo output**, and both **standalone and plugin (VST3/CLAP)** operation.
 
 ![RustInSynth GUI](docs/screenshot.png)
 
 ## Features
 
-- **3-oscillator bank** with 5 waveforms (Sine, Triangle, Saw, Square, Noise)
-- **True stereo output** with per-oscillator panning and stereo width control
+- **3-oscillator bank** with 5 waveforms (Sine, Triangle, Saw, Square, Noise) + PolyBLEP anti-aliasing
+- **True stereo output** with per-oscillator panning, stereo width, and independent L/R filters
 - **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
-- **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF)
+- **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF) with 6-octave filter envelope range
 - **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
 - **Stereo effects chain** - Ping-pong Delay, Stereo Reverb, Wide Chorus
-- **Portamento (glide)** with linear interpolation (0-3 seconds)
-- **Mono/Poly modes** - monophonic with key stacking OR 8-voice polyphony
+- **Portamento (glide)** with exponential curve (0.005-2.0 seconds)
+- **Mono/Poly modes** - monophonic with key stacking OR 8-voice polyphony with voice stealing
+- **Dual operation modes** - Standalone app AND VST3/CLAP plugin via NIH-plug
+- **Unified GUI** - single codebase drives both standalone and plugin via `SynthBackend` trait
 - **Real-time GUI** built with `egui` - single-window Minimoog-style layout
-- **Real-time audio synthesis** using `cpal`
-- **USB MIDI controller support** via `midir` with live CC feedback
-- **Full MIDI CC control** for all 32+ parameters
-- **Preset system** - JSON-based save/load
+- **Real-time audio synthesis** using `cpal` (standalone)
+- **USB MIDI controller support** via `midir` with live CC feedback and runtime CC learn
+- **Full MIDI CC control** for all 35+ parameters with customizable mappings
+- **Preset system** - JSON-based save/load with 15+ factory presets
 - **Lock-free parameter sharing** between GUI and audio threads
 - **Real-time CPU meter** - actual DSP load measurement
-- **Centralized theme system** - consistent styling
 
 ## Architecture
 
@@ -106,7 +107,7 @@ All parameters follow MIDI Sound Controller conventions:
 |-----|------------------|----------------------------|
 | 5   | Portamento Time  | 0.0 → 3.0s (exponential)  |
 
-CC mappings are fully configurable at runtime via the `CCMapping` API.
+CC mappings are fully configurable at runtime via the `CCMapping` API. Custom mappings are persisted to `~/.rustinsynth/cc_mappings.json`.
 
 ## Presets
 
@@ -146,17 +147,29 @@ Controls:
 
 ## Building
 
+### Standalone Application
+
 ```bash
 cargo build --release
 ```
 
+### Plugin (VST3/CLAP)
+
+```bash
+cargo build --release --features plugin
+```
+
+The plugin binaries will be in `target/release/` with `.so` (Linux), `.dll` (Windows), or `.dylib` (macOS) extensions. Use a plugin scanner or copy to your DAW's plugin folder.
+
 ## Running
+
+### Standalone
 
 ```bash
 cargo run
 ```
 
-On startup, choose between keyboard or MIDI input mode.
+Connect a USB MIDI controller or use the keyboard shortcuts (see below).
 
 ## Dependencies
 
@@ -166,6 +179,7 @@ On startup, choose between keyboard or MIDI input mode.
 - `parking_lot` - Fast synchronization primitives
 - `dashmap` - Lock-free concurrent hashmap
 - `serde` / `serde_json` - Preset serialization
+- `nih_plug` / `nih_plug_egui` - VST3/CLAP plugin framework
 
 ## Project Structure
 
@@ -174,34 +188,36 @@ src/
 ├── main.rs                       # Entry point (standalone GUI mode)
 ├── lib.rs                        # Library exports
 ├── audio/
-│   └── engine.rs                 # Audio stream + param sync
+│   └── engine.rs                 # Audio stream + param sync (standalone)
 ├── core/
 │   ├── effects.rs                # Delay, Reverb, Chorus + EffectsChain
 │   ├── envelope.rs               # AR/ADSR envelopes
 │   ├── event.rs                  # Note/CC event system
-│   ├── filter.rs                 # State Variable Filter
+│   ├── filter.rs                 # State Variable Filter (L/R for stereo)
 │   ├── lfo.rs                    # Low Frequency Oscillator
-│   ├── oscillator.rs             # Waveform generators + bank
+│   ├── oscillator.rs             # Waveform generators + bank (PolyBLEP)
 │   ├── params.rs                 # CC mapping system + SynthParam enum
-│   ├── presets.rs                # JSON preset save/load
-│   ├── types.rs                  # Core type definitions
-│   └── voice.rs                  # Voice manager (mono/poly)
+│   ├── presets.rs                # JSON preset save/load + factory presets
+│   ├── types.rs                  # Core type definitions (StereoSample)
+│   └── voice.rs                  # Voice manager (mono/poly, 8 voices)
 ├── gui/
-│   ├── mod.rs                    # SharedState, exports
-│   ├── backend.rs                # SynthBackend trait (unified abstraction)
-│   ├── backend_standalone.rs     # StandaloneBackend (wraps AudioEngine)
+│   ├── mod.rs                    # SharedState, ParamBank, exports
 │   ├── app.rs                    # SynthApp — single GUI, backend-agnostic
-│   ├── widgets.rs                # Custom knobs, toggles, meters
-│   └── theme.rs                  # Centralized color theme
-├── plugin.rs                     # NIH-plug plugin definition + RustInSynthParams
-├── plugin_gui/
-│   ├── mod.rs                    # Module exports
-│   ├── backend_plugin.rs         # PluginBackend (wraps NIH-plug ParamSetter)
-│   ├── editor.rs                 # Plugin editor (unified GUI panels)
-│   ├── shared_state.rs           # PluginSharedState (lock-free CPU load)
-│   └── widgets.rs                # Plugin-specific widget helpers
-└── input/
-    └── midi.rs                   # MIDI input handler (standalone only)
+│   ├── backend.rs                # SynthBackend trait (unified abstraction)
+│   ├── backend_standalone.rs     # StandaloneBackend (AudioEngine + MIDI)
+│   ├── panels.rs                 # Shared UI panels (standalone + plugin)
+│   ├── theme.rs                  # Rust In Peace color theme
+│   └── widgets.rs                # Custom knobs, toggles, VU meters
+├── input/
+│   ├── midi.rs                   # MIDI input handler (standalone)
+│   └── keyboard.rs               # QWERTY keyboard input
+├── plugin.rs                     # NIH-plug plugin definition
+└── plugin_gui/
+    ├── mod.rs                    # Module exports
+    ├── backend_plugin.rs         # PluginBackend (NIH-plug integration)
+    ├── editor.rs                 # Plugin editor (shared panels)
+    ├── shared_state.rs           # PluginSharedState (CPU load)
+    └── widgets.rs                # Plugin widget helpers
 ```
 
 ## Unified GUI Architecture
@@ -235,16 +251,20 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementati
 
 ## Current Status
 
-**v1.0.1** - Unified GUI Architecture:
-- [x] `SynthBackend` trait abstraction — single GUI codebase for both standalone and plugin
+**v1.0.1** - Stereo Fix & Unified GUI Architecture:
+- [x] Fixed stereo separation with independent left/right filters per voice
+- [x] `SynthBackend` trait abstraction — single GUI codebase for standalone and plugin
 - [x] `StandaloneBackend` wrapping `AudioEngine`, `SharedState`, and MIDI handler
 - [x] `PluginBackend<'a>` wrapping NIH-plug `RustInSynthParams` + `ParamSetter`
 - [x] Effects parameters (delay/reverb/chorus) exposed via NIH-plug automation
 - [x] `EffectsChain` unified setter/getter API
 - [x] Plugin editor using identical panel functions as standalone GUI
 - [x] `PluginSharedState` for lock-free CPU load sharing
+- [x] Unified stereo width and oscillator pan across standalone and plugin
 
-**v1.0.0** - True Stereo Output:
+**v1.0.0** - True Stereo Output & VST3/CLAP:
+- [x] VST3 and CLAP plugin export via nih-plug
+- [x] 32+ automatable parameters in DAWs
 - [x] Per-oscillator panning (L/R positioning)
 - [x] Stereo width control (mono to extra-wide)
 - [x] Ping-pong delay with stereo feedback
@@ -258,7 +278,7 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementati
 - [x] Chorus (LFO-modulated delay)
 - [x] GUI with enable toggles + parameter sliders
 - [x] 8-voice polyphony with voice stealing
-- [x] 8 factory presets
+- [x] 15+ factory presets (bass, lead, pad, FX, keys)
 
 **v0.6.0** - Portamento + Key Stacking:
 - [x] Portamento (glide) with linear interpolation (0-3s)
@@ -270,25 +290,25 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementati
 
 **v0.5.0** - Full GUI:
 - [x] Real-time egui GUI with Minimoog-style layout
-- [x] 3-oscillator bank with 5 waveforms
-- [x] Per-oscillator waveform, level, phase, detune (semi + cents)
+- [x] 3-oscillator bank with 5 waveforms (PolyBLEP anti-aliasing)
+- [x] Per-oscillator waveform, level, phase, detune (semi + cents), pan
 - [x] Resonant SVF filter with analog saturation
 - [x] Dual ADSR envelopes (amplitude + filter)
 - [x] LFO with 5 waveforms, 4 destinations
 - [x] Pitch bend with configurable range
 - [x] JSON-based preset save/load
-- [x] MIDI input with live CC feedback display
+- [x] MIDI input with live CC feedback display and CC learn
 - [x] Lock-free GUI ↔ Audio parameter sync
-- [x] Full CC mapping (31+ parameters)
+- [x] Full CC mapping (35+ parameters)
 
 ## Roadmap
 
 - [x] ~~Polyphonic voice allocation~~ ✅ Done (8 voices)
 - [x] ~~Effects chain~~ ✅ Done (Delay, Reverb, Chorus)
 - [x] ~~Stereo output~~ ✅ Done (per-osc pan, width, stereo FX)
-- [ ] Additional filter types (HP, BP, ladder)
+- [x] ~~VST3/CLAP plugin export~~ ✅ Done (via nih-plug)
 - [ ] Arpeggiator
-- [ ] VST3/CLAP plugin export (via nih-plug)
+- [ ] Additional filter types (HP, BP, ladder)
 - [ ] Oscilloscope / waveform display
 
 ## License
