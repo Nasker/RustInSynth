@@ -1,0 +1,1658 @@
+use serde::{Deserialize, Serialize};
+
+use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
+use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
+use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
+use super::lfo::{LFO, LfoDestination, LfoWaveform};
+use super::oscillator::{Oscillator, OscillatorBank};
+use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_portamento_time, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
+use super::presets::Preset;
+use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate, StereoSample};
+
+/// Envelope time range constants
+pub const MIN_ATTACK_TIME: f32 = 0.001;  // 1ms
+pub const MAX_ATTACK_TIME: f32 = 2.0;    // 2 seconds
+pub const MIN_DECAY_TIME: f32 = 0.001;   // 1ms
+pub const MAX_DECAY_TIME: f32 = 5.0;     // 5 seconds
+pub const MIN_RELEASE_TIME: f32 = 0.001; // 1ms  
+pub const MAX_RELEASE_TIME: f32 = 5.0;   // 5 seconds
+
+/// A single synthesizer voice containing an oscillator bank, filter, envelopes, and LFO
+pub struct Voice {
+    osc_bank: OscillatorBank,
+    filter_left: Box<dyn Filter>,
+    filter_right: Box<dyn Filter>,
+    envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
+    filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
+    lfo: LFO,                          // Low frequency oscillator for modulation
+    current_note: Option<MidiNote>,
+    velocity: Amplitude,
+    sample_rate: SampleRate,
+    // Filter envelope modulation
+    base_cutoff: Frequency,
+    filter_env_amount: f32,            // 0.0 to 1.0 (amount of envelope applied)
+    // LFO modulation
+    base_frequency: Frequency,         // Base note frequency for pitch modulation
+    // Portamento (glide)
+    portamento_time: f32,              // Glide time in seconds (0.0 = off)
+    glide_target_freq: Frequency,       // Target frequency during glide
+    glide_active: bool,                 // Whether portamento glide is in progress
+}
+
+impl Voice {
+    pub fn new(sample_rate: SampleRate) -> Self {
+        Self {
+            osc_bank: OscillatorBank::new(sample_rate),
+            filter_left: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
+            filter_right: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
+            envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
+            filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
+            lfo: LFO::new(sample_rate),
+            current_note: None,
+            velocity: 1.0,
+            sample_rate,
+            base_cutoff: 20000.0,
+            filter_env_amount: 0.0, // Off by default
+            base_frequency: 440.0,
+            portamento_time: 0.0,
+            glide_target_freq: 440.0,
+            glide_active: false,
+        }
+    }
+
+    /// Get mutable reference to the oscillator bank
+    pub fn osc_bank_mut(&mut self) -> &mut OscillatorBank {
+        &mut self.osc_bank
+    }
+
+    /// Get reference to the oscillator bank
+    pub fn osc_bank(&self) -> &OscillatorBank {
+        &self.osc_bank
+    }
+
+    pub fn with_envelope<E: Envelope + 'static>(mut self, envelope: E) -> Self {
+        self.envelope = Box::new(envelope);
+        self
+    }
+
+    /// Generate the next sample from this voice
+    pub fn next_sample(&mut self) -> Sample {
+        if self.envelope.is_finished() {
+            return 0.0;
+        }
+
+        // Update portamento glide
+        if self.glide_active {
+            let step = (self.glide_target_freq - self.base_frequency)
+                / (self.portamento_time * self.sample_rate as f32);
+            self.base_frequency += step;
+            if (self.glide_target_freq - self.base_frequency).abs() <= step.abs() {
+                self.base_frequency = self.glide_target_freq;
+                self.glide_active = false;
+            }
+        }
+
+        // Get LFO value for this sample
+        let lfo_value = self.lfo.next_value();
+
+        // Apply LFO pitch modulation (vibrato) if enabled
+        let current_freq = if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
+            // Vibrato: modulate pitch by up to ±1 semitone at full depth
+            let vibrato_semitones = lfo_value; // -1.0 to +1.0 semitones
+            let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
+            self.base_frequency * vibrato_ratio
+        } else {
+            self.base_frequency
+        };
+        self.osc_bank.set_frequency(current_freq);
+
+        // Calculate filter envelope and LFO modulation
+        let filter_env_amp = self.filter_envelope.next_amplitude();
+        let filter_lfo = if self.lfo.destination() == LfoDestination::FilterCutoff {
+            lfo_value // -1.0 to +1.0
+        } else {
+            0.0
+        };
+
+        let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
+            let max_cutoff = 20000.0f32;
+            // Octave-based envelope: each step of env_amount sweeps equal perceptual distance
+            // 6 octaves of range (e.g. 500Hz -> 32kHz) at full amount
+            let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
+            let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
+            // LFO: ±2 octaves at full depth, centred on the envelope position
+            let lfo_depth = self.lfo.depth();
+            let lfo_semitones = 24.0 * lfo_depth * filter_lfo;
+            let lfo_factor = 2.0f32.powf(lfo_semitones / 12.0);
+            (env_cutoff * lfo_factor).clamp(20.0, max_cutoff)
+        } else {
+            self.base_cutoff
+        };
+        // For mono output, use left filter (both filters have same parameters)
+        self.filter_left.set_cutoff(modulated_cutoff);
+        self.filter_right.set_cutoff(modulated_cutoff);
+
+        let osc_sample = self.osc_bank.next_sample();
+        let filtered_sample = self.filter_left.process(osc_sample);
+        let env_amplitude = self.envelope.next_amplitude();
+
+        // Apply LFO amplitude modulation (tremolo) if enabled
+        let lfo_amp = if self.lfo.destination() == LfoDestination::Amplitude {
+            // Tremolo: 1.0 ± depth (never goes negative)
+            1.0 + lfo_value * 0.5 // 0.5 to 1.5 range at full depth
+        } else {
+            1.0
+        };
+
+        filtered_sample * env_amplitude * self.velocity * lfo_amp
+    }
+    
+    /// Generate the next stereo sample from this voice with per-oscillator panning
+    /// pans: (osc1_pan, osc2_pan, osc3_pan) where -1.0 = left, 0.0 = center, 1.0 = right
+    pub fn next_sample_stereo(&mut self, pans: (f32, f32, f32)) -> StereoSample {
+        if self.envelope.is_finished() {
+            return StereoSample::ZERO;
+        }
+
+        // Update portamento glide
+        if self.glide_active {
+            let step = (self.glide_target_freq - self.base_frequency)
+                / (self.portamento_time * self.sample_rate as f32);
+            self.base_frequency += step;
+            if (self.glide_target_freq - self.base_frequency).abs() <= step.abs() {
+                self.base_frequency = self.glide_target_freq;
+                self.glide_active = false;
+            }
+        }
+
+        // Get LFO value for this sample
+        let lfo_value = self.lfo.next_value();
+
+        // Apply LFO pitch modulation (vibrato) if enabled
+        let current_freq = if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
+            let vibrato_semitones = lfo_value;
+            let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
+            self.base_frequency * vibrato_ratio
+        } else {
+            self.base_frequency
+        };
+        self.osc_bank.set_frequency(current_freq);
+
+        // Calculate filter envelope and LFO modulation
+        let filter_env_amp = self.filter_envelope.next_amplitude();
+        let filter_lfo = if self.lfo.destination() == LfoDestination::FilterCutoff {
+            lfo_value
+        } else {
+            0.0
+        };
+
+        let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
+            let max_cutoff = 20000.0f32;
+            let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
+            let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
+            let lfo_depth = self.lfo.depth();
+            let lfo_semitones = 24.0 * lfo_depth * filter_lfo;
+            let lfo_factor = 2.0f32.powf(lfo_semitones / 12.0);
+            (env_cutoff * lfo_factor).clamp(20.0, max_cutoff)
+        } else {
+            self.base_cutoff
+        };
+        // Set cutoff on both filters for stereo processing
+        self.filter_left.set_cutoff(modulated_cutoff);
+        self.filter_right.set_cutoff(modulated_cutoff);
+
+        // Get individual oscillator samples and pan them
+        let (s1, s2, s3) = self.osc_bank.next_samples_individual();
+
+        let stereo_osc = StereoSample::from_mono_panned(s1, pans.0)
+            + StereoSample::from_mono_panned(s2, pans.1)
+            + StereoSample::from_mono_panned(s3, pans.2);
+        
+        // Filter the stereo signal (process L and R separately with independent filters)
+        let filtered_left = self.filter_left.process(stereo_osc.left);
+        let filtered_right = self.filter_right.process(stereo_osc.right);
+        let filtered_stereo = StereoSample::new(filtered_left, filtered_right);
+        
+        let env_amplitude = self.envelope.next_amplitude();
+
+        // Apply LFO amplitude modulation (tremolo) if enabled
+        let lfo_amp = if self.lfo.destination() == LfoDestination::Amplitude {
+            1.0 + lfo_value * 0.5
+        } else {
+            1.0
+        };
+
+        filtered_stereo * (env_amplitude * self.velocity * lfo_amp)
+    }
+
+    /// Trigger a note on this voice
+    pub fn note_on(&mut self, note: MidiNote, velocity: Amplitude) {
+        self.current_note = Some(note);
+        self.velocity = velocity;
+        let target_freq = midi_to_frequency(note);
+
+        if self.portamento_time > 0.0 && self.is_active() {
+            // Start glide from current frequency
+            self.glide_target_freq = target_freq;
+            self.glide_active = true;
+            // Don't reset oscillator phase during glide
+        } else {
+            self.base_frequency = target_freq;
+            self.glide_target_freq = target_freq;
+            self.glide_active = false;
+            self.osc_bank.set_frequency(self.base_frequency);
+            self.osc_bank.reset();
+        }
+
+        self.filter_left.reset();
+        self.filter_right.reset();
+        self.filter_envelope.reset();
+        self.envelope.trigger();
+        self.filter_envelope.trigger();
+        self.lfo.reset();
+    }
+
+    /// Release the current note
+    pub fn note_off(&mut self) {
+        self.envelope.release();
+        self.filter_envelope.release();
+    }
+
+    /// Check if this voice is currently playing
+    pub fn is_active(&self) -> bool {
+        !self.envelope.is_finished()
+    }
+
+    /// Check if this voice is in release phase
+    pub fn is_releasing(&self) -> bool {
+        self.envelope.state() == EnvelopeState::Release
+    }
+
+    /// Get the note currently assigned to this voice
+    pub fn current_note(&self) -> Option<MidiNote> {
+        self.current_note
+    }
+
+    /// Reset the voice to initial state
+    pub fn reset(&mut self) {
+        self.osc_bank.reset();
+        self.filter_left.reset();
+        self.filter_right.reset();
+        self.envelope.reset();
+        self.filter_envelope.reset();
+        self.lfo.reset();
+        self.current_note = None;
+    }
+
+    /// Set the sample rate
+    pub fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        self.osc_bank.set_sample_rate(sample_rate);
+        self.filter_left.set_sample_rate(sample_rate);
+        self.filter_right.set_sample_rate(sample_rate);
+        self.envelope.set_sample_rate(sample_rate);
+        self.filter_envelope.set_sample_rate(sample_rate);
+        self.lfo.set_sample_rate(sample_rate);
+    }
+
+    /// Set LFO rate (0.1 to 20 Hz)
+    pub fn set_lfo_rate(&mut self, rate: f32) {
+        self.lfo.set_rate(rate);
+    }
+
+    /// Set LFO depth (0.0 to 1.0)
+    pub fn set_lfo_depth(&mut self, depth: f32) {
+        self.lfo.set_depth(depth);
+    }
+
+    /// Set LFO waveform
+    pub fn set_lfo_waveform(&mut self, waveform: LfoWaveform) {
+        self.lfo.set_waveform(waveform);
+    }
+
+    /// Set LFO destination
+    pub fn set_lfo_destination(&mut self, destination: LfoDestination) {
+        self.lfo.set_destination(destination);
+    }
+
+    /// Get LFO rate
+    pub fn lfo_rate(&self) -> f32 {
+        self.lfo.rate()
+    }
+
+    /// Get LFO depth
+    pub fn lfo_depth(&self) -> f32 {
+        self.lfo.depth()
+    }
+
+    /// Get LFO waveform
+    pub fn lfo_waveform(&self) -> LfoWaveform {
+        self.lfo.waveform()
+    }
+
+    /// Get LFO destination
+    pub fn lfo_destination(&self) -> LfoDestination {
+        self.lfo.destination()
+    }
+
+    /// Set the filter envelope attack time
+    pub fn set_filter_attack(&mut self, attack_time: f32) {
+        self.filter_envelope.set_attack(attack_time);
+    }
+
+    /// Set the filter envelope decay time
+    pub fn set_filter_decay(&mut self, decay_time: f32) {
+        self.filter_envelope.set_decay(decay_time);
+    }
+
+    /// Set the filter envelope sustain level
+    pub fn set_filter_sustain(&mut self, sustain_level: f32) {
+        self.filter_envelope.set_sustain(sustain_level);
+    }
+
+    /// Set the filter envelope release time
+    pub fn set_filter_release(&mut self, release_time: f32) {
+        self.filter_envelope.set_release(release_time);
+    }
+
+    /// Set the filter envelope amount (0.0 to 1.0)
+    pub fn set_filter_env_amount(&mut self, amount: f32) {
+        self.filter_env_amount = amount.clamp(0.0, 1.0);
+    }
+
+    /// Get the filter envelope amount
+    pub fn filter_env_amount(&self) -> f32 {
+        self.filter_env_amount
+    }
+
+    /// Set the base filter cutoff (also updates base_cutoff for envelope modulation)
+    pub fn set_filter_cutoff(&mut self, cutoff: Frequency) {
+        self.base_cutoff = cutoff;
+        self.filter_left.set_cutoff(cutoff);
+        self.filter_right.set_cutoff(cutoff);
+    }
+
+    /// Set the attack time
+    pub fn set_attack(&mut self, attack_time: f32) {
+        self.envelope.set_attack(attack_time);
+    }
+
+    /// Set the decay time
+    pub fn set_decay(&mut self, decay_time: f32) {
+        self.envelope.set_decay(decay_time);
+    }
+
+    /// Set the sustain level (0.0 to 1.0)
+    pub fn set_sustain(&mut self, sustain_level: f32) {
+        self.envelope.set_sustain(sustain_level);
+    }
+
+    /// Set the release time
+    pub fn set_release(&mut self, release_time: f32) {
+        self.envelope.set_release(release_time);
+    }
+
+    /// Set the filter resonance
+    pub fn set_filter_resonance(&mut self, resonance: f32) {
+        self.filter_left.set_resonance(resonance);
+        self.filter_right.set_resonance(resonance);
+    }
+}
+
+/// Oscillator bank state for VoiceManager
+#[derive(Clone)]
+pub struct OscBankState {
+    pub osc1_waveform: WaveformType,
+    pub osc1_level: f32,
+    pub osc1_phase: f32,
+    pub osc2_waveform: WaveformType,
+    pub osc2_level: f32,
+    pub osc2_semitones: i8,
+    pub osc2_cents: i8,
+    pub osc2_phase: f32,
+    pub osc3_waveform: WaveformType,
+    pub osc3_level: f32,
+    pub osc3_semitones: i8,
+    pub osc3_cents: i8,
+    pub osc3_phase: f32,
+}
+
+impl Default for OscBankState {
+    fn default() -> Self {
+        Self {
+            osc1_waveform: WaveformType::Saw,
+            osc1_level: 1.0,
+            osc1_phase: 0.0,
+            osc2_waveform: WaveformType::Saw,
+            osc2_level: 0.8,
+            osc2_semitones: 0,
+            osc2_cents: 7,  // Slight detune for fatness
+            osc2_phase: 0.0,
+            osc3_waveform: WaveformType::Square,
+            osc3_level: 0.5,
+            osc3_semitones: -12,  // Sub oscillator
+            osc3_cents: 0,
+            osc3_phase: 0.0,
+        }
+    }
+}
+
+/// Polyphony mode for the voice manager
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PolyphonyMode {
+    /// Single voice with key stacking (returns to previous note)
+    Mono,
+    /// Multiple independent voices for chords
+    Poly,
+}
+
+impl Default for PolyphonyMode {
+    fn default() -> Self {
+        PolyphonyMode::Mono
+    }
+}
+
+/// Manages multiple voices for polyphonic playback
+pub struct VoiceManager {
+    voices: Vec<Voice>,
+    max_voices: usize,
+    sample_rate: SampleRate,
+    master_volume: Amplitude,
+    cc_mapping: CCMapping,
+    // Polyphony mode
+    polyphony_mode: PolyphonyMode,
+    // Stereo panning (-1.0 = left, 0.0 = center, 1.0 = right)
+    osc1_pan: f32,
+    osc2_pan: f32,
+    osc3_pan: f32,
+    stereo_width: f32,  // 0.0 = mono, 1.0 = normal, 2.0 = extra wide
+    // Amplitude ADSR envelope state
+    attack_time: f32,
+    decay_time: f32,
+    sustain_level: f32,
+    release_time: f32,
+    // Filter envelope state
+    filter_attack_time: f32,
+    filter_decay_time: f32,
+    filter_sustain_level: f32,
+    filter_release_time: f32,
+    filter_env_amount: f32,
+    // Filter state
+    filter_cutoff: Frequency,
+    filter_resonance: f32,
+    // LFO state
+    lfo_rate: f32,
+    lfo_depth: f32,
+    lfo_waveform: LfoWaveform,
+    lfo_destination: LfoDestination,
+    osc_state: OscBankState,
+    // Portamento
+    portamento_time: f32,
+    // Key stack for monophonic note priority (newest on top)
+    key_stack: Vec<(MidiNote, Amplitude)>,
+}
+
+impl VoiceManager {
+    pub fn new(max_voices: usize, sample_rate: SampleRate) -> Self {
+        let osc_state = OscBankState::default();
+        let mut voices: Vec<Voice> = (0..max_voices)
+            .map(|_| Voice::new(sample_rate))
+            .collect();
+        
+        // Apply default oscillator bank state to all voices
+        for voice in &mut voices {
+            Self::apply_osc_state_to_voice(voice, &osc_state);
+        }
+
+        Self {
+            voices,
+            max_voices,
+            sample_rate,
+            master_volume: 0.5,
+            cc_mapping: CCMapping::default_mappings(),
+            polyphony_mode: PolyphonyMode::Mono,
+            // Stereo defaults (slight spread for fatness)
+            osc1_pan: 0.0,    // Center
+            osc2_pan: -0.3,   // Slightly left
+            osc3_pan: 0.3,    // Slightly right
+            stereo_width: 1.0,
+            // Amp envelope defaults
+            attack_time: 0.01,
+            decay_time: 0.1,
+            sustain_level: 0.7,
+            release_time: 0.2,
+            // Filter envelope defaults (quick pluck by default)
+            filter_attack_time: 0.01,
+            filter_decay_time: 0.3,
+            filter_sustain_level: 0.0,
+            filter_release_time: 0.3,
+            filter_env_amount: 0.0, // Off by default
+            // Filter state
+            filter_cutoff: 20000.0,
+            filter_resonance: 0.0,
+            // LFO defaults (off by default)
+            lfo_rate: 6.0,
+            lfo_depth: 0.0,
+            lfo_waveform: LfoWaveform::Sine,
+            lfo_destination: LfoDestination::Off,
+            osc_state,
+            // Portamento
+            portamento_time: 0.0,
+            // Key stack
+            key_stack: Vec::new(),
+        }
+    }
+
+    /// Apply oscillator state to a voice
+    fn apply_osc_state_to_voice(voice: &mut Voice, state: &OscBankState) {
+        let bank = voice.osc_bank_mut();
+        bank.set_waveform(1, state.osc1_waveform);
+        bank.set_level(1, state.osc1_level);
+        bank.set_phase(1, state.osc1_phase);
+        bank.set_waveform(2, state.osc2_waveform);
+        bank.set_level(2, state.osc2_level);
+        bank.set_detune(2, state.osc2_semitones, state.osc2_cents);
+        bank.set_phase(2, state.osc2_phase);
+        bank.set_waveform(3, state.osc3_waveform);
+        bank.set_level(3, state.osc3_level);
+        bank.set_detune(3, state.osc3_semitones, state.osc3_cents);
+        bank.set_phase(3, state.osc3_phase);
+    }
+
+    /// Create a monophonic voice manager (8 voices but mono mode)
+    pub fn monophonic(sample_rate: SampleRate) -> Self {
+        let mut vm = Self::new(8, sample_rate);
+        vm.polyphony_mode = PolyphonyMode::Mono;
+        vm
+    }
+    
+    /// Create a polyphonic voice manager (8 voices)
+    pub fn polyphonic(sample_rate: SampleRate) -> Self {
+        let mut vm = Self::new(8, sample_rate);
+        vm.polyphony_mode = PolyphonyMode::Poly;
+        vm
+    }
+
+    /// Reset all voices and key stack to initial state
+    pub fn reset(&mut self) {
+        for voice in &mut self.voices {
+            voice.reset();
+        }
+        self.key_stack.clear();
+    }
+    
+    /// Set polyphony mode
+    pub fn set_polyphony_mode(&mut self, mode: PolyphonyMode) {
+        self.polyphony_mode = mode;
+        // Clear key stack when switching modes
+        self.key_stack.clear();
+        // Release all voices when switching
+        for voice in &mut self.voices {
+            voice.note_off();
+        }
+    }
+    
+    /// Get current polyphony mode
+    pub fn polyphony_mode(&self) -> PolyphonyMode {
+        self.polyphony_mode
+    }
+    
+    /// Get number of active voices
+    pub fn active_voice_count(&self) -> usize {
+        self.voices.iter().filter(|v| v.is_active()).count()
+    }
+    
+    /// Get max voices
+    pub fn max_voices(&self) -> usize {
+        self.max_voices
+    }
+
+    /// Set the master volume (0.0 to 1.0)
+    pub fn set_master_volume(&mut self, volume: Amplitude) {
+        self.master_volume = volume.clamp(0.0, 1.0);
+    }
+
+    /// Set portamento time in seconds (0.0 = off)
+    pub fn set_portamento_time(&mut self, time: f32) {
+        self.portamento_time = time.max(0.0);
+        for voice in &mut self.voices {
+            voice.portamento_time = self.portamento_time;
+        }
+    }
+
+    /// Generate the next mixed sample from all active voices (mono, for backwards compat)
+    pub fn next_sample(&mut self) -> Sample {
+        let mut mixed_sample: Sample = 0.0;
+
+        for voice in &mut self.voices {
+            if voice.is_active() {
+                mixed_sample += voice.next_sample();
+            }
+        }
+
+        // Apply master volume and soft clipping
+        let output = mixed_sample * self.master_volume;
+        soft_clip(output)
+    }
+    
+    /// Generate the next stereo sample from all active voices
+    pub fn next_sample_stereo(&mut self) -> StereoSample {
+        let mut mixed = StereoSample::ZERO;
+        let pans = (self.osc1_pan, self.osc2_pan, self.osc3_pan);
+
+        for voice in &mut self.voices {
+            if voice.is_active() {
+                mixed += voice.next_sample_stereo(pans);
+            }
+        }
+
+        // Apply master volume, stereo width, and soft clipping
+        let output = mixed * self.master_volume;
+        let widened = output.with_width(self.stereo_width);
+        StereoSample::new(soft_clip(widened.left), soft_clip(widened.right))
+    }
+    
+    /// Set oscillator pan (-1.0 = left, 0.0 = center, 1.0 = right)
+    pub fn set_osc_pan(&mut self, osc_num: u8, pan: f32) {
+        let pan = pan.clamp(-1.0, 1.0);
+        match osc_num {
+            1 => self.osc1_pan = pan,
+            2 => self.osc2_pan = pan,
+            3 => self.osc3_pan = pan,
+            _ => {}
+        }
+    }
+    
+    /// Get oscillator pan
+    pub fn osc_pan(&self, osc_num: u8) -> f32 {
+        match osc_num {
+            1 => self.osc1_pan,
+            2 => self.osc2_pan,
+            3 => self.osc3_pan,
+            _ => 0.0,
+        }
+    }
+    
+    /// Set stereo width (0.0 = mono, 1.0 = normal, 2.0 = extra wide)
+    pub fn set_stereo_width(&mut self, width: f32) {
+        self.stereo_width = width.clamp(0.0, 2.0);
+    }
+    
+    /// Get stereo width
+    pub fn stereo_width(&self) -> f32 {
+        self.stereo_width
+    }
+
+    /// Find a free voice or steal the oldest releasing voice
+    fn allocate_voice_index(&self) -> Option<usize> {
+        // First, try to find an inactive voice
+        if let Some(idx) = self.voices.iter().position(|v| !v.is_active()) {
+            return Some(idx);
+        }
+
+        // Then, try to find a releasing voice
+        if let Some(idx) = self.voices.iter().position(|v| v.is_releasing()) {
+            return Some(idx);
+        }
+
+        // Finally, steal the first voice (simple voice stealing)
+        if !self.voices.is_empty() {
+            Some(0)
+        } else {
+            None
+        }
+    }
+
+    /// Find the voice playing a specific note
+    fn find_voice_with_note(&mut self, note: MidiNote) -> Option<&mut Voice> {
+        self.voices
+            .iter_mut()
+            .find(|v| v.current_note() == Some(note) && v.is_active())
+    }
+
+    /// Set the sample rate for all voices
+    pub fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        for voice in &mut self.voices {
+            voice.set_sample_rate(sample_rate);
+        }
+    }
+
+    /// Configure all voices with a specific oscillator type
+    pub fn configure_voices<F>(&mut self, mut voice_factory: F)
+    where
+        F: FnMut(SampleRate) -> Voice,
+    {
+        self.voices = (0..self.max_voices)
+            .map(|_| voice_factory(self.sample_rate))
+            .collect();
+        // Re-apply oscillator state to new voices
+        for voice in &mut self.voices {
+            Self::apply_osc_state_to_voice(voice, &self.osc_state);
+        }
+    }
+
+    /// Set attack time for all voices
+    pub fn set_attack(&mut self, attack_time: f32) {
+        self.attack_time = attack_time;
+        for voice in &mut self.voices {
+            voice.set_attack(attack_time);
+        }
+    }
+
+    /// Set decay time for all voices
+    pub fn set_decay(&mut self, decay_time: f32) {
+        self.decay_time = decay_time;
+        for voice in &mut self.voices {
+            voice.set_decay(decay_time);
+        }
+    }
+
+    /// Set sustain level for all voices (0.0 to 1.0)
+    pub fn set_sustain(&mut self, sustain_level: f32) {
+        self.sustain_level = sustain_level;
+        for voice in &mut self.voices {
+            voice.set_sustain(sustain_level);
+        }
+    }
+
+    /// Set release time for all voices
+    pub fn set_release(&mut self, release_time: f32) {
+        self.release_time = release_time;
+        for voice in &mut self.voices {
+            voice.set_release(release_time);
+        }
+    }
+
+    /// Get current attack time
+    pub fn attack(&self) -> f32 {
+        self.attack_time
+    }
+
+    /// Get current decay time
+    pub fn decay(&self) -> f32 {
+        self.decay_time
+    }
+
+    /// Get current sustain level
+    pub fn sustain(&self) -> f32 {
+        self.sustain_level
+    }
+
+    /// Get current release time
+    pub fn release_time(&self) -> f32 {
+        self.release_time
+    }
+
+    /// Set filter cutoff for all voices
+    pub fn set_filter_cutoff(&mut self, cutoff: Frequency) {
+        self.filter_cutoff = cutoff;
+        for voice in &mut self.voices {
+            voice.set_filter_cutoff(cutoff);
+        }
+    }
+
+    /// Set filter resonance for all voices
+    pub fn set_filter_resonance(&mut self, resonance: f32) {
+        self.filter_resonance = resonance;
+        for voice in &mut self.voices {
+            voice.set_filter_resonance(resonance);
+        }
+    }
+
+    /// Get current filter cutoff
+    pub fn filter_cutoff(&self) -> Frequency {
+        self.filter_cutoff
+    }
+
+    /// Get current filter resonance
+    pub fn filter_resonance(&self) -> f32 {
+        self.filter_resonance
+    }
+
+    /// Set filter envelope attack time for all voices
+    pub fn set_filter_attack(&mut self, attack_time: f32) {
+        self.filter_attack_time = attack_time;
+        for voice in &mut self.voices {
+            voice.set_filter_attack(attack_time);
+        }
+    }
+
+    /// Set filter envelope decay time for all voices
+    pub fn set_filter_decay(&mut self, decay_time: f32) {
+        self.filter_decay_time = decay_time;
+        for voice in &mut self.voices {
+            voice.set_filter_decay(decay_time);
+        }
+    }
+
+    /// Set filter envelope sustain level for all voices
+    pub fn set_filter_sustain(&mut self, sustain_level: f32) {
+        self.filter_sustain_level = sustain_level;
+        for voice in &mut self.voices {
+            voice.set_filter_sustain(sustain_level);
+        }
+    }
+
+    /// Set filter envelope release time for all voices
+    pub fn set_filter_release(&mut self, release_time: f32) {
+        self.filter_release_time = release_time;
+        for voice in &mut self.voices {
+            voice.set_filter_release(release_time);
+        }
+    }
+
+    /// Set filter envelope amount for all voices (0.0 to 1.0)
+    pub fn set_filter_env_amount(&mut self, amount: f32) {
+        self.filter_env_amount = amount.clamp(0.0, 1.0);
+        for voice in &mut self.voices {
+            voice.set_filter_env_amount(self.filter_env_amount);
+        }
+    }
+
+    /// Get current filter envelope attack time
+    pub fn filter_attack(&self) -> f32 {
+        self.filter_attack_time
+    }
+
+    /// Get current filter envelope decay time
+    pub fn filter_decay(&self) -> f32 {
+        self.filter_decay_time
+    }
+
+    /// Get current filter envelope sustain level
+    pub fn filter_sustain(&self) -> f32 {
+        self.filter_sustain_level
+    }
+
+    /// Get current filter envelope release time
+    pub fn filter_release_time(&self) -> f32 {
+        self.filter_release_time
+    }
+
+    /// Get current filter envelope amount
+    pub fn filter_env_amount(&self) -> f32 {
+        self.filter_env_amount
+    }
+
+    /// Set LFO rate for all voices (0.1 to 20 Hz)
+    pub fn set_lfo_rate(&mut self, rate: f32) {
+        self.lfo_rate = rate.clamp(0.1, 20.0);
+        for voice in &mut self.voices {
+            voice.set_lfo_rate(self.lfo_rate);
+        }
+    }
+
+    /// Set LFO depth for all voices (0.0 to 1.0)
+    pub fn set_lfo_depth(&mut self, depth: f32) {
+        self.lfo_depth = depth.clamp(0.0, 1.0);
+        for voice in &mut self.voices {
+            voice.set_lfo_depth(self.lfo_depth);
+        }
+    }
+
+    /// Set LFO waveform for all voices
+    pub fn set_lfo_waveform(&mut self, waveform: LfoWaveform) {
+        self.lfo_waveform = waveform;
+        for voice in &mut self.voices {
+            voice.set_lfo_waveform(waveform);
+        }
+    }
+
+    /// Set LFO destination for all voices
+    pub fn set_lfo_destination(&mut self, destination: LfoDestination) {
+        self.lfo_destination = destination;
+        for voice in &mut self.voices {
+            voice.set_lfo_destination(destination);
+        }
+    }
+
+    /// Get current LFO rate
+    pub fn lfo_rate(&self) -> f32 {
+        self.lfo_rate
+    }
+
+    /// Get current LFO depth
+    pub fn lfo_depth(&self) -> f32 {
+        self.lfo_depth
+    }
+
+    /// Get current LFO waveform
+    pub fn lfo_waveform(&self) -> LfoWaveform {
+        self.lfo_waveform
+    }
+
+    /// Get current LFO destination
+    pub fn lfo_destination(&self) -> LfoDestination {
+        self.lfo_destination
+    }
+
+    /// Get current oscillator bank state
+    pub fn osc_state(&self) -> &OscBankState {
+        &self.osc_state
+    }
+
+    /// Get a reference to the CC mapping
+    pub fn cc_mapping(&self) -> &CCMapping {
+        &self.cc_mapping
+    }
+
+    /// Get a mutable reference to the CC mapping
+    pub fn cc_mapping_mut(&mut self) -> &mut CCMapping {
+        &mut self.cc_mapping
+    }
+
+    /// Set oscillator waveform
+    pub fn set_osc_waveform(&mut self, osc_num: u8, waveform: WaveformType) {
+        match osc_num {
+            1 => self.osc_state.osc1_waveform = waveform,
+            2 => self.osc_state.osc2_waveform = waveform,
+            3 => self.osc_state.osc3_waveform = waveform,
+            _ => return,
+        }
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_waveform(osc_num, waveform);
+        }
+    }
+
+    /// Set oscillator level
+    pub fn set_osc_level(&mut self, osc_num: u8, level: f32) {
+        match osc_num {
+            1 => self.osc_state.osc1_level = level,
+            2 => self.osc_state.osc2_level = level,
+            3 => self.osc_state.osc3_level = level,
+            _ => return,
+        }
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_level(osc_num, level);
+        }
+    }
+
+    /// Set oscillator detune (semitones and cents)
+    pub fn set_osc_detune(&mut self, osc_num: u8, semitones: i8, cents: i8) {
+        match osc_num {
+            2 => {
+                self.osc_state.osc2_semitones = semitones;
+                self.osc_state.osc2_cents = cents;
+            }
+            3 => {
+                self.osc_state.osc3_semitones = semitones;
+                self.osc_state.osc3_cents = cents;
+            }
+            _ => return,
+        }
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_detune(osc_num, semitones, cents);
+        }
+    }
+
+    /// Set oscillator semitones only
+    pub fn set_osc_semitones(&mut self, osc_num: u8, semitones: i8) {
+        let cents = match osc_num {
+            2 => self.osc_state.osc2_cents,
+            3 => self.osc_state.osc3_cents,
+            _ => return,
+        };
+        self.set_osc_detune(osc_num, semitones, cents);
+    }
+
+    /// Set oscillator cents only
+    pub fn set_osc_cents(&mut self, osc_num: u8, cents: i8) {
+        let semitones = match osc_num {
+            2 => self.osc_state.osc2_semitones,
+            3 => self.osc_state.osc3_semitones,
+            _ => return,
+        };
+        self.set_osc_detune(osc_num, semitones, cents);
+    }
+
+    /// Set oscillator phase offset (0.0 to 1.0)
+    pub fn set_osc_phase(&mut self, osc_num: u8, phase: f32) {
+        match osc_num {
+            1 => self.osc_state.osc1_phase = phase,
+            2 => self.osc_state.osc2_phase = phase,
+            3 => self.osc_state.osc3_phase = phase,
+            _ => return,
+        }
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_phase(osc_num, phase);
+        }
+    }
+
+    /// Set pitch bend for all voices (-1.0 to +1.0)
+    pub fn set_pitch_bend(&mut self, bend: f32) {
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_pitch_bend(bend);
+        }
+    }
+
+    /// Set pitch bend range in semitones (1-24)
+    pub fn set_pitch_bend_range(&mut self, semitones: u8) {
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_pitch_bend_range(semitones);
+        }
+    }
+
+    /// Handle a parameter change from CC
+    fn handle_param_change(&mut self, param: SynthParam, value: u8) {
+        match param {
+            // ADSR Envelope
+            SynthParam::Attack => {
+                let time = cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME);
+                self.set_attack(time);
+            }
+            SynthParam::Decay => {
+                let time = cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME);
+                self.set_decay(time);
+            }
+            SynthParam::Sustain => {
+                self.set_sustain(cc_to_sustain(value));
+            }
+            SynthParam::Release => {
+                let time = cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME);
+                self.set_release(time);
+            }
+            
+            // Filter
+            SynthParam::FilterCutoff => {
+                let cutoff = cc_to_cutoff(value);
+                self.set_filter_cutoff(cutoff);
+            }
+            SynthParam::FilterResonance => {
+                let resonance = cc_to_resonance(value);
+                self.set_filter_resonance(resonance);
+            }
+            // Filter Envelope
+            SynthParam::FilterAttack => {
+                let time = cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME);
+                self.set_filter_attack(time);
+            }
+            SynthParam::FilterDecay => {
+                let time = cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME);
+                self.set_filter_decay(time);
+            }
+            SynthParam::FilterSustain => {
+                self.set_filter_sustain(cc_to_sustain(value));
+            }
+            SynthParam::FilterRelease => {
+                let time = cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME);
+                self.set_filter_release(time);
+            }
+            SynthParam::FilterEnvAmount => {
+                self.set_filter_env_amount(cc_to_filter_env_amount(value));
+            }
+
+            // LFO
+            SynthParam::LfoRate => {
+                self.set_lfo_rate(cc_to_lfo_rate(value));
+            }
+            SynthParam::LfoDepth => {
+                self.set_lfo_depth(cc_to_lfo_depth(value));
+            }
+            SynthParam::LfoWaveform => {
+                let waveform_idx = cc_to_lfo_waveform(value);
+                let waveform = match waveform_idx {
+                    0 => LfoWaveform::Sine,
+                    1 => LfoWaveform::Triangle,
+                    2 => LfoWaveform::Square,
+                    3 => LfoWaveform::Saw,
+                    _ => LfoWaveform::Random,
+                };
+                self.set_lfo_waveform(waveform);
+            }
+            SynthParam::LfoDestination => {
+                let dest_idx = cc_to_lfo_destination(value);
+                let destination = match dest_idx {
+                    0 => LfoDestination::Off,
+                    1 => LfoDestination::Pitch,
+                    2 => LfoDestination::FilterCutoff,
+                    _ => LfoDestination::Amplitude,
+                };
+                self.set_lfo_destination(destination);
+            }
+
+            // Pitch
+            SynthParam::PitchBendRange => {
+                self.set_pitch_bend_range(cc_to_pitch_bend_range(value));
+            }
+            SynthParam::PortamentoTime => {
+                self.set_portamento_time(cc_to_portamento_time(value));
+            }
+
+            // Oscillator 1
+            SynthParam::Osc1Waveform => {
+                let waveform = WaveformType::from_index(cc_to_waveform(value));
+                self.set_osc_waveform(1, waveform);
+            }
+            SynthParam::Osc1Level => {
+                self.set_osc_level(1, cc_to_level(value));
+            }
+            SynthParam::Osc1Phase => {
+                self.set_osc_phase(1, cc_to_phase(value));
+            }
+            
+            // Oscillator 2
+            SynthParam::Osc2Waveform => {
+                let waveform = WaveformType::from_index(cc_to_waveform(value));
+                self.set_osc_waveform(2, waveform);
+            }
+            SynthParam::Osc2Level => {
+                self.set_osc_level(2, cc_to_level(value));
+            }
+            SynthParam::Osc2Semitones => {
+                self.set_osc_semitones(2, cc_to_semitones(value));
+            }
+            SynthParam::Osc2Cents => {
+                self.set_osc_cents(2, cc_to_cents(value));
+            }
+            SynthParam::Osc2Phase => {
+                self.set_osc_phase(2, cc_to_phase(value));
+            }
+            
+            // Oscillator 3
+            SynthParam::Osc3Waveform => {
+                let waveform = WaveformType::from_index(cc_to_waveform(value));
+                self.set_osc_waveform(3, waveform);
+            }
+            SynthParam::Osc3Level => {
+                self.set_osc_level(3, cc_to_level(value));
+            }
+            SynthParam::Osc3Semitones => {
+                self.set_osc_semitones(3, cc_to_semitones(value));
+            }
+            SynthParam::Osc3Cents => {
+                self.set_osc_cents(3, cc_to_cents(value));
+            }
+            SynthParam::Osc3Phase => {
+                self.set_osc_phase(3, cc_to_phase(value));
+            }
+            SynthParam::Osc1Pan => {
+                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
+                self.set_osc_pan(1, pan);
+            }
+            SynthParam::Osc2Pan => {
+                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
+                self.set_osc_pan(2, pan);
+            }
+            SynthParam::Osc3Pan => {
+                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
+                self.set_osc_pan(3, pan);
+            }
+            SynthParam::StereoWidth => {
+                let width = (value as f32 / 127.0) * 2.0;
+                self.set_stereo_width(width);
+            }
+            SynthParam::MasterVolume => {
+                self.set_master_volume(cc_to_level(value));
+            }
+        }
+    }
+}
+
+impl SynthEventReceiver for VoiceManager {
+    fn receive_event(&mut self, event: NoteEvent) {
+        match event.kind {
+            SynthEventKind::NoteOn => {
+                self.handle_note_on(event.note, event.velocity);
+            }
+            SynthEventKind::NoteOff => {
+                self.handle_note_off(event.note);
+            }
+            SynthEventKind::WaveformChange(waveform) => {
+                // Legacy: set all oscillators to the same waveform
+                self.set_osc_waveform(1, waveform);
+                self.set_osc_waveform(2, waveform);
+                self.set_osc_waveform(3, waveform);
+            }
+            SynthEventKind::ControlChange { cc, value } => {
+                if let Some(param) = self.cc_mapping.get_param(cc) {
+                    self.handle_param_change(param, value);
+                }
+            }
+            SynthEventKind::PitchBend(bend) => {
+                self.set_pitch_bend(bend);
+            }
+        }
+    }
+}
+
+impl VoiceManager {
+    /// Handle note on - dispatches to mono or poly handler
+    fn handle_note_on(&mut self, note: MidiNote, velocity: Amplitude) {
+        match self.polyphony_mode {
+            PolyphonyMode::Mono => self.handle_note_on_mono(note, velocity),
+            PolyphonyMode::Poly => self.handle_note_on_poly(note, velocity),
+        }
+    }
+    
+    /// Handle note off - dispatches to mono or poly handler
+    fn handle_note_off(&mut self, note: MidiNote) {
+        match self.polyphony_mode {
+            PolyphonyMode::Mono => self.handle_note_off_mono(note),
+            PolyphonyMode::Poly => self.handle_note_off_poly(note),
+        }
+    }
+    
+    /// Monophonic note on with key stacking
+    fn handle_note_on_mono(&mut self, note: MidiNote, velocity: Amplitude) {
+        // Remove note if already pressed (avoid duplicates)
+        self.key_stack.retain(|&(n, _)| n != note);
+        // Push to top of stack (newest priority)
+        self.key_stack.push((note, velocity));
+        
+        // Trigger the note on the first voice
+        if let Some(voice) = self.voices.first_mut() {
+            voice.note_on(note, velocity);
+        }
+    }
+    
+    /// Monophonic note off with key stacking - return to previous note if any
+    fn handle_note_off_mono(&mut self, note: MidiNote) {
+        // Remove the note from stack
+        self.key_stack.retain(|&(n, _)| n != note);
+        
+        if let Some(voice) = self.voices.first_mut() {
+            // If this was the current note, switch to previous if available
+            if voice.current_note() == Some(note) {
+                if let Some(&(prev_note, prev_velocity)) = self.key_stack.last() {
+                    // Switch to previous note with its original velocity
+                    voice.note_on(prev_note, prev_velocity);
+                } else {
+                    // No more notes in stack, release the voice
+                    voice.note_off();
+                }
+            }
+        }
+    }
+    
+    /// Polyphonic note on - allocate a voice for the note
+    fn handle_note_on_poly(&mut self, note: MidiNote, velocity: Amplitude) {
+        // First check if this note is already playing - retrigger it
+        if let Some(voice) = self.find_voice_with_note(note) {
+            voice.note_on(note, velocity);
+            return;
+        }
+        
+        // Allocate a new voice
+        if let Some(idx) = self.allocate_voice_index() {
+            // Apply current envelope/filter/lfo settings to the voice
+            let voice = &mut self.voices[idx];
+            voice.set_attack(self.attack_time);
+            voice.set_decay(self.decay_time);
+            voice.set_sustain(self.sustain_level);
+            voice.set_release(self.release_time);
+            voice.set_filter_cutoff(self.filter_cutoff);
+            voice.set_filter_resonance(self.filter_resonance);
+            voice.set_filter_attack(self.filter_attack_time);
+            voice.set_filter_decay(self.filter_decay_time);
+            voice.set_filter_sustain(self.filter_sustain_level);
+            voice.set_filter_release(self.filter_release_time);
+            voice.set_filter_env_amount(self.filter_env_amount);
+            voice.set_lfo_rate(self.lfo_rate);
+            voice.set_lfo_depth(self.lfo_depth);
+            voice.set_lfo_waveform(self.lfo_waveform);
+            voice.set_lfo_destination(self.lfo_destination);
+            // Portamento doesn't make as much sense in poly, but keep it
+            voice.portamento_time = self.portamento_time;
+            
+            voice.note_on(note, velocity);
+        }
+    }
+    
+    /// Polyphonic note off - release the voice playing this note
+    fn handle_note_off_poly(&mut self, note: MidiNote) {
+        if let Some(voice) = self.find_voice_with_note(note) {
+            voice.note_off();
+        }
+    }
+}
+
+/// Soft clipping function to prevent harsh digital distortion
+fn soft_clip(sample: Sample) -> Sample {
+    if sample > 1.0 {
+        1.0 - (-sample + 1.0).exp() * 0.5
+    } else if sample < -1.0 {
+        -1.0 + (sample + 1.0).exp() * 0.5
+    } else {
+        sample
+    }
+}
+
+impl VoiceManager {
+    /// Apply a preset to all voices
+    pub fn apply_preset(&mut self, preset: &Preset) {
+        // Oscillator settings
+        self.set_osc_waveform(1, preset.osc1_waveform);
+        self.set_osc_level(1, preset.osc1_level);
+        self.set_osc_phase(1, preset.osc1_phase);
+
+        self.set_osc_waveform(2, preset.osc2_waveform);
+        self.set_osc_level(2, preset.osc2_level);
+        self.set_osc_detune(2, preset.osc2_semitones, preset.osc2_cents);
+        self.set_osc_phase(2, preset.osc2_phase);
+
+        self.set_osc_waveform(3, preset.osc3_waveform);
+        self.set_osc_level(3, preset.osc3_level);
+        self.set_osc_detune(3, preset.osc3_semitones, preset.osc3_cents);
+        self.set_osc_phase(3, preset.osc3_phase);
+
+        // Filter settings
+        self.set_filter_cutoff(preset.filter_cutoff);
+        self.set_filter_resonance(preset.filter_resonance);
+
+        // Amplitude envelope
+        self.set_attack(preset.amp_attack);
+        self.set_decay(preset.amp_decay);
+        self.set_sustain(preset.amp_sustain);
+        self.set_release(preset.amp_release);
+
+        // Filter envelope
+        self.set_filter_attack(preset.filter_attack);
+        self.set_filter_decay(preset.filter_decay);
+        self.set_filter_sustain(preset.filter_sustain);
+        self.set_filter_release(preset.filter_release);
+        self.set_filter_env_amount(preset.filter_env_amount);
+
+        // LFO settings
+        self.set_lfo_rate(preset.lfo_rate);
+        self.set_lfo_depth(preset.lfo_depth);
+        self.set_lfo_waveform(preset.lfo_waveform);
+        self.set_lfo_destination(preset.lfo_destination);
+
+        // Pitch bend
+        for voice in &mut self.voices {
+            voice.osc_bank_mut().set_pitch_bend_range(preset.pitch_bend_range);
+        }
+
+        // Portamento
+        self.set_portamento_time(preset.portamento_time);
+
+        // Master volume
+        self.master_volume = preset.master_volume.clamp(0.0, 1.0);
+
+        // Stereo / Pan
+        self.set_osc_pan(1, preset.osc1_pan);
+        self.set_osc_pan(2, preset.osc2_pan);
+        self.set_osc_pan(3, preset.osc3_pan);
+        self.set_stereo_width(preset.stereo_width);
+
+        // Polyphony mode
+        self.set_polyphony_mode(preset.polyphony_mode);
+
+        // Note: Effects are handled by the AudioEngine, not VoiceManager
+    }
+
+    /// Create a preset from current settings
+    pub fn create_preset(&self, name: &str) -> Preset {
+        Preset {
+            name: name.to_string(),
+            version: "1.0".to_string(),
+
+            osc1_waveform: self.osc_state.osc1_waveform,
+            osc1_level: self.osc_state.osc1_level,
+            osc1_phase: self.osc_state.osc1_phase,
+
+            osc2_waveform: self.osc_state.osc2_waveform,
+            osc2_level: self.osc_state.osc2_level,
+            osc2_semitones: self.osc_state.osc2_semitones,
+            osc2_cents: self.osc_state.osc2_cents,
+            osc2_phase: self.osc_state.osc2_phase,
+
+            osc3_waveform: self.osc_state.osc3_waveform,
+            osc3_level: self.osc_state.osc3_level,
+            osc3_semitones: self.osc_state.osc3_semitones,
+            osc3_cents: self.osc_state.osc3_cents,
+            osc3_phase: self.osc_state.osc3_phase,
+
+            filter_cutoff: self.filter_cutoff,
+            filter_resonance: self.filter_resonance,
+
+            amp_attack: self.attack_time,
+            amp_decay: self.decay_time,
+            amp_sustain: self.sustain_level,
+            amp_release: self.release_time,
+
+            filter_attack: self.filter_attack_time,
+            filter_decay: self.filter_decay_time,
+            filter_sustain: self.filter_sustain_level,
+            filter_release: self.filter_release_time,
+            filter_env_amount: self.filter_env_amount,
+
+            lfo_rate: self.lfo_rate,
+            lfo_depth: self.lfo_depth,
+            lfo_waveform: self.lfo_waveform,
+            lfo_destination: self.lfo_destination,
+
+            pitch_bend_range: if let Some(voice) = self.voices.first() {
+                voice.osc_bank().pitch_bend_range()
+            } else {
+                12
+            },
+
+            portamento_time: self.portamento_time,
+
+            master_volume: self.master_volume,
+
+            // Stereo / Pan
+            osc1_pan: self.osc1_pan,
+            osc2_pan: self.osc2_pan,
+            osc3_pan: self.osc3_pan,
+            stereo_width: self.stereo_width,
+
+            // Polyphony mode
+            polyphony_mode: self.polyphony_mode,
+
+            // Effects are not stored in VoiceManager, use defaults
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that sustain level is correctly applied to voices
+    #[test]
+    fn test_voice_manager_sustain_behavior() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Set sustain to 50%
+        vm.set_sustain(0.5);
+
+        // Trigger note
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Run through attack (0.01s = 441 samples at 44.1kHz)
+        for _ in 0..500 {
+            let _ = vm.next_sample_stereo();
+        }
+
+        // Run through decay (0.1s = 4410 samples)
+        for _ in 0..5000 {
+            let _ = vm.next_sample_stereo();
+        }
+
+        // Now should be in sustain phase - get samples
+        let mut samples_at_sustain = Vec::new();
+        for _ in 0..1000 {
+            samples_at_sustain.push(vm.next_sample_stereo());
+        }
+
+        // All samples should have similar amplitude (sustaining)
+        // With sustain at 0.5 and velocity 1.0, we should see significant amplitude
+        let avg_left: f32 = samples_at_sustain.iter().map(|s| s.left.abs()).sum::<f32>() / samples_at_sustain.len() as f32;
+        let avg_right: f32 = samples_at_sustain.iter().map(|s| s.right.abs()).sum::<f32>() / samples_at_sustain.len() as f32;
+
+        // Should have significant output (not near zero)
+        assert!(avg_left > 0.01 || avg_right > 0.01,
+            "Sustain should produce audible output, got avg_left={}, avg_right={}", avg_left, avg_right);
+    }
+
+    /// Test that oscillator panning creates stereo separation
+    #[test]
+    fn test_oscillator_panning_stereo_separation() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Set up: osc1 hard left, osc2 hard right, osc3 center
+        // Only enable osc1 and osc2 for clearer test
+        vm.set_osc_level(1, 1.0);
+        vm.set_osc_level(2, 1.0);
+        vm.set_osc_level(3, 0.0);  // Disable osc3
+
+        vm.set_osc_pan(1, -1.0);  // Hard left
+        vm.set_osc_pan(2, 1.0);   // Hard right
+        vm.set_osc_pan(3, 0.0);   // Center (but disabled)
+
+        // Trigger note
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Collect stereo samples
+        let mut left_channel_sum = 0.0f32;
+        let mut right_channel_sum = 0.0f32;
+        let sample_count = 1000;
+
+        for _ in 0..sample_count {
+            let sample = vm.next_sample_stereo();
+            left_channel_sum += sample.left.abs();
+            right_channel_sum += sample.right.abs();
+        }
+
+        let left_avg = left_channel_sum / sample_count as f32;
+        let right_avg = right_channel_sum / sample_count as f32;
+
+        // With osc1 panned left and osc2 panned right, we should have
+        // significant energy in both channels
+        assert!(left_avg > 0.001, "Left channel should have energy with osc1 panned left, got {}", left_avg);
+        assert!(right_avg > 0.001, "Right channel should have energy with osc2 panned right, got {}", right_avg);
+
+        // The channels should be somewhat balanced since we have one osc on each side
+        let ratio = if left_avg > right_avg { left_avg / right_avg } else { right_avg / left_avg };
+        assert!(ratio < 10.0, "Left and right should be relatively balanced (ratio < 10), got ratio={}", ratio);
+    }
+
+    /// Test that extreme panning works correctly
+    #[test]
+    fn test_extreme_panning() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Only osc1 enabled, panned hard left
+        vm.set_osc_level(1, 1.0);
+        vm.set_osc_level(2, 0.0);
+        vm.set_osc_level(3, 0.0);
+        vm.set_osc_pan(1, -1.0);
+
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        let mut left_sum = 0.0f32;
+        let mut right_sum = 0.0f32;
+
+        for _ in 0..1000 {
+            let sample = vm.next_sample_stereo();
+            left_sum += sample.left.abs();
+            right_sum += sample.right.abs();
+        }
+
+        // With osc1 hard panned left, left should be significantly louder than right
+        assert!(left_sum > right_sum * 2.0,
+            "Hard left pan should have left > 2x right, got left={}, right={}", left_sum, right_sum);
+    }
+
+    /// Test that sustain can be changed dynamically during a playing note (like in a DAW)
+    #[test]
+    fn test_sustain_dynamic_change() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        // Set initial sustain to 0.0
+        vm.set_sustain(0.0);
+
+        // Trigger note
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Run through attack + decay to get to sustain phase
+        for _ in 0..6000 {
+            let _ = vm.next_sample_stereo();
+        }
+
+        // Now change sustain to 0.8 (like user moving the knob in DAW)
+        vm.set_sustain(0.8);
+
+        // Collect samples after sustain change
+        let mut samples_after_change = Vec::new();
+        for _ in 0..1000 {
+            samples_after_change.push(vm.next_sample_stereo());
+        }
+
+        // Calculate average amplitude after sustain change
+        let avg_amp: f32 = samples_after_change.iter()
+            .map(|s| (s.left.abs() + s.right.abs()) / 2.0)
+            .sum::<f32>() / samples_after_change.len() as f32;
+
+        // With sustain at 0.8, we should have significant output
+        assert!(avg_amp > 0.05,
+            "After changing sustain to 0.8, output should be audible, got avg_amp={}", avg_amp);
+
+        // Now test starting with high sustain, then lowering it
+        let mut vm2 = VoiceManager::monophonic(44100);
+        vm2.set_sustain(0.9);
+        vm2.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Run to sustain phase
+        for _ in 0..6000 {
+            let _ = vm2.next_sample_stereo();
+        }
+
+        // Lower sustain to 0.1
+        vm2.set_sustain(0.1);
+
+        let mut samples_after_lower = Vec::new();
+        for _ in 0..1000 {
+            samples_after_lower.push(vm2.next_sample_stereo());
+        }
+
+        let avg_amp_lower: f32 = samples_after_lower.iter()
+            .map(|s| (s.left.abs() + s.right.abs()) / 2.0)
+            .sum::<f32>() / samples_after_lower.len() as f32;
+
+        // With sustain lowered to 0.1, output should be much lower
+        assert!(avg_amp_lower < avg_amp * 0.5,
+            "Lowering sustain should reduce output, got avg_amp_lower={} vs previous {}"
+            , avg_amp_lower, avg_amp);
+    }
+
+    #[test]
+    fn test_voice_lifecycle() {
+        let mut voice = Voice::new(44100);
+
+        assert!(!voice.is_active());
+
+        voice.note_on(69, 1.0); // A4
+        assert!(voice.is_active());
+
+        // Generate some samples
+        for _ in 0..100 {
+            let _ = voice.next_sample();
+        }
+
+        voice.note_off();
+        assert!(voice.is_releasing());
+    }
+
+    #[test]
+    fn test_voice_manager_monophonic() {
+        let mut vm = VoiceManager::monophonic(44100);
+
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Generate several samples to get past initial attack
+        let mut has_nonzero = false;
+        for _ in 0..100 {
+            let sample = vm.next_sample();
+            if sample != 0.0 {
+                has_nonzero = true;
+                break;
+            }
+        }
+        assert!(has_nonzero, "Voice manager should produce non-zero samples");
+    }
+}

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/RustInSynth.iml" filepath="$PROJECT_DIR$/.idea/RustInSynth.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/RustStuff.iml" filepath="$PROJECT_DIR$/.idea/RustStuff.iml" />
     </modules>
   </component>
 </project>
