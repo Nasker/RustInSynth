@@ -22,10 +22,11 @@ pub use backend_standalone::StandaloneBackend;
 #[cfg(not(feature = "plugin"))]
 pub use app::run_gui;
 
+use crate::core::param_spec::{self, PARAM_SPECS};
 use crate::core::params::SynthParam;
 
 /// Number of parameters in the synth
-pub const NUM_PARAMS: usize = 35;
+pub const NUM_PARAMS: usize = PARAM_SPECS.len();
 
 /// Lock-free parameter bank for audio thread communication
 /// Each parameter is stored as an atomic u32 (f32 bits) for lock-free reads/writes
@@ -34,49 +35,18 @@ pub struct ParamBank {
 }
 
 impl ParamBank {
-    /// Create a new parameter bank with default values
+    /// Create a new parameter bank with the default values from
+    /// `core::param_spec::PARAM_SPECS` (the single source of truth shared
+    /// with the plugin parameter definitions).
     pub fn new() -> Self {
-        // Initialize with defaults matching the synth's init patch
-        let defaults: [f32; NUM_PARAMS] = [
-            0.01_f32,  // Attack
-            0.1_f32,   // Decay
-            0.7_f32,   // Sustain
-            0.2_f32,   // Release
-            20000.0_f32, // FilterCutoff
-            0.0_f32,   // FilterResonance
-            0.01_f32,  // FilterAttack
-            0.3_f32,   // FilterDecay
-            0.0_f32,   // FilterSustain
-            0.3_f32,   // FilterRelease
-            0.0_f32,   // FilterEnvAmount
-            6.0_f32,   // LfoRate
-            0.0_f32,   // LfoDepth
-            0.0_f32,   // LfoWaveform (Sine)
-            0.0_f32,   // LfoDestination (Off)
-            12.0_f32,  // PitchBendRange
-            2.0_f32,   // Osc1Waveform (Saw)
-            1.0_f32,   // Osc1Level
-            0.0_f32,   // Osc1Phase
-            2.0_f32,   // Osc2Waveform (Saw)
-            0.8_f32,   // Osc2Level
-            0.0_f32,   // Osc2Semitones
-            7.0_f32,   // Osc2Cents
-            0.0_f32,   // Osc2Phase
-            1.0_f32,   // Osc3Waveform (Square)
-            0.5_f32,   // Osc3Level
-            -12.0_f32, // Osc3Semitones
-            0.0_f32,   // Osc3Cents
-            0.0_f32,   // Osc3Phase
-            0.0_f32,   // Osc1Pan (Center)
-            -0.3_f32,  // Osc2Pan (Slightly left)
-            0.3_f32,   // Osc3Pan (Slightly right)
-            1.0_f32,   // StereoWidth (Normal)
-            0.5_f32,   // MasterVolume
-            0.0_f32,   // PortamentoTime
-        ];
-        
         Self {
-            values: std::array::from_fn(|i| AtomicU32::new(defaults[i].to_bits())),
+            values: std::array::from_fn(|i| {
+                let default = param_spec::param_at_index(i)
+                    .map(param_spec::spec)
+                    .map(|s| s.default)
+                    .unwrap_or(0.0);
+                AtomicU32::new(default.to_bits())
+            }),
         }
     }
 
@@ -113,85 +83,12 @@ impl Default for ParamBank {
 
 /// Convert SynthParam to array index
 fn param_index(param: SynthParam) -> usize {
-    match param {
-        SynthParam::Attack => 0,
-        SynthParam::Decay => 1,
-        SynthParam::Sustain => 2,
-        SynthParam::Release => 3,
-        SynthParam::FilterCutoff => 4,
-        SynthParam::FilterResonance => 5,
-        SynthParam::FilterAttack => 6,
-        SynthParam::FilterDecay => 7,
-        SynthParam::FilterSustain => 8,
-        SynthParam::FilterRelease => 9,
-        SynthParam::FilterEnvAmount => 10,
-        SynthParam::LfoRate => 11,
-        SynthParam::LfoDepth => 12,
-        SynthParam::LfoWaveform => 13,
-        SynthParam::LfoDestination => 14,
-        SynthParam::PitchBendRange => 15,
-        SynthParam::Osc1Waveform => 16,
-        SynthParam::Osc1Level => 17,
-        SynthParam::Osc1Phase => 18,
-        SynthParam::Osc2Waveform => 19,
-        SynthParam::Osc2Level => 20,
-        SynthParam::Osc2Semitones => 21,
-        SynthParam::Osc2Cents => 22,
-        SynthParam::Osc2Phase => 23,
-        SynthParam::Osc3Waveform => 24,
-        SynthParam::Osc3Level => 25,
-        SynthParam::Osc3Semitones => 26,
-        SynthParam::Osc3Cents => 27,
-        SynthParam::Osc3Phase => 28,
-        SynthParam::Osc1Pan => 29,
-        SynthParam::Osc2Pan => 30,
-        SynthParam::Osc3Pan => 31,
-        SynthParam::StereoWidth => 32,
-        SynthParam::MasterVolume => 33,
-        SynthParam::PortamentoTime => 34,
-    }
+    param_spec::index(param)
 }
 
 /// Convert index back to SynthParam (for MIDI feedback display)
 pub fn index_to_param(index: usize) -> Option<SynthParam> {
-    match index {
-        0 => Some(SynthParam::Attack),
-        1 => Some(SynthParam::Decay),
-        2 => Some(SynthParam::Sustain),
-        3 => Some(SynthParam::Release),
-        4 => Some(SynthParam::FilterCutoff),
-        5 => Some(SynthParam::FilterResonance),
-        6 => Some(SynthParam::FilterAttack),
-        7 => Some(SynthParam::FilterDecay),
-        8 => Some(SynthParam::FilterSustain),
-        9 => Some(SynthParam::FilterRelease),
-        10 => Some(SynthParam::FilterEnvAmount),
-        11 => Some(SynthParam::LfoRate),
-        12 => Some(SynthParam::LfoDepth),
-        13 => Some(SynthParam::LfoWaveform),
-        14 => Some(SynthParam::LfoDestination),
-        15 => Some(SynthParam::PitchBendRange),
-        16 => Some(SynthParam::Osc1Waveform),
-        17 => Some(SynthParam::Osc1Level),
-        18 => Some(SynthParam::Osc1Phase),
-        19 => Some(SynthParam::Osc2Waveform),
-        20 => Some(SynthParam::Osc2Level),
-        21 => Some(SynthParam::Osc2Semitones),
-        22 => Some(SynthParam::Osc2Cents),
-        23 => Some(SynthParam::Osc2Phase),
-        24 => Some(SynthParam::Osc3Waveform),
-        25 => Some(SynthParam::Osc3Level),
-        26 => Some(SynthParam::Osc3Semitones),
-        27 => Some(SynthParam::Osc3Cents),
-        28 => Some(SynthParam::Osc3Phase),
-        29 => Some(SynthParam::Osc1Pan),
-        30 => Some(SynthParam::Osc2Pan),
-        31 => Some(SynthParam::Osc3Pan),
-        32 => Some(SynthParam::StereoWidth),
-        33 => Some(SynthParam::MasterVolume),
-        34 => Some(SynthParam::PortamentoTime),
-        _ => None,
-    }
+    param_spec::param_at_index(index)
 }
 
 /// Shared state between GUI and audio threads

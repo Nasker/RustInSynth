@@ -32,6 +32,12 @@ pub trait SynthBackend {
     fn get_param(&self, param: SynthParam) -> f32;
     fn set_param(&mut self, param: SynthParam, value: f32);
 
+    /// Gesture hooks bracketing a user edit (e.g. a slider drag).
+    /// The plugin backend forwards these to the host so DAW automation
+    /// recording works; the standalone backend leaves them as no-ops.
+    fn begin_param_change(&mut self, _param: SynthParam) {}
+    fn end_param_change(&mut self, _param: SynthParam) {}
+
     // ========================================================================
     // Effects – Delay
     // ========================================================================

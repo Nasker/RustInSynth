@@ -14,6 +14,51 @@ use crate::gui::backend::{CcMapping, MidiLearnState, SynthBackend};
 use crate::plugin::RustInSynthParams;
 use crate::plugin_gui::shared_state::PluginSharedState;
 
+/// Bind `$p` to the nih parameter field matching `$param` and run the
+/// float- or int-specific body. Single source for the SynthParam → field
+/// mapping used by `get_param`, `set_param` and the gesture hooks.
+macro_rules! with_nih_param {
+    ($self:ident, $param:expr, $p:ident, $float_body:expr, $int_body:expr) => {
+        match $param {
+            SynthParam::Attack => { let $p = &$self.params.attack; $float_body }
+            SynthParam::Decay => { let $p = &$self.params.decay; $float_body }
+            SynthParam::Sustain => { let $p = &$self.params.sustain; $float_body }
+            SynthParam::Release => { let $p = &$self.params.release; $float_body }
+            SynthParam::FilterCutoff => { let $p = &$self.params.cutoff; $float_body }
+            SynthParam::FilterResonance => { let $p = &$self.params.resonance; $float_body }
+            SynthParam::FilterAttack => { let $p = &$self.params.f_attack; $float_body }
+            SynthParam::FilterDecay => { let $p = &$self.params.f_decay; $float_body }
+            SynthParam::FilterSustain => { let $p = &$self.params.f_sustain; $float_body }
+            SynthParam::FilterRelease => { let $p = &$self.params.f_release; $float_body }
+            SynthParam::FilterEnvAmount => { let $p = &$self.params.f_amount; $float_body }
+            SynthParam::LfoRate => { let $p = &$self.params.lfo_rate; $float_body }
+            SynthParam::LfoDepth => { let $p = &$self.params.lfo_depth; $float_body }
+            SynthParam::LfoWaveform => { let $p = &$self.params.lfo_waveform; $int_body }
+            SynthParam::LfoDestination => { let $p = &$self.params.lfo_destination; $int_body }
+            SynthParam::PitchBendRange => { let $p = &$self.params.pitch_bend_range; $int_body }
+            SynthParam::PortamentoTime => { let $p = &$self.params.portamento; $float_body }
+            SynthParam::Osc1Waveform => { let $p = &$self.params.osc1_waveform; $int_body }
+            SynthParam::Osc1Level => { let $p = &$self.params.osc1_level; $float_body }
+            SynthParam::Osc1Phase => { let $p = &$self.params.osc1_phase; $float_body }
+            SynthParam::Osc1Pan => { let $p = &$self.params.osc1_pan; $float_body }
+            SynthParam::Osc2Waveform => { let $p = &$self.params.osc2_waveform; $int_body }
+            SynthParam::Osc2Level => { let $p = &$self.params.osc2_level; $float_body }
+            SynthParam::Osc2Semitones => { let $p = &$self.params.osc2_semitones; $int_body }
+            SynthParam::Osc2Cents => { let $p = &$self.params.osc2_cents; $int_body }
+            SynthParam::Osc2Phase => { let $p = &$self.params.osc2_phase; $float_body }
+            SynthParam::Osc2Pan => { let $p = &$self.params.osc2_pan; $float_body }
+            SynthParam::Osc3Waveform => { let $p = &$self.params.osc3_waveform; $int_body }
+            SynthParam::Osc3Level => { let $p = &$self.params.osc3_level; $float_body }
+            SynthParam::Osc3Semitones => { let $p = &$self.params.osc3_semitones; $int_body }
+            SynthParam::Osc3Cents => { let $p = &$self.params.osc3_cents; $int_body }
+            SynthParam::Osc3Phase => { let $p = &$self.params.osc3_phase; $float_body }
+            SynthParam::Osc3Pan => { let $p = &$self.params.osc3_pan; $float_body }
+            SynthParam::StereoWidth => { let $p = &$self.params.stereo_width; $float_body }
+            SynthParam::MasterVolume => { let $p = &$self.params.master_volume; $float_body }
+        }
+    };
+}
+
 /// Backend implementation for the NIH-plug plugin.
 ///
 /// Reads come from `Arc<RustInSynthParams>` (atomic, lock-free).
@@ -46,107 +91,37 @@ impl<'a> SynthBackend for PluginBackend<'a> {
     // ── Parameters ───────────────────────────────────────────────────────────
 
     fn get_param(&self, param: SynthParam) -> f32 {
-        match param {
-            SynthParam::Attack => self.params.attack.value(),
-            SynthParam::Decay => self.params.decay.value(),
-            SynthParam::Sustain => self.params.sustain.value(),
-            SynthParam::Release => self.params.release.value(),
-            SynthParam::FilterCutoff => self.params.cutoff.value(),
-            SynthParam::FilterResonance => self.params.resonance.value(),
-            SynthParam::FilterAttack => self.params.f_attack.value(),
-            SynthParam::FilterDecay => self.params.f_decay.value(),
-            SynthParam::FilterSustain => self.params.f_sustain.value(),
-            SynthParam::FilterRelease => self.params.f_release.value(),
-            SynthParam::FilterEnvAmount => self.params.f_amount.value(),
-            SynthParam::LfoRate => self.params.lfo_rate.value(),
-            SynthParam::LfoDepth => self.params.lfo_depth.value(),
-            SynthParam::LfoWaveform => self.params.lfo_waveform.value() as f32,
-            SynthParam::LfoDestination => self.params.lfo_destination.value() as f32,
-            SynthParam::Osc1Waveform => self.params.osc1_waveform.value() as f32,
-            SynthParam::Osc1Level => self.params.osc1_level.value(),
-            SynthParam::Osc1Phase => self.params.osc1_phase.value(),
-            SynthParam::Osc2Waveform => self.params.osc2_waveform.value() as f32,
-            SynthParam::Osc2Level => self.params.osc2_level.value(),
-            SynthParam::Osc2Semitones => self.params.osc2_semitones.value() as f32,
-            SynthParam::Osc2Cents => self.params.osc2_cents.value() as f32,
-            SynthParam::Osc2Phase => self.params.osc2_phase.value(),
-            SynthParam::Osc3Waveform => self.params.osc3_waveform.value() as f32,
-            SynthParam::Osc3Level => self.params.osc3_level.value(),
-            SynthParam::Osc3Semitones => self.params.osc3_semitones.value() as f32,
-            SynthParam::Osc3Cents => self.params.osc3_cents.value() as f32,
-            SynthParam::Osc3Phase => self.params.osc3_phase.value(),
-            SynthParam::Osc1Pan => self.params.osc1_pan.value(),
-            SynthParam::Osc2Pan => self.params.osc2_pan.value(),
-            SynthParam::Osc3Pan => self.params.osc3_pan.value(),
-            SynthParam::StereoWidth => self.params.stereo_width.value(),
-            SynthParam::PortamentoTime => self.params.portamento.value(),
-            SynthParam::PitchBendRange => self.params.pitch_bend_range.value() as f32,
-            SynthParam::MasterVolume => self.params.master_volume.value(),
-        }
+        with_nih_param!(self, param, p, p.value(), p.value() as f32)
     }
 
     fn set_param(&mut self, param: SynthParam, value: f32) {
-        match param {
-            SynthParam::Attack => self.setter.set_parameter(&self.params.attack, value),
-            SynthParam::Decay => self.setter.set_parameter(&self.params.decay, value),
-            SynthParam::Sustain => self.setter.set_parameter(&self.params.sustain, value),
-            SynthParam::Release => self.setter.set_parameter(&self.params.release, value),
-            SynthParam::FilterCutoff => self.setter.set_parameter(&self.params.cutoff, value),
-            SynthParam::FilterResonance => self.setter.set_parameter(&self.params.resonance, value),
-            SynthParam::FilterAttack => self.setter.set_parameter(&self.params.f_attack, value),
-            SynthParam::FilterDecay => self.setter.set_parameter(&self.params.f_decay, value),
-            SynthParam::FilterSustain => self.setter.set_parameter(&self.params.f_sustain, value),
-            SynthParam::FilterRelease => self.setter.set_parameter(&self.params.f_release, value),
-            SynthParam::FilterEnvAmount => self.setter.set_parameter(&self.params.f_amount, value),
-            SynthParam::LfoRate => self.setter.set_parameter(&self.params.lfo_rate, value),
-            SynthParam::LfoDepth => self.setter.set_parameter(&self.params.lfo_depth, value),
-            SynthParam::LfoWaveform => {
-                self.setter.set_parameter(&self.params.lfo_waveform, value as i32)
-            }
-            SynthParam::LfoDestination => {
-                self.setter.set_parameter(&self.params.lfo_destination, value as i32)
-            }
-            SynthParam::Osc1Waveform => {
-                self.setter.set_parameter(&self.params.osc1_waveform, value as i32)
-            }
-            SynthParam::Osc1Level => self.setter.set_parameter(&self.params.osc1_level, value),
-            SynthParam::Osc1Phase => self.setter.set_parameter(&self.params.osc1_phase, value),
-            SynthParam::Osc2Waveform => {
-                self.setter.set_parameter(&self.params.osc2_waveform, value as i32)
-            }
-            SynthParam::Osc2Level => self.setter.set_parameter(&self.params.osc2_level, value),
-            SynthParam::Osc2Semitones => {
-                self.setter.set_parameter(&self.params.osc2_semitones, value as i32)
-            }
-            SynthParam::Osc2Cents => {
-                self.setter.set_parameter(&self.params.osc2_cents, value as i32)
-            }
-            SynthParam::Osc2Phase => self.setter.set_parameter(&self.params.osc2_phase, value),
-            SynthParam::Osc3Waveform => {
-                self.setter.set_parameter(&self.params.osc3_waveform, value as i32)
-            }
-            SynthParam::Osc3Level => self.setter.set_parameter(&self.params.osc3_level, value),
-            SynthParam::Osc3Semitones => {
-                self.setter.set_parameter(&self.params.osc3_semitones, value as i32)
-            }
-            SynthParam::Osc3Cents => {
-                self.setter.set_parameter(&self.params.osc3_cents, value as i32)
-            }
-            SynthParam::Osc3Phase => self.setter.set_parameter(&self.params.osc3_phase, value),
-            SynthParam::Osc1Pan => self.setter.set_parameter(&self.params.osc1_pan, value),
-            SynthParam::Osc2Pan => self.setter.set_parameter(&self.params.osc2_pan, value),
-            SynthParam::Osc3Pan => self.setter.set_parameter(&self.params.osc3_pan, value),
-            SynthParam::StereoWidth => self.setter.set_parameter(&self.params.stereo_width, value),
-            SynthParam::PortamentoTime => {
-                self.setter.set_parameter(&self.params.portamento, value)
-            }
-            SynthParam::PitchBendRange => {
-                self.setter.set_parameter(&self.params.pitch_bend_range, value as i32)
-            }
-            SynthParam::MasterVolume => {
-                self.setter.set_parameter(&self.params.master_volume, value)
-            }
-        }
+        with_nih_param!(
+            self,
+            param,
+            p,
+            self.setter.set_parameter(p, value),
+            self.setter.set_parameter(p, value as i32)
+        )
+    }
+
+    fn begin_param_change(&mut self, param: SynthParam) {
+        with_nih_param!(
+            self,
+            param,
+            p,
+            self.setter.begin_set_parameter(p),
+            self.setter.begin_set_parameter(p)
+        )
+    }
+
+    fn end_param_change(&mut self, param: SynthParam) {
+        with_nih_param!(
+            self,
+            param,
+            p,
+            self.setter.end_set_parameter(p),
+            self.setter.end_set_parameter(p)
+        )
     }
 
     // ── Effects: Delay ───────────────────────────────────────────────────────

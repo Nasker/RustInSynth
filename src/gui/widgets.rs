@@ -4,7 +4,62 @@
 //! the vintage synthesizer aesthetic with Rust In Peace theming.
 
 use egui::*;
+use super::backend::SynthBackend;
 use super::theme::THEME;
+use crate::core::param_spec::{self, ParamSpec};
+use crate::core::params::SynthParam;
+
+/// The ONE slider widget for every `SynthParam`, driven entirely by the
+/// parameter's `ParamSpec` (range, curve, stepping, unit).
+///
+/// The slider position is always the spec-normalized `[0, 1]` value, so the
+/// drag feel follows the spec's curve exactly — identical in the standalone
+/// and the plugin GUI, and (via the skew-matched nih ranges) very close to
+/// host-drawn controls and automation lanes.
+///
+/// Wraps user edits in `begin_param_change`/`end_param_change` gestures so
+/// the plugin host can record automation properly.
+pub fn param_slider(
+    ui: &mut Ui,
+    b: &mut dyn SynthBackend,
+    param: SynthParam,
+    label: &str,
+) -> Response {
+    let spec: &'static ParamSpec = param_spec::spec(param);
+    let mut t = spec.normalize(b.get_param(param));
+
+    let mut slider = egui::Slider::new(&mut t, 0.0..=1.0)
+        .text(label)
+        .custom_formatter(move |v, _| spec.format_value(spec.denormalize(v as f32)))
+        .custom_parser(move |input| {
+            let text = input.trim();
+            let text = text.strip_suffix(spec.unit.trim()).unwrap_or(text).trim();
+            let (mult, digits) = match text.strip_suffix('k') {
+                Some(stripped) => (1000.0, stripped),
+                None => (1.0, text),
+            };
+            digits
+                .parse::<f64>()
+                .ok()
+                .map(|v| spec.normalize((v * mult) as f32) as f64)
+        });
+    if spec.stepped {
+        slider = slider.step_by(1.0 / (spec.max - spec.min) as f64);
+    }
+
+    let response = ui.add_sized([100.0, 20.0], slider);
+
+    if response.drag_started() {
+        b.begin_param_change(param);
+    }
+    if response.changed() {
+        b.set_param(param, spec.denormalize(t));
+    }
+    if response.drag_stopped() {
+        b.end_param_change(param);
+    }
+    response
+}
 
 /// A Minimoog-style rotary knob
 /// 

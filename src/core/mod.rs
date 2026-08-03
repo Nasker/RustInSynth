@@ -4,6 +4,7 @@ pub mod event;
 pub mod filter;
 pub mod lfo;
 pub mod oscillator;
+pub mod param_spec;
 pub mod params;
 pub mod presets;
 pub mod types;

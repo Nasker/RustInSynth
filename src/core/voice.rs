@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
-use super::filter::{Filter, SVFilter, cc_to_cutoff, cc_to_resonance};
+use super::filter::{Filter, SVFilter};
 use super::lfo::{LFO, LfoDestination, LfoWaveform};
 use super::oscillator::{Oscillator, OscillatorBank};
-use super::params::{CCMapping, SynthParam, cc_to_time, cc_to_level, cc_to_semitones, cc_to_cents, cc_to_waveform, cc_to_phase, cc_to_sustain, cc_to_pitch_bend_range, cc_to_portamento_time, cc_to_filter_env_amount, cc_to_lfo_rate, cc_to_lfo_depth, cc_to_lfo_waveform, cc_to_lfo_destination};
+use super::param_spec::cc_to_plain;
+use super::params::{CCMapping, SynthParam};
 use super::presets::Preset;
 use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate, StereoSample};
 
@@ -1033,65 +1034,40 @@ impl VoiceManager {
         }
     }
 
-    /// Handle a parameter change from CC
+    /// Handle a parameter change from CC. Scaling goes through the shared
+    /// parameter spec (`cc_to_plain`), so a CC produces exactly the same value
+    /// as the equivalent GUI slider position in both the standalone and the
+    /// plugin.
     fn handle_param_change(&mut self, param: SynthParam, value: u8) {
+        let plain = cc_to_plain(param, value);
+        self.apply_plain_param(param, plain);
+    }
+
+    /// Apply an already-scaled (plain) parameter value to all voices.
+    fn apply_plain_param(&mut self, param: SynthParam, plain: f32) {
         match param {
             // ADSR Envelope
-            SynthParam::Attack => {
-                let time = cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME);
-                self.set_attack(time);
-            }
-            SynthParam::Decay => {
-                let time = cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME);
-                self.set_decay(time);
-            }
-            SynthParam::Sustain => {
-                self.set_sustain(cc_to_sustain(value));
-            }
-            SynthParam::Release => {
-                let time = cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME);
-                self.set_release(time);
-            }
-            
+            SynthParam::Attack => self.set_attack(plain),
+            SynthParam::Decay => self.set_decay(plain),
+            SynthParam::Sustain => self.set_sustain(plain),
+            SynthParam::Release => self.set_release(plain),
+
             // Filter
-            SynthParam::FilterCutoff => {
-                let cutoff = cc_to_cutoff(value);
-                self.set_filter_cutoff(cutoff);
-            }
-            SynthParam::FilterResonance => {
-                let resonance = cc_to_resonance(value);
-                self.set_filter_resonance(resonance);
-            }
+            SynthParam::FilterCutoff => self.set_filter_cutoff(plain),
+            SynthParam::FilterResonance => self.set_filter_resonance(plain),
+
             // Filter Envelope
-            SynthParam::FilterAttack => {
-                let time = cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME);
-                self.set_filter_attack(time);
-            }
-            SynthParam::FilterDecay => {
-                let time = cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME);
-                self.set_filter_decay(time);
-            }
-            SynthParam::FilterSustain => {
-                self.set_filter_sustain(cc_to_sustain(value));
-            }
-            SynthParam::FilterRelease => {
-                let time = cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME);
-                self.set_filter_release(time);
-            }
-            SynthParam::FilterEnvAmount => {
-                self.set_filter_env_amount(cc_to_filter_env_amount(value));
-            }
+            SynthParam::FilterAttack => self.set_filter_attack(plain),
+            SynthParam::FilterDecay => self.set_filter_decay(plain),
+            SynthParam::FilterSustain => self.set_filter_sustain(plain),
+            SynthParam::FilterRelease => self.set_filter_release(plain),
+            SynthParam::FilterEnvAmount => self.set_filter_env_amount(plain),
 
             // LFO
-            SynthParam::LfoRate => {
-                self.set_lfo_rate(cc_to_lfo_rate(value));
-            }
-            SynthParam::LfoDepth => {
-                self.set_lfo_depth(cc_to_lfo_depth(value));
-            }
+            SynthParam::LfoRate => self.set_lfo_rate(plain),
+            SynthParam::LfoDepth => self.set_lfo_depth(plain),
             SynthParam::LfoWaveform => {
-                let waveform_idx = cc_to_lfo_waveform(value);
-                let waveform = match waveform_idx {
+                let waveform = match plain as i32 {
                     0 => LfoWaveform::Sine,
                     1 => LfoWaveform::Triangle,
                     2 => LfoWaveform::Square,
@@ -1101,8 +1077,7 @@ impl VoiceManager {
                 self.set_lfo_waveform(waveform);
             }
             SynthParam::LfoDestination => {
-                let dest_idx = cc_to_lfo_destination(value);
-                let destination = match dest_idx {
+                let destination = match plain as i32 {
                     0 => LfoDestination::Off,
                     1 => LfoDestination::Pitch,
                     2 => LfoDestination::FilterCutoff,
@@ -1112,79 +1087,38 @@ impl VoiceManager {
             }
 
             // Pitch
-            SynthParam::PitchBendRange => {
-                self.set_pitch_bend_range(cc_to_pitch_bend_range(value));
-            }
-            SynthParam::PortamentoTime => {
-                self.set_portamento_time(cc_to_portamento_time(value));
-            }
+            SynthParam::PitchBendRange => self.set_pitch_bend_range(plain as u8),
+            SynthParam::PortamentoTime => self.set_portamento_time(plain),
 
-            // Oscillator 1
+            // Oscillators
             SynthParam::Osc1Waveform => {
-                let waveform = WaveformType::from_index(cc_to_waveform(value));
-                self.set_osc_waveform(1, waveform);
+                self.set_osc_waveform(1, WaveformType::from_index(plain as u8))
             }
-            SynthParam::Osc1Level => {
-                self.set_osc_level(1, cc_to_level(value));
-            }
-            SynthParam::Osc1Phase => {
-                self.set_osc_phase(1, cc_to_phase(value));
-            }
-            
-            // Oscillator 2
+            SynthParam::Osc1Level => self.set_osc_level(1, plain),
+            SynthParam::Osc1Phase => self.set_osc_phase(1, plain),
             SynthParam::Osc2Waveform => {
-                let waveform = WaveformType::from_index(cc_to_waveform(value));
-                self.set_osc_waveform(2, waveform);
+                self.set_osc_waveform(2, WaveformType::from_index(plain as u8))
             }
-            SynthParam::Osc2Level => {
-                self.set_osc_level(2, cc_to_level(value));
-            }
-            SynthParam::Osc2Semitones => {
-                self.set_osc_semitones(2, cc_to_semitones(value));
-            }
-            SynthParam::Osc2Cents => {
-                self.set_osc_cents(2, cc_to_cents(value));
-            }
-            SynthParam::Osc2Phase => {
-                self.set_osc_phase(2, cc_to_phase(value));
-            }
-            
-            // Oscillator 3
+            SynthParam::Osc2Level => self.set_osc_level(2, plain),
+            SynthParam::Osc2Semitones => self.set_osc_semitones(2, plain as i8),
+            SynthParam::Osc2Cents => self.set_osc_cents(2, plain as i8),
+            SynthParam::Osc2Phase => self.set_osc_phase(2, plain),
             SynthParam::Osc3Waveform => {
-                let waveform = WaveformType::from_index(cc_to_waveform(value));
-                self.set_osc_waveform(3, waveform);
+                self.set_osc_waveform(3, WaveformType::from_index(plain as u8))
             }
-            SynthParam::Osc3Level => {
-                self.set_osc_level(3, cc_to_level(value));
-            }
-            SynthParam::Osc3Semitones => {
-                self.set_osc_semitones(3, cc_to_semitones(value));
-            }
-            SynthParam::Osc3Cents => {
-                self.set_osc_cents(3, cc_to_cents(value));
-            }
-            SynthParam::Osc3Phase => {
-                self.set_osc_phase(3, cc_to_phase(value));
-            }
-            SynthParam::Osc1Pan => {
-                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
-                self.set_osc_pan(1, pan);
-            }
-            SynthParam::Osc2Pan => {
-                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
-                self.set_osc_pan(2, pan);
-            }
-            SynthParam::Osc3Pan => {
-                let pan = (value as f32 / 127.0) * 2.0 - 1.0;
-                self.set_osc_pan(3, pan);
-            }
-            SynthParam::StereoWidth => {
-                let width = (value as f32 / 127.0) * 2.0;
-                self.set_stereo_width(width);
-            }
-            SynthParam::MasterVolume => {
-                self.set_master_volume(cc_to_level(value));
-            }
+            SynthParam::Osc3Level => self.set_osc_level(3, plain),
+            SynthParam::Osc3Semitones => self.set_osc_semitones(3, plain as i8),
+            SynthParam::Osc3Cents => self.set_osc_cents(3, plain as i8),
+            SynthParam::Osc3Phase => self.set_osc_phase(3, plain),
+
+            // Stereo
+            SynthParam::Osc1Pan => self.set_osc_pan(1, plain),
+            SynthParam::Osc2Pan => self.set_osc_pan(2, plain),
+            SynthParam::Osc3Pan => self.set_osc_pan(3, plain),
+            SynthParam::StereoWidth => self.set_stereo_width(plain),
+
+            // Master
+            SynthParam::MasterVolume => self.set_master_volume(plain),
         }
     }
 }

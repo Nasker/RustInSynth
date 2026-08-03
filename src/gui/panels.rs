@@ -13,6 +13,7 @@ use crate::core::presets::{list_presets, load_preset, save_preset, Preset};
 use crate::core::voice::PolyphonyMode;
 use crate::gui::backend::{MidiLearnState, SynthBackend};
 use crate::gui::theme::{section_header, THEME};
+use crate::gui::widgets::param_slider;
 
 /// GUI-only preset state shared by both the standalone app and the plugin editor.
 pub struct PresetState {
@@ -211,20 +212,9 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
                 }
             });
 
-        let mut lvl1 = b.get_param(SynthParam::Osc1Level);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut lvl1, 0.0..=1.0).text("Level").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc1Level, lvl1);
-        }
-
-        let mut phase1 = b.get_param(SynthParam::Osc1Phase);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut phase1, 0.0..=1.0).text("Phase").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc1Phase, phase1);
-        }
-
-        let mut pan1 = b.osc_pan(1);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut pan1, -1.0..=1.0).text("Pan").custom_formatter(format_slider_value)).changed() {
-            b.set_osc_pan(1, pan1);
-        }
+        param_slider(ui, b, SynthParam::Osc1Level, "Level");
+        param_slider(ui, b, SynthParam::Osc1Phase, "Phase");
+        param_slider(ui, b, SynthParam::Osc1Pan, "Pan");
     });
 
     ui.add_space(4.0);
@@ -250,30 +240,11 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
                 }
             });
 
-        let mut lvl2 = b.get_param(SynthParam::Osc2Level);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut lvl2, 0.0..=1.0).text("Level").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc2Level, lvl2);
-        }
-
-        let mut semi2 = b.get_param(SynthParam::Osc2Semitones);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut semi2, -24.0..=24.0).text("Semi").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc2Semitones, semi2);
-        }
-
-        let mut cents2 = b.get_param(SynthParam::Osc2Cents);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut cents2, -100.0..=100.0).text("Cents").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc2Cents, cents2);
-        }
-
-        let mut phase2 = b.get_param(SynthParam::Osc2Phase);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut phase2, 0.0..=1.0).text("Phase").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc2Phase, phase2);
-        }
-
-        let mut pan2 = b.osc_pan(2);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut pan2, -1.0..=1.0).text("Pan").custom_formatter(format_slider_value)).changed() {
-            b.set_osc_pan(2, pan2);
-        }
+        param_slider(ui, b, SynthParam::Osc2Level, "Level");
+        param_slider(ui, b, SynthParam::Osc2Semitones, "Semi");
+        param_slider(ui, b, SynthParam::Osc2Cents, "Cents");
+        param_slider(ui, b, SynthParam::Osc2Phase, "Phase");
+        param_slider(ui, b, SynthParam::Osc2Pan, "Pan");
     });
 
     ui.add_space(4.0);
@@ -299,30 +270,11 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
                 }
             });
 
-        let mut lvl3 = b.get_param(SynthParam::Osc3Level);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut lvl3, 0.0..=1.0).text("Level").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc3Level, lvl3);
-        }
-
-        let mut semi3 = b.get_param(SynthParam::Osc3Semitones);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut semi3, -24.0..=24.0).text("Semi").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc3Semitones, semi3);
-        }
-
-        let mut cents3 = b.get_param(SynthParam::Osc3Cents);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut cents3, -100.0..=100.0).text("Cents").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc3Cents, cents3);
-        }
-
-        let mut phase3 = b.get_param(SynthParam::Osc3Phase);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut phase3, 0.0..=1.0).text("Phase").custom_formatter(format_slider_value)).changed() {
-            b.set_param(SynthParam::Osc3Phase, phase3);
-        }
-
-        let mut pan3 = b.osc_pan(3);
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut pan3, -1.0..=1.0).text("Pan").custom_formatter(format_slider_value)).changed() {
-            b.set_osc_pan(3, pan3);
-        }
+        param_slider(ui, b, SynthParam::Osc3Level, "Level");
+        param_slider(ui, b, SynthParam::Osc3Semitones, "Semi");
+        param_slider(ui, b, SynthParam::Osc3Cents, "Cents");
+        param_slider(ui, b, SynthParam::Osc3Phase, "Phase");
+        param_slider(ui, b, SynthParam::Osc3Pan, "Pan");
     });
 
     ui.add_space(4.0);
@@ -335,10 +287,7 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
                 .strong()
                 .color(Color32::from_rgb(100, 200, 255)),
         );
-        let mut width = b.stereo_width();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut width, 0.0..=2.0).text("Width").custom_formatter(format_slider_value)).changed() {
-            b.set_stereo_width(width);
-        }
+        param_slider(ui, b, SynthParam::StereoWidth, "Width");
     });
 }
 
@@ -349,25 +298,12 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "FILTER");
 
-    let mut cutoff = b.get_param(SynthParam::FilterCutoff);
-    if ui
-        .add_sized([100.0, 20.0], egui::Slider::new(&mut cutoff, 20.0..=20000.0).text("Cutoff").logarithmic(true).custom_formatter(format_slider_value))
-        .changed()
-    {
-        b.set_param(SynthParam::FilterCutoff, cutoff);
-    }
-
-    let mut res = b.get_param(SynthParam::FilterResonance);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut res, 0.0..=1.0).text("Res").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::FilterResonance, res);
-    }
+    param_slider(ui, b, SynthParam::FilterCutoff, "Cutoff");
+    param_slider(ui, b, SynthParam::FilterResonance, "Res");
 
     ui.add_space(8.0);
     ui.label(RichText::new("Env Amount").size(10.0));
-    let mut env_amt = b.get_param(SynthParam::FilterEnvAmount);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut env_amt, -1.0..=1.0).text("Amt").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::FilterEnvAmount, env_amt);
-    }
+    param_slider(ui, b, SynthParam::FilterEnvAmount, "Amt");
 }
 
 // ============================================================================
@@ -377,64 +313,24 @@ pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn envelopes(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "AMP ENV");
 
-    let mut atk = b.get_param(SynthParam::Attack);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut atk, 0.001..=5.0).text("Attack").logarithmic(true).custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::Attack, atk);
-    }
-
-    let mut dec = b.get_param(SynthParam::Decay);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut dec, 0.001..=5.0).text("Decay").logarithmic(true).custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::Decay, dec);
-    }
-
-    let mut sus = b.get_param(SynthParam::Sustain);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut sus, 0.0..=1.0).text("Sustain").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::Sustain, sus);
-    }
-
-    let mut rel = b.get_param(SynthParam::Release);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut rel, 0.001..=5.0).text("Release").logarithmic(true).custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::Release, rel);
-    }
+    param_slider(ui, b, SynthParam::Attack, "Attack");
+    param_slider(ui, b, SynthParam::Decay, "Decay");
+    param_slider(ui, b, SynthParam::Sustain, "Sustain");
+    param_slider(ui, b, SynthParam::Release, "Release");
 
     ui.add_space(12.0);
     section_header(ui, "FILTER ENV");
 
-    let mut fatk = b.get_param(SynthParam::FilterAttack);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut fatk, 0.001..=5.0).text("Attack").logarithmic(true).custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::FilterAttack, fatk);
-    }
-
-    let mut fdec = b.get_param(SynthParam::FilterDecay);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut fdec, 0.001..=5.0).text("Decay").logarithmic(true).custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::FilterDecay, fdec);
-    }
-
-    let mut fsus = b.get_param(SynthParam::FilterSustain);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut fsus, 0.0..=1.0).text("Sustain").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::FilterSustain, fsus);
-    }
-
-    let mut frel = b.get_param(SynthParam::FilterRelease);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut frel, 0.001..=5.0).text("Release").logarithmic(true).custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::FilterRelease, frel);
-    }
+    param_slider(ui, b, SynthParam::FilterAttack, "Attack");
+    param_slider(ui, b, SynthParam::FilterDecay, "Decay");
+    param_slider(ui, b, SynthParam::FilterSustain, "Sustain");
+    param_slider(ui, b, SynthParam::FilterRelease, "Release");
 
     ui.add_space(12.0);
     section_header(ui, "MASTER");
 
-    let mut port_time = b.get_param(SynthParam::PortamentoTime);
-    if ui
-        .add_sized([100.0, 20.0], egui::Slider::new(&mut port_time, 0.001..=3.0).text("Portamento").logarithmic(true).custom_formatter(format_slider_value))
-        .changed()
-    {
-        b.set_param(SynthParam::PortamentoTime, port_time);
-    }
-
-    let mut vol = b.get_param(SynthParam::MasterVolume);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::MasterVolume, vol);
-    }
+    param_slider(ui, b, SynthParam::PortamentoTime, "Portamento");
+    param_slider(ui, b, SynthParam::MasterVolume, "Volume");
 }
 
 // ============================================================================
@@ -444,15 +340,8 @@ pub fn envelopes(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn lfo(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "LFO");
 
-    let mut rate = b.get_param(SynthParam::LfoRate);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut rate, 0.1..=20.0).text("Rate").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::LfoRate, rate);
-    }
-
-    let mut depth = b.get_param(SynthParam::LfoDepth);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut depth, 0.0..=1.0).text("Depth").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::LfoDepth, depth);
-    }
+    param_slider(ui, b, SynthParam::LfoRate, "Rate");
+    param_slider(ui, b, SynthParam::LfoDepth, "Depth");
 
     ui.label(RichText::new("Waveform").size(10.0));
     let lfo_wf_labels = ["Sin", "Tri", "Sqr", "Saw", "Rnd"];
@@ -509,10 +398,7 @@ pub fn lfo(ui: &mut Ui, b: &mut dyn SynthBackend) {
         );
     }
 
-    let mut bend = b.get_param(SynthParam::PitchBendRange);
-    if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut bend, 1.0..=24.0).text("Bend Range").custom_formatter(format_slider_value)).changed() {
-        b.set_param(SynthParam::PitchBendRange, bend);
-    }
+    param_slider(ui, b, SynthParam::PitchBendRange, "Bend Range");
 }
 
 // ============================================================================

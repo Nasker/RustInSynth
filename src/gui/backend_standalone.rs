@@ -1,61 +1,17 @@
 //! Standalone backend: wraps `AudioEngine`, `SharedState`, and `MidiInputHandler`.
 
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
 use crate::audio::AudioEngine;
 use crate::core::event::NoteEventKind;
-use crate::core::filter::{cc_to_cutoff, cc_to_resonance};
+use crate::core::param_spec::cc_to_plain;
 use crate::core::params::{
-    cc_to_filter_env_amount, cc_to_lfo_depth, cc_to_lfo_rate, cc_to_portamento_time,
-    cc_to_sustain, cc_to_time, SynthParam,
+    load_custom_cc_mappings, save_custom_cc_mappings, CCMapping, SynthParam,
 };
-use crate::core::voice::{
-    PolyphonyMode, MAX_ATTACK_TIME, MAX_DECAY_TIME, MAX_RELEASE_TIME, MIN_ATTACK_TIME,
-    MIN_DECAY_TIME, MIN_RELEASE_TIME,
-};
+use crate::core::voice::PolyphonyMode;
 use crate::gui::SharedState;
 use crate::gui::backend::{CcMapping, MidiLearnState, SynthBackend};
 use crate::input::midi::MidiInputHandler;
-
-// ============================================================================
-// CC mappings persistence
-// ============================================================================
-
-fn cc_mappings_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".rustinsynth")
-        .join("cc_mappings.json")
-}
-
-fn load_cc_mappings() -> Option<HashMap<u8, SynthParam>> {
-    let path = cc_mappings_path();
-    let content = fs::read_to_string(&path).ok()?;
-    let raw: HashMap<u8, String> = serde_json::from_str(&content).ok()?;
-    let mut map = HashMap::new();
-    for (cc, param_name) in raw {
-        if let Some(param) = SynthParam::from_name(&param_name) {
-            map.insert(cc, param);
-        }
-    }
-    Some(map)
-}
-
-fn save_cc_mappings(map: &HashMap<u8, SynthParam>) -> Result<(), std::io::Error> {
-    let path = cc_mappings_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let raw: HashMap<u8, String> = map
-        .iter()
-        .map(|(cc, param)| (*cc, param.name().to_string()))
-        .collect();
-    let content = serde_json::to_string_pretty(&raw)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    fs::write(&path, content)
-}
 
 // ============================================================================
 // StandaloneBackend
@@ -74,6 +30,8 @@ pub struct StandaloneBackend {
 
     midi_learn_state: MidiLearnState,
     custom_cc_map: HashMap<u8, SynthParam>,
+    /// Factory default CC → parameter mapping (custom map takes precedence)
+    default_cc_mapping: CCMapping,
 }
 
 impl StandaloneBackend {
@@ -100,7 +58,7 @@ impl StandaloneBackend {
             println!("MIDI connected!");
         }
 
-        let custom_cc_map = load_cc_mappings().unwrap_or_default();
+        let custom_cc_map = load_custom_cc_mappings();
 
         Self {
             shared,
@@ -110,6 +68,7 @@ impl StandaloneBackend {
             selected_midi_port,
             midi_learn_state: MidiLearnState::Idle,
             custom_cc_map,
+            default_cc_mapping: CCMapping::default_mappings(),
         }
     }
 
@@ -117,140 +76,20 @@ impl StandaloneBackend {
     // Internal helpers (mirror the logic previously in SynthApp)
     // ========================================================================
 
+    /// Scale a CC value through the parameter's spec (range + curve) — the
+    /// exact same conversion the plugin and the DSP-side CC handler use.
     fn apply_cc_to_param(&mut self, param: SynthParam, value: u8) {
-        let scaled = match param {
-            SynthParam::Attack => cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
-            SynthParam::Decay => cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
-            SynthParam::Release => cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
-            SynthParam::FilterAttack => cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
-            SynthParam::FilterDecay => cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
-            SynthParam::FilterRelease => cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
-            SynthParam::PortamentoTime => cc_to_portamento_time(value),
-            SynthParam::Sustain | SynthParam::FilterSustain => cc_to_sustain(value),
-            SynthParam::FilterEnvAmount => cc_to_filter_env_amount(value),
-            SynthParam::LfoDepth => cc_to_lfo_depth(value),
-            SynthParam::Osc1Level | SynthParam::Osc2Level | SynthParam::Osc3Level => {
-                value as f32 / 127.0
-            }
-            SynthParam::Osc1Phase | SynthParam::Osc2Phase | SynthParam::Osc3Phase => {
-                value as f32 / 127.0
-            }
-            SynthParam::MasterVolume => value as f32 / 127.0,
-            SynthParam::FilterCutoff => cc_to_cutoff(value),
-            SynthParam::FilterResonance => cc_to_resonance(value),
-            SynthParam::LfoRate => cc_to_lfo_rate(value),
-            SynthParam::LfoWaveform => (value / 26).min(4) as f32,
-            SynthParam::LfoDestination => (value / 32).min(3) as f32,
-            SynthParam::Osc1Waveform | SynthParam::Osc2Waveform | SynthParam::Osc3Waveform => {
-                (value / 26).min(4) as f32
-            }
-            SynthParam::Osc2Semitones | SynthParam::Osc3Semitones => {
-                ((value as f32 / 127.0) * 48.0 - 24.0).round()
-            }
-            SynthParam::Osc2Cents | SynthParam::Osc3Cents => {
-                ((value as f32 / 127.0) * 200.0 - 100.0).round()
-            }
-            SynthParam::Osc1Pan | SynthParam::Osc2Pan | SynthParam::Osc3Pan => {
-                (value as f32 / 127.0) * 2.0 - 1.0
-            }
-            SynthParam::StereoWidth => (value as f32 / 127.0) * 2.0,
-            SynthParam::PitchBendRange => ((value as f32 / 127.0) * 23.0 + 1.0).round(),
-        };
-        self.shared.params.set(param, scaled);
+        self.shared.params.set(param, cc_to_plain(param, value));
     }
 
     fn update_param_from_cc(&mut self, cc: u8, value: u8) {
-        if let Some(&param) = self.custom_cc_map.get(&cc) {
+        let param = self
+            .custom_cc_map
+            .get(&cc)
+            .copied()
+            .or_else(|| self.default_cc_mapping.get_param(cc));
+        if let Some(param) = param {
             self.apply_cc_to_param(param, value);
-            return;
-        }
-        match cc {
-            73 => self
-                .shared
-                .params
-                .set(SynthParam::Attack, cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME)),
-            83 => self
-                .shared
-                .params
-                .set(SynthParam::Decay, cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME)),
-            84 => self.shared.params.set(SynthParam::Sustain, cc_to_sustain(value)),
-            72 => self
-                .shared
-                .params
-                .set(SynthParam::Release, cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME)),
-            74 => self
-                .shared
-                .params
-                .set(SynthParam::FilterCutoff, cc_to_cutoff(value)),
-            71 => self
-                .shared
-                .params
-                .set(SynthParam::FilterResonance, cc_to_resonance(value)),
-            103 => self.shared.params.set(
-                SynthParam::FilterAttack,
-                cc_to_time(value, MIN_ATTACK_TIME, MAX_ATTACK_TIME),
-            ),
-            104 => self.shared.params.set(
-                SynthParam::FilterDecay,
-                cc_to_time(value, MIN_DECAY_TIME, MAX_DECAY_TIME),
-            ),
-            105 => self
-                .shared
-                .params
-                .set(SynthParam::FilterSustain, cc_to_sustain(value)),
-            106 => self.shared.params.set(
-                SynthParam::FilterRelease,
-                cc_to_time(value, MIN_RELEASE_TIME, MAX_RELEASE_TIME),
-            ),
-            107 => self
-                .shared
-                .params
-                .set(SynthParam::FilterEnvAmount, cc_to_filter_env_amount(value)),
-            108 => self
-                .shared
-                .params
-                .set(SynthParam::LfoRate, cc_to_lfo_rate(value)),
-            109 => self
-                .shared
-                .params
-                .set(SynthParam::LfoDepth, cc_to_lfo_depth(value)),
-            110 => self
-                .shared
-                .params
-                .set(SynthParam::LfoWaveform, (value / 26).min(4) as f32),
-            111 => self
-                .shared
-                .params
-                .set(SynthParam::LfoDestination, (value / 32).min(3) as f32),
-            5 => self
-                .shared
-                .params
-                .set(SynthParam::PortamentoTime, cc_to_portamento_time(value)),
-            80 => self
-                .shared
-                .params
-                .set(SynthParam::Osc1Level, value as f32 / 127.0),
-            81 => self
-                .shared
-                .params
-                .set(SynthParam::Osc2Level, value as f32 / 127.0),
-            82 => self
-                .shared
-                .params
-                .set(SynthParam::Osc3Level, value as f32 / 127.0),
-            75 => self
-                .shared
-                .params
-                .set(SynthParam::Osc1Waveform, (value / 26).min(4) as f32),
-            76 => self
-                .shared
-                .params
-                .set(SynthParam::Osc2Waveform, (value / 26).min(4) as f32),
-            77 => self
-                .shared
-                .params
-                .set(SynthParam::Osc3Waveform, (value / 26).min(4) as f32),
-            _ => {}
         }
     }
 }
@@ -470,7 +309,7 @@ impl SynthBackend for StandaloneBackend {
 
     fn clear_cc_mappings(&mut self) {
         self.custom_cc_map.clear();
-        let _ = save_cc_mappings(&self.custom_cc_map);
+        let _ = save_custom_cc_mappings(&self.custom_cc_map);
     }
 
     // ── Status ───────────────────────────────────────────────────────────────
@@ -506,7 +345,7 @@ impl SynthBackend for StandaloneBackend {
                     std::mem::replace(&mut self.midi_learn_state, MidiLearnState::Idle)
                 {
                     self.custom_cc_map.insert(cc, target_param);
-                    if let Err(e) = save_cc_mappings(&self.custom_cc_map) {
+                    if let Err(e) = save_custom_cc_mappings(&self.custom_cc_map) {
                         eprintln!("Failed to save CC mappings: {}", e);
                     }
                     println!("Mapped CC {} → {}", cc, target_param.name());

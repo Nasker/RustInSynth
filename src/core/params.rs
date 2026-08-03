@@ -419,6 +419,61 @@ impl Default for CCMapping {
 }
 
 // ============================================================================
+// Custom (user) CC mapping persistence — shared by standalone and plugin
+// ============================================================================
+
+/// Path of the JSON file holding user-defined CC mappings (MIDI learn).
+pub fn cc_mappings_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".rustinsynth")
+        .join("cc_mappings.json")
+}
+
+/// Load user-defined CC mappings from disk (empty if none/invalid).
+pub fn load_custom_cc_mappings() -> HashMap<u8, SynthParam> {
+    let path = cc_mappings_path();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+    let raw: HashMap<u8, String> = serde_json::from_str(&content).unwrap_or_default();
+    let mut map = HashMap::new();
+    for (cc, param_name) in raw {
+        if let Some(param) = SynthParam::from_name(&param_name) {
+            map.insert(cc, param);
+        }
+    }
+    map
+}
+
+/// Persist user-defined CC mappings to disk.
+pub fn save_custom_cc_mappings(map: &HashMap<u8, SynthParam>) -> Result<(), std::io::Error> {
+    let path = cc_mappings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let raw: HashMap<u8, String> = map
+        .iter()
+        .map(|(cc, param)| (*cc, param.name().to_string()))
+        .collect();
+    let content = serde_json::to_string_pretty(&raw)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    std::fs::write(&path, content)
+}
+
+/// Default CC mappings with the user's custom mappings (if any) overlaid.
+/// Both the standalone and the plugin must resolve CCs through this so a
+/// mapping learned in one works identically in the other.
+pub fn cc_mapping_with_user_overrides() -> CCMapping {
+    let mut mapping = CCMapping::default_mappings();
+    for (cc, param) in load_custom_cc_mappings() {
+        mapping.map(cc, param);
+    }
+    mapping
+}
+
+// ============================================================================
 // CC Value Conversion Functions
 // ============================================================================
 
