@@ -264,6 +264,11 @@ impl Voice {
         !self.envelope.is_finished()
     }
 
+    /// Debug: amp envelope state and configured sustain level.
+    pub fn debug_env(&self) -> (EnvelopeState, f32) {
+        (self.envelope.state(), self.envelope.sustain())
+    }
+
     /// Check if this voice is in release phase
     pub fn is_releasing(&self) -> bool {
         self.envelope.state() == EnvelopeState::Release
@@ -636,6 +641,19 @@ impl VoiceManager {
         soft_clip(output)
     }
     
+    /// Debug: snapshot of voice 0's amp envelope (state, env sustain) plus
+    /// the manager-level sustain and filter parameters.
+    pub fn debug_voice0(&self) -> (EnvelopeState, f32, f32, f32, f32) {
+        let (state, env_sustain) = self.voices[0].debug_env();
+        (
+            state,
+            env_sustain,
+            self.sustain_level,
+            self.filter_cutoff,
+            self.filter_env_amount,
+        )
+    }
+
     /// Generate the next stereo sample from all active voices
     pub fn next_sample_stereo(&mut self) -> StereoSample {
         let mut mixed = StereoSample::ZERO;
