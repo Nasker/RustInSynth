@@ -316,6 +316,26 @@ impl Default for RustInSynthPlugin {
     }
 }
 
+/// Temporary debug aid: with `RUSTINSYNTH_DEBUG=1` set, log every MIDI event
+/// (plus the current sustain param value) to /tmp/rustinsynth_debug.log so
+/// plugin-host event streams can be inspected. Event-rate only; the env var
+/// check is cached. TODO: remove once the sustain investigation is done.
+fn debug_log(msg: &str) {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("RUSTINSYNTH_DEBUG").is_some()) {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/rustinsynth_debug.log")
+    {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
+
 impl Plugin for RustInSynthPlugin {
     const NAME: &'static str = "RustInSynth";
     const VENDOR: &'static str = "Nasker";
@@ -414,9 +434,16 @@ impl Plugin for RustInSynthPlugin {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } => {
+                    debug_log(&format!(
+                        "NoteOn  note={:>3} vel={:.3} sustain_param={:.3}",
+                        note,
+                        velocity,
+                        self.params.sustain.value()
+                    ));
                     self.voice_manager.receive_event(SynthEvent::note_on(note, velocity));
                 }
                 NoteEvent::NoteOff { note, .. } => {
+                    debug_log(&format!("NoteOff note={:>3}", note));
                     self.voice_manager.receive_event(SynthEvent::note_off(note));
                 }
                 NoteEvent::MidiPitchBend { value, .. } => {
@@ -426,6 +453,7 @@ impl Plugin for RustInSynthPlugin {
                 }
                 NoteEvent::MidiCC { cc, value, .. } => {
                     // value is 0.0 to 1.0 float in NIH-plug
+                    debug_log(&format!("CC      cc={:>3} raw={:.4}", cc, value));
                     let cc_val = (value * 127.0).round() as u8;
                     if self.editor_open.load(Ordering::Relaxed) {
                         // Editor open: route through the GUI → ParamSetter so the
@@ -440,7 +468,9 @@ impl Plugin for RustInSynthPlugin {
                         self.voice_manager.receive_event(SynthEvent::control_change(cc, cc_val));
                     }
                 }
-                _ => {}
+                other => {
+                    debug_log(&format!("Other   {:?}", std::mem::discriminant(&other)));
+                }
             }
         }
 
