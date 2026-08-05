@@ -322,7 +322,7 @@ impl Plugin for RustInSynthPlugin {
     const URL: &'static str = "https://github.com/oscarmartinez/RustInSynth";
     const EMAIL: &'static str = "oscar@rtp.com";
 
-    const VERSION: &'static str = "1.0.1";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     // Standard stereo input/output
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {

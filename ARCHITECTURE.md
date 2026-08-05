@@ -1,5 +1,7 @@
 # RustInSynth Architecture
 
+**Version: v1.2.0**
+
 ## Overview
 
 RustInSynth is a real-time polyphonic synthesizer with a GUI, designed around lock-free communication between the audio thread and the UI thread. It supports both standalone and plugin (VST3/CLAP) operation through a unified `SynthBackend` trait.

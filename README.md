@@ -251,7 +251,7 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementati
 
 ## Current Status
 
-**v1.0.1** - Stereo Fix & Unified GUI Architecture:
+**v1.2.0** - Stereo Fix & Unified GUI Architecture:
 - [x] Fixed stereo separation with independent left/right filters per voice
 - [x] `SynthBackend` trait abstraction — single GUI codebase for standalone and plugin
 - [x] `StandaloneBackend` wrapping `AudioEngine`, `SharedState`, and MIDI handler

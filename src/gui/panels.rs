@@ -55,7 +55,7 @@ fn format_slider_value(value: f64, _range: std::ops::RangeInclusive<usize>) -> S
 /// How the shared shell should differ between the standalone app and the
 /// plugin editor. The layout itself is identical; only these knobs change.
 pub struct ShellConfig {
-    /// Version string shown next to the title (e.g. "v1.0.1" or "v1.0.1 (Plugin)").
+    /// Version string shown next to the title (e.g. "v1.2.0" or "v1.2.0 (Plugin)").
     pub version: String,
     /// Show the CPU-load meter in the top bar (standalone only).
     pub show_cpu: bool,

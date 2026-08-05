@@ -10,7 +10,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use rust_in_synth::gui::{run_gui, SharedState};
 
-    println!("🔊 Rust In Synth v0.4.0 - GUI Mode");
+    println!("🔊 Rust In Synth v1.2.0 - GUI Mode");
     println!("Starting...\n");
 
     // Create shared state for GUI ↔ Audio communication

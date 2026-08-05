@@ -1,6 +1,6 @@
 # RustInSynth Development Plan
 
-## Current Version: v1.0.1
+## Current Version: v1.2.0
 
 ## Roadmap (Ordered by Priority)
 
