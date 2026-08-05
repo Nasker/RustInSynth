@@ -587,8 +587,13 @@ impl VoiceManager {
         self.key_stack.clear();
     }
     
-    /// Set polyphony mode
+    /// Set polyphony mode. No-op when the mode is unchanged, so it is safe
+    /// to call every buffer (releasing voices only makes sense on an actual
+    /// mode switch).
     pub fn set_polyphony_mode(&mut self, mode: PolyphonyMode) {
+        if self.polyphony_mode == mode {
+            return;
+        }
         self.polyphony_mode = mode;
         // Clear key stack when switching modes
         self.key_stack.clear();
@@ -1403,6 +1408,30 @@ impl VoiceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: the plugin calls set_polyphony_mode every buffer. When the
+    /// mode is unchanged this must NOT release held voices (it used to
+    /// note_off all voices unconditionally, killing sustain in the VST).
+    #[test]
+    fn test_set_polyphony_mode_same_mode_does_not_release_voices() {
+        let mut vm = VoiceManager::monophonic(44100);
+        let mode = vm.polyphony_mode();
+
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+
+        // Simulate many buffers, each re-applying the same mode like the
+        // plugin's per-buffer sync does
+        for _ in 0..100 {
+            vm.set_polyphony_mode(mode);
+            for _ in 0..128 {
+                let _ = vm.next_sample_stereo();
+            }
+        }
+
+        let (state, _, _, _, _) = vm.debug_voice0();
+        assert_ne!(state, EnvelopeState::Release, "held note must not be releasing");
+        assert_ne!(state, EnvelopeState::Idle, "held note must still be active");
+    }
 
     /// Test that sustain level is correctly applied to voices
     #[test]
