@@ -12,8 +12,8 @@ use crate::core::params::SynthParam;
 use crate::core::presets::{list_presets, load_preset, save_preset, Preset};
 use crate::core::voice::PolyphonyMode;
 use crate::gui::backend::{MidiLearnState, SynthBackend};
-use crate::gui::theme::{section_header, THEME};
-use crate::gui::widgets::param_slider;
+use crate::gui::theme::{hangar_background, paint_chrome_title, section_header, spaced_label, THEME};
+use crate::gui::widgets::{gold_value_slider, param_slider};
 
 /// GUI-only preset state shared by both the standalone app and the plugin editor.
 pub struct PresetState {
@@ -79,25 +79,40 @@ pub fn shell(
     preset_state: &mut PresetState,
     cfg: &ShellConfig,
 ) {
-    ctx.set_visuals(egui::Visuals {
-        window_fill: THEME.bg_blue,
-        panel_fill: THEME.panel_bg,
-        ..egui::Visuals::dark()
+    ctx.set_visuals({
+        let mut v = egui::Visuals::dark();
+        v.window_fill = THEME.bg_blue;
+        v.panel_fill = THEME.panel_bg;
+        // Radioactive controls: handles glow from a deep green interior,
+        // like the stone Vic Rattlehead holds up on the cover
+        v.widgets.inactive.bg_fill = THEME.toxic_green_deep;
+        v.widgets.inactive.weak_bg_fill = THEME.bg_blue_light;
+        v.widgets.inactive.fg_stroke = Stroke::new(1.0, THEME.toxic_green_dark);
+        v.widgets.hovered.bg_fill = THEME.toxic_green_dark;
+        v.widgets.hovered.weak_bg_fill = THEME.bg_blue_light;
+        v.widgets.hovered.fg_stroke = Stroke::new(1.0, THEME.toxic_green);
+        v.widgets.hovered.expansion = 1.5;
+        v.widgets.active.bg_fill = THEME.toxic_green;
+        v.widgets.active.weak_bg_fill = THEME.bg_blue_light;
+        v.widgets.active.fg_stroke = Stroke::new(1.0, THEME.toxic_green_light);
+        v.selection.bg_fill = THEME.toxic_green_dark;
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, THEME.panel_border);
+        v
     });
+
+    // Monospace value numbers — fixed digit width keeps the layout stable
+    ctx.style_mut(|style| style.drag_value_text_style = TextStyle::Monospace);
 
     // ── Top bar ─────────────────────────────────────────────────────────────
     egui::Panel::top("top_bar").show(ctx, |ui| {
+        let bar_rect = ui.max_rect();
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("🔊 Rust In Synth")
-                    .size(18.0)
-                    .strong()
-                    .color(THEME.gold),
-            );
+            ui.set_min_height(30.0);
             ui.label(
                 RichText::new(&cfg.version)
-                    .size(10.0)
-                    .color(Color32::from_gray(120)),
+                    .size(9.0)
+                    .color(THEME.gold_dark),
             );
 
             if cfg.show_cpu {
@@ -124,51 +139,54 @@ pub fn shell(
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new("Analog-Modeled Subtractive Synthesizer")
-                        .size(11.0)
-                        .color(Color32::from_gray(180)),
+                spaced_label(
+                    ui,
+                    "ANALOG-MODELED SUBTRACTIVE SYNTHESIZER",
+                    9.0,
+                    THEME.gold_dark,
                 );
             });
         });
+
+        // Centered chrome logo, painted over the reserved bar height
+        paint_chrome_title(ctx, ui.painter().clone(), bar_rect.center(), "RUST IN SYNTH", 18.0);
     });
 
     // ── Main panel ──────────────────────────────────────────────────────────
     egui::CentralPanel::default()
         .frame(Frame::new().fill(THEME.bg_blue))
         .show(ctx, |ui| {
+            hangar_background(ui.painter(), ui.max_rect());
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height());
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
-                            ui.set_width(185.0);
+                            ui.set_width(175.0);
                             oscillators(ui, b);
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            ui.set_width(145.0);
+                            ui.set_width(150.0);
                             filter(ui, b);
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            ui.set_width(145.0);
+                            ui.add_space(8.0);
                             envelopes(ui, b);
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            ui.set_width(145.0);
+                            ui.add_space(8.0);
                             lfo(ui, b);
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            ui.set_width(155.0);
+                            ui.set_width(150.0);
                             effects(ui, b);
+                            ui.add_space(8.0);
+                            pitch_voice(ui, b);
+                            ui.add_space(8.0);
+                            master(ui, b);
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            ui.set_width(185.0);
+                            ui.set_width(175.0);
                             presets(ui, b, preset_state);
                             if cfg.show_midi_panel {
                                 ui.add_space(16.0);
@@ -325,8 +343,9 @@ pub fn envelopes(ui: &mut Ui, b: &mut dyn SynthBackend) {
     param_slider(ui, b, SynthParam::FilterDecay, "Decay");
     param_slider(ui, b, SynthParam::FilterSustain, "Sustain");
     param_slider(ui, b, SynthParam::FilterRelease, "Release");
+}
 
-    ui.add_space(12.0);
+pub fn master(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "MASTER");
 
     param_slider(ui, b, SynthParam::PortamentoTime, "Portamento");
@@ -372,6 +391,9 @@ pub fn lfo(ui: &mut Ui, b: &mut dyn SynthBackend) {
         });
 
     ui.add_space(12.0);
+}
+
+pub fn pitch_voice(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "PITCH / VOICE");
 
     let current_mode = b.polyphony_mode();
@@ -416,15 +438,15 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
         }
 
         let mut time = b.delay_time();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s").custom_formatter(format_slider_value)).changed() {
             b.set_delay_time(time);
         }
         let mut feedback = b.delay_feedback();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut feedback, 0.0..=0.9).text("Fdbk").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut feedback, 0.0..=0.9).text("Fdbk").custom_formatter(format_slider_value)).changed() {
             b.set_delay_feedback(feedback);
         }
         let mut mix = b.delay_mix();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
             b.set_delay_mix(mix);
         }
     });
@@ -439,15 +461,15 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
         }
 
         let mut room = b.reverb_room_size();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut room, 0.0..=1.0).text("Room").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut room, 0.0..=1.0).text("Room").custom_formatter(format_slider_value)).changed() {
             b.set_reverb_room_size(room);
         }
         let mut damp = b.reverb_damping();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut damp, 0.0..=1.0).text("Damp").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut damp, 0.0..=1.0).text("Damp").custom_formatter(format_slider_value)).changed() {
             b.set_reverb_damping(damp);
         }
         let mut mix = b.reverb_mix();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
             b.set_reverb_mix(mix);
         }
     });
@@ -462,15 +484,15 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
         }
 
         let mut rate = b.chorus_rate();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut rate, 0.1..=5.0).text("Rate").suffix("Hz").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut rate, 0.1..=5.0).text("Rate").suffix("Hz").custom_formatter(format_slider_value)).changed() {
             b.set_chorus_rate(rate);
         }
         let mut depth = b.chorus_depth();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut depth, 0.0..=10.0).text("Depth").suffix("ms").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut depth, 0.0..=10.0).text("Depth").suffix("ms").custom_formatter(format_slider_value)).changed() {
             b.set_chorus_depth(depth);
         }
         let mut mix = b.chorus_mix();
-        if ui.add_sized([100.0, 20.0], egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
             b.set_chorus_mix(mix);
         }
     });

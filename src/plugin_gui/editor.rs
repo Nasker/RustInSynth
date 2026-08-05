@@ -21,8 +21,8 @@ use crate::plugin_gui::backend_plugin::PluginBackend;
 use crate::plugin_gui::shared_state::PluginSharedState;
 
 /// Size of the editor window (matches standalone dimensions)
-pub const EDITOR_WIDTH: u32 = 1500;
-pub const EDITOR_HEIGHT: u32 = 550;
+pub const EDITOR_WIDTH: u32 = 1050;
+pub const EDITOR_HEIGHT: u32 = 540;
 
 /// Persistent GUI-only state that lives across frames.
 pub struct EditorState {

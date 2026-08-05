@@ -22,8 +22,6 @@ pub struct RustInSynthPlugin {
     last_osc1_waveform: i32,
     last_osc2_waveform: i32,
     last_osc3_waveform: i32,
-    // Debug-only buffer counter for periodic envelope snapshots
-    debug_frame_counter: u32,
     // GUI editor state
     editor_state: Arc<EguiState>,
     // Shared GUI metrics (CPU load) written from the audio thread
@@ -318,33 +316,6 @@ impl Default for RustInSynthPlugin {
     }
 }
 
-/// Temporary debug aid: with `RUSTINSYNTH_DEBUG=1` set, log every MIDI event
-/// (plus the current sustain param value) to /tmp/rustinsynth_debug.log so
-/// plugin-host event streams can be inspected. Event-rate only; the env var
-/// check is cached. TODO: remove once the sustain investigation is done.
-fn debug_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("RUSTINSYNTH_DEBUG").is_some())
-}
-
-fn debug_log(msg: &str) {
-    use std::sync::OnceLock;
-    static START: OnceLock<std::time::Instant> = OnceLock::new();
-    if !debug_enabled() {
-        return;
-    }
-    let elapsed = START.get_or_init(std::time::Instant::now).elapsed();
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustinsynth_debug.log")
-    {
-        let _ = writeln!(f, "[{:>9.3}s] {}", elapsed.as_secs_f32(), msg);
-    }
-}
-
 impl Plugin for RustInSynthPlugin {
     const NAME: &'static str = "RustInSynth";
     const VENDOR: &'static str = "Nasker";
@@ -439,39 +410,13 @@ impl Plugin for RustInSynthPlugin {
         // 1. Sync non-allocating parameter values from host controls
         self.sync_plugin_params_safe();
 
-        // Debug: snapshot voice 0's envelope roughly twice per second
-        if debug_enabled() {
-            self.debug_frame_counter = self.debug_frame_counter.wrapping_add(1);
-            if self.debug_frame_counter % 50 == 0 {
-                let (state, env_sustain, vm_sustain, cutoff, f_amount) =
-                    self.voice_manager.debug_voice0();
-                debug_log(&format!(
-                    "SNAP    env_state={:?} env_sustain={:.3} vm_sustain={:.3} cutoff={:.1} f_amount={:.3} param_sustain={:.3} master={:.3}",
-                    state,
-                    env_sustain,
-                    vm_sustain,
-                    cutoff,
-                    f_amount,
-                    self.params.sustain.value(),
-                    self.params.master_volume.value(),
-                ));
-            }
-        }
-
         // 2. Process incoming MIDI notes and events
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } => {
-                    debug_log(&format!(
-                        "NoteOn  note={:>3} vel={:.3} sustain_param={:.3}",
-                        note,
-                        velocity,
-                        self.params.sustain.value()
-                    ));
                     self.voice_manager.receive_event(SynthEvent::note_on(note, velocity));
                 }
                 NoteEvent::NoteOff { note, .. } => {
-                    debug_log(&format!("NoteOff note={:>3}", note));
                     self.voice_manager.receive_event(SynthEvent::note_off(note));
                 }
                 NoteEvent::MidiPitchBend { value, .. } => {
@@ -481,7 +426,6 @@ impl Plugin for RustInSynthPlugin {
                 }
                 NoteEvent::MidiCC { cc, value, .. } => {
                     // value is 0.0 to 1.0 float in NIH-plug
-                    debug_log(&format!("CC      cc={:>3} raw={:.4}", cc, value));
                     let cc_val = (value * 127.0).round() as u8;
                     if self.editor_open.load(Ordering::Relaxed) {
                         // Editor open: route through the GUI → ParamSetter so the
@@ -496,9 +440,7 @@ impl Plugin for RustInSynthPlugin {
                         self.voice_manager.receive_event(SynthEvent::control_change(cc, cc_val));
                     }
                 }
-                other => {
-                    debug_log(&format!("Other   {:?}", std::mem::discriminant(&other)));
-                }
+                _ => {}
             }
         }
 
@@ -558,7 +500,6 @@ impl RustInSynthPlugin {
             last_osc1_waveform: 0,
             last_osc2_waveform: 0,
             last_osc3_waveform: 0,
-            debug_frame_counter: 0,
             editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
             gui_shared: PluginSharedState::new(),
             sample_rate: sample_rate as f32,

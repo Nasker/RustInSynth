@@ -9,6 +9,17 @@ use super::theme::THEME;
 use crate::core::param_spec::{self, ParamSpec};
 use crate::core::params::SynthParam;
 
+/// Add a slider whose value numbers read in the artwork's gold, leaving the
+/// rest of the visuals alone: rails keep the deep radioactive interior and
+/// handles still glow green on hover/drag.
+pub fn gold_value_slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
+    let prev = ui.visuals().widgets.inactive.fg_stroke;
+    ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0, THEME.gold_dark);
+    let response = ui.add_sized([80.0, 18.0], slider);
+    ui.visuals_mut().widgets.inactive.fg_stroke = prev;
+    response
+}
+
 /// The ONE slider widget for every `SynthParam`, driven entirely by the
 /// parameter's `ParamSpec` (range, curve, stepping, unit).
 ///
@@ -30,7 +41,9 @@ pub fn param_slider(
 
     let mut slider = egui::Slider::new(&mut t, 0.0..=1.0)
         .text(label)
-        .custom_formatter(move |v, _| spec.format_value(spec.denormalize(v as f32)))
+        .custom_formatter(move |v, _| {
+            format!("{:<8}", spec.format_value(spec.denormalize(v as f32)))
+        })
         .custom_parser(move |input| {
             let text = input.trim();
             let text = text.strip_suffix(spec.unit.trim()).unwrap_or(text).trim();
@@ -47,7 +60,7 @@ pub fn param_slider(
         slider = slider.step_by(1.0 / (spec.max - spec.min) as f64);
     }
 
-    let response = ui.add_sized([100.0, 20.0], slider);
+    let response = gold_value_slider(ui, slider);
 
     if response.drag_started() {
         b.begin_param_change(param);
@@ -103,8 +116,12 @@ pub fn knob(
     let center = rect.center();
     let radius = rect.width().min(rect.height()) * 0.35;
 
-    // Background circle (dark blue from artwork)
-    painter.circle_filled(center, radius, THEME.bg_blue);
+    // Radioactive core — bright at the center like the stone on the cover,
+    // fading out to the deep interior
+    painter.circle_filled(center, radius, THEME.toxic_green_deep);
+    painter.circle_filled(center, radius * 0.72, THEME.toxic_green_dark);
+    painter.circle_filled(center, radius * 0.46, THEME.toxic_green);
+    painter.circle_filled(center, radius * 0.22, THEME.toxic_green_light);
 
     // Outer ring (highlight when active)
     painter.circle_stroke(center, radius, THEME.knob_stroke(response.hovered(), response.dragged()));
