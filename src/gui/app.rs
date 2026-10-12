@@ -45,6 +45,7 @@ impl SynthApp {
             version: format!("v{}", env!("CARGO_PKG_VERSION")),
             show_cpu: true,
             show_midi_panel: true,
+            tempo_follows_host: false,
         };
         panels::shell(ctx, self.backend.as_mut(), &mut self.presets, &cfg);
     }
@@ -77,8 +78,8 @@ pub fn run_gui(shared: crate::gui::SharedState) -> Result<(), eframe::Error> {
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1050.0, 540.0])
-            .with_min_inner_size([1050.0, 540.0])
+            .with_inner_size(panels::WINDOW_SIZE)
+            .with_min_inner_size(panels::WINDOW_SIZE)
             .with_resizable(false),
         ..Default::default()
     };

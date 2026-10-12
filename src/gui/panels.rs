@@ -9,18 +9,22 @@ use egui::*;
 use crate::core::event::WaveformType;
 use crate::core::lfo::{LfoDestination, LfoWaveform};
 use crate::core::params::SynthParam;
-use crate::core::mod_matrix::{ModDest, ModSlot, ModSource, MOD_SLOTS};
-use crate::core::presets::{list_library, load_preset, save_preset, Preset, PresetEntry};
+use crate::core::mod_matrix::{ModDest, ModMatrix, ModSlot, ModSource, MOD_SLOTS};
+use crate::core::presets::{
+    list_library, load_preset, save_preset, Preset, PresetEntry, PRESET_BANKS,
+};
 use crate::core::voice::{LfoSettings, ModState, PolyphonyMode};
 use crate::gui::backend::{MidiLearnState, SynthBackend};
 use crate::gui::theme::{hangar_background, paint_chrome_title, section_header, spaced_label, THEME};
 use crate::gui::widgets::{gold_value_slider, param_slider};
 
-/// Which right-hand panel is shown in the tabbed column.
+/// Which page is shown in the main panel (Massive-style tabbed layers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RightTab {
-    /// Modulation routing matrix.
+    /// Main synth controls (oscillators, filter, FX, …).
     #[default]
+    Synth,
+    /// Modulation routing matrix.
     Matrix,
     /// Preset library / manager.
     Presets,
@@ -32,8 +36,12 @@ pub struct PresetState {
     /// Library entries: factory presets + user presets on disk.
     pub available_presets: Vec<PresetEntry>,
     pub selected_preset: Option<usize>,
-    /// Active tab in the right-hand column (Matrix or Presets).
+    /// Active page (Synth / Matrix / Presets).
     pub right_tab: RightTab,
+    /// Category written into presets saved from the GUI.
+    pub category: String,
+    /// Search filter for the preset list.
+    pub search: String,
 }
 
 impl PresetState {
@@ -43,6 +51,8 @@ impl PresetState {
             available_presets: list_library(),
             selected_preset: None,
             right_tab: RightTab::default(),
+            category: "User".to_string(),
+            search: String::new(),
         }
     }
 
@@ -72,6 +82,10 @@ fn format_slider_value(value: f64, _range: std::ops::RangeInclusive<usize>) -> S
 // Window shell (top bar + panel layout)
 // ============================================================================
 
+/// Window size shared by the standalone app and the plugin editor, sized so
+/// the SYNTH page fits without scrolling (LFO block is the lowest element).
+pub const WINDOW_SIZE: [f32; 2] = [1050.0, 700.0];
+
 /// How the shared shell should differ between the standalone app and the
 /// plugin editor. The layout itself is identical; only these knobs change.
 pub struct ShellConfig {
@@ -81,6 +95,8 @@ pub struct ShellConfig {
     pub show_cpu: bool,
     /// Include the MIDI panel in the rightmost column (standalone only).
     pub show_midi_panel: bool,
+    /// Tempo comes from the host transport (plugin) instead of the BPM slider.
+    pub tempo_follows_host: bool,
 }
 
 /// Render the complete synth UI (top bar + all panels) onto `ctx`.
@@ -177,70 +193,80 @@ pub fn shell(
         .frame(Frame::new().fill(THEME.bg_blue))
         .show(ctx, |ui| {
             hangar_background(ui.painter(), ui.max_rect());
+            // ── Tab strip: SYNTH | MATRIX | PRESETS ────────────────────────
+            ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                for (tab, label) in [
+                    (RightTab::Synth, "SYNTH"),
+                    (RightTab::Matrix, "ROUTING MATRIX"),
+                    (RightTab::Presets, "PRESETS"),
+                ] {
+                    let selected = preset_state.right_tab == tab;
+                    if ui
+                        .selectable_label(
+                            selected,
+                            RichText::new(label).size(13.0).strong(),
+                        )
+                        .clicked()
+                    {
+                        preset_state.right_tab = tab;
+                    }
+                }
+            });
+            ui.separator();
+
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height());
-                    ui.horizontal_top(|ui| {
-                        ui.vertical(|ui| {
-                            ui.set_width(175.0);
-                            oscillators(ui, b);
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            ui.set_width(150.0);
-                            filter(ui, b);
-                            ui.add_space(8.0);
-                            envelopes(ui, b);
-                            ui.add_space(8.0);
-                            lfo(ui, b);
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            ui.set_width(150.0);
-                            effects(ui, b);
-                            ui.add_space(8.0);
-                            pitch_voice(ui, b);
-                            ui.add_space(8.0);
-                            master(ui, b);
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            ui.set_width(310.0);
-
-                            // Tab strip: MATRIX | PRESETS — keeps total width fixed.
-                            ui.horizontal(|ui| {
-                                for (tab, label) in
-                                    [(RightTab::Matrix, "MATRIX"), (RightTab::Presets, "PRESETS")]
-                                {
-                                    let selected = preset_state.right_tab == tab;
-                                    if ui
-                                        .selectable_label(
-                                            selected,
-                                            RichText::new(label).size(11.0).strong(),
-                                        )
-                                        .clicked()
-                                    {
-                                        preset_state.right_tab = tab;
-                                    }
-                                }
-                            });
-                            ui.separator();
-
-                            match preset_state.right_tab {
-                                RightTab::Matrix => mod_matrix_panel(ui, b),
-                                RightTab::Presets => {
-                                    presets(ui, b, preset_state);
+                    match preset_state.right_tab {
+                        // ── SYNTH: the classic three-column layout ───────────
+                        RightTab::Synth => {
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(175.0);
+                                    oscillators(ui, b);
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.set_width(150.0);
+                                    filter(ui, b);
+                                    ui.add_space(8.0);
+                                    envelopes(ui, b);
+                                    ui.add_space(8.0);
+                                    lfo(ui, b);
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.set_width(150.0);
+                                    effects(ui, b);
+                                    ui.add_space(8.0);
+                                    pitch_voice(ui, b);
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.set_width(190.0);
+                                    master(ui, b);
+                                    ui.add_space(8.0);
+                                    tempo(ui, b, cfg.tempo_follows_host);
                                     if cfg.show_midi_panel {
-                                        ui.add_space(16.0);
-                                        ui.separator();
                                         ui.add_space(8.0);
                                         midi(ui, b);
                                     }
-                                }
-                            }
-                        });
-                    });
+                                });
+                            });
+                        }
+
+                        // ── MATRIX: routing matrix fills the same area ───────
+                        RightTab::Matrix => {
+                            mod_matrix_panel(ui, b);
+                        }
+
+                        // ── PRESETS: library + (standalone) MIDI ─────────────
+                        RightTab::Presets => {
+                            presets(ui, b, preset_state);
+                        }
+                    }
                 });
         });
 }
@@ -363,6 +389,7 @@ pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
 
     // Filter topology selector (stored in ModState so it reaches the DSP)
     let mut ms = b.mod_state();
+    let before = ms;
     egui::ComboBox::from_id_salt("filter_type")
         .selected_text(ms.filter_type.name())
         .show_ui(ui, |ui| {
@@ -370,7 +397,9 @@ pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
                 ui.selectable_value(&mut ms.filter_type, ty, ty.name());
             }
         });
-    b.set_mod_state(ms);
+    if ms != before {
+        b.set_mod_state(ms);
+    }
 
     param_slider(ui, b, SynthParam::FilterCutoff, "Cutoff");
     param_slider(ui, b, SynthParam::FilterResonance, "Res");
@@ -408,6 +437,30 @@ pub fn master(ui: &mut Ui, b: &mut dyn SynthBackend) {
     param_slider(ui, b, SynthParam::MasterVolume, "Volume");
 }
 
+/// Tempo block: BPM drives synced LFOs and the synced delay.
+pub fn tempo(ui: &mut Ui, b: &mut dyn SynthBackend, follows_host: bool) {
+    section_header(ui, "TEMPO");
+
+    let mut ms = b.mod_state();
+    let before = ms;
+    ui.add_enabled(
+        !follows_host,
+        egui::Slider::new(&mut ms.bpm, 20.0..=300.0)
+            .text("BPM")
+            .fixed_decimals(1),
+    );
+    if follows_host {
+        ui.label(
+            RichText::new("Follows host transport")
+                .size(9.0)
+                .color(THEME.text_dim),
+        );
+    }
+    if ms != before {
+        b.set_mod_state(ms);
+    }
+}
+
 // ============================================================================
 // LFO + Pitch / Voice
 // ============================================================================
@@ -415,7 +468,21 @@ pub fn master(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn lfo(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "LFO");
 
-    param_slider(ui, b, SynthParam::LfoRate, "Rate");
+    // Tempo sync lives with LFO 1; when synced the Rate slider is bypassed.
+    let mut ms = b.mod_state();
+    let before = ms;
+    ui.add_enabled_ui(!ms.lfo1.sync, |ui| {
+        param_slider(ui, b, SynthParam::LfoRate, "Rate");
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut ms.lfo1.sync, RichText::new("Sync").size(10.0));
+        if ms.lfo1.sync {
+            division_combo(ui, "lfo1_div".into(), &mut ms.lfo1.rate_beats);
+        }
+    });
+    if ms != before {
+        b.set_mod_state(ms);
+    }
     param_slider(ui, b, SynthParam::LfoDepth, "Depth");
 
     ui.label(RichText::new("Waveform").size(10.0));
@@ -431,22 +498,8 @@ pub fn lfo(ui: &mut Ui, b: &mut dyn SynthBackend) {
                 }
             }
         });
-
-    ui.label(RichText::new("Destination").size(10.0));
-    let lfo_dest_labels = ["Off", "Pitch", "Filter", "Amp"];
-    let lfo_dest = b.get_param(SynthParam::LfoDestination) as usize;
-    egui::ComboBox::from_id_salt("lfo_dest")
-        .width(70.0)
-        .selected_text(lfo_dest_labels[lfo_dest.min(3)])
-        .show_ui(ui, |ui| {
-            for (i, label) in lfo_dest_labels.iter().enumerate() {
-                if ui.selectable_label(lfo_dest == i, *label).clicked() {
-                    b.set_param(SynthParam::LfoDestination, i as f32);
-                }
-            }
-        });
-
-    ui.add_space(12.0);
+    // Routing lives on the ROUTING MATRIX page now; the legacy LFO1
+    // destination only survives for old-preset migration, so no combo here.
 }
 
 pub fn pitch_voice(ui: &mut Ui, b: &mut dyn SynthBackend) {
@@ -512,9 +565,24 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
             b.set_delay_enabled(delay_on);
         }
 
+        // Tempo sync lives with the delay; when synced Time is bypassed.
+        let mut ms = b.mod_state();
+        let before = ms;
         let mut time = b.delay_time();
-        if gold_value_slider(ui, egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s").custom_formatter(format_slider_value)).changed() {
+        let time_resp = ui.add_enabled_ui(!ms.delay_sync, |ui| {
+            gold_value_slider(ui, egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s").custom_formatter(format_slider_value))
+        });
+        if time_resp.inner.changed() {
             b.set_delay_time(time);
+        }
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut ms.delay_sync, RichText::new("Sync").size(10.0));
+            if ms.delay_sync {
+                division_combo(ui, "delay_div".into(), &mut ms.delay_beats);
+            }
+        });
+        if ms != before {
+            b.set_mod_state(ms);
         }
         let mut feedback = b.delay_feedback();
         if gold_value_slider(ui, egui::Slider::new(&mut feedback, 0.0..=0.9).text("Fdbk").custom_formatter(format_slider_value)).changed() {
@@ -577,47 +645,174 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
 // Presets
 // ============================================================================
 
-pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
-    section_header(ui, "PRESETS");
-
-    ui.horizontal(|ui| {
-        ui.label("Name:");
-        ui.text_edit_singleline(&mut state.preset_name);
-    });
-
-    if ui.button("💾 Save").clicked() {
-        let preset = create_preset(b, &state.preset_name);
-        if let Err(e) = save_preset(&preset) {
-            eprintln!("Failed to save preset: {}", e);
-        } else {
+/// Save the current sound into the selected bank. Names that collide with a
+/// factory preset get a " (User)" suffix so factory refreshes never clobber them.
+fn save_current(b: &mut dyn SynthBackend, state: &mut PresetState) {
+    let mut name = state.preset_name.trim().to_string();
+    if name.is_empty() {
+        name = "New Preset".to_string();
+    }
+    if state
+        .available_presets
+        .iter()
+        .any(|e| e.is_factory && e.name.eq_ignore_ascii_case(&name))
+    {
+        name = format!("{} (User)", name);
+    }
+    let preset = create_preset(b, &name, &state.category);
+    match save_preset(&preset) {
+        Ok(()) => {
+            state.preset_name = name.clone();
             state.refresh();
+            state.selected_preset = state
+                .available_presets
+                .iter()
+                .position(|e| !e.is_factory && e.name == name);
+        }
+        Err(e) => eprintln!("Failed to save preset: {}", e),
+    }
+}
+
+/// One themed shelf: bank title + count, then a scrollable preset list.
+fn preset_shelf(
+    ui: &mut Ui,
+    title: &str,
+    idxs: &[usize],
+    state: &PresetState,
+    size: Vec2,
+    clicked: &mut Option<usize>,
+) {
+    Frame::new()
+        .fill(Color32::from_black_alpha(70))
+        .stroke(Stroke::new(1.0, THEME.panel_border))
+        .corner_radius(4)
+        .inner_margin(Margin::same(6))
+        .show(ui, |ui| {
+            ui.set_width(size.x - 14.0);
+            ui.set_height(size.y - 14.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(title.to_uppercase()).size(11.0).strong().color(THEME.gold));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(idxs.len().to_string()).size(9.0).color(THEME.text_dim));
+                });
+            });
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt(("preset_shelf", title))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
+                        if idxs.is_empty() {
+                            ui.label(RichText::new("— empty —").size(10.0).color(THEME.text_dim));
+                        }
+                        for &i in idxs {
+                            let e = &state.available_presets[i];
+                            let text = if e.is_factory {
+                                RichText::new(&e.name).size(11.0)
+                            } else {
+                                RichText::new(format!("✎ {}", e.name))
+                                    .size(11.0)
+                                    .italics()
+                                    .color(THEME.gold_light)
+                            };
+                            if ui.selectable_label(state.selected_preset == Some(i), text).clicked() {
+                                *clicked = Some(i);
+                            }
+                        }
+                    });
+                });
+        });
+}
+
+/// The PRESETS page: save/search toolbar above the library, which is
+/// arranged as themed bank shelves (Bass, Lead, Pad, …) in four columns.
+pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
+    section_header(ui, "PRESET LIBRARY");
+
+    // ── Toolbar ─────────────────────────────────────────────────────────────
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Name").size(10.0));
+        ui.add(egui::TextEdit::singleline(&mut state.preset_name).desired_width(150.0));
+        ui.label(RichText::new("Bank").size(10.0));
+        egui::ComboBox::from_id_salt("save_bank")
+            .width(70.0)
+            .selected_text(state.category.clone())
+            .show_ui(ui, |ui| {
+                for bank in PRESET_BANKS {
+                    ui.selectable_value(&mut state.category, bank.to_string(), bank);
+                }
+            });
+        if ui.button("💾 Save").clicked() {
+            save_current(b, state);
+        }
+        ui.separator();
+        ui.label("🔍");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.search)
+                .hint_text("Search name or bank…")
+                .desired_width(170.0),
+        );
+        if !state.search.is_empty() && ui.small_button("✕").clicked() {
+            state.search.clear();
+        }
+        ui.separator();
+        let factory = state.available_presets.iter().filter(|e| e.is_factory).count();
+        let user = state.available_presets.len() - factory;
+        ui.label(
+            RichText::new(format!("{} factory · {} user", factory, user))
+                .size(9.0)
+                .color(THEME.text_dim),
+        );
+    });
+    ui.add_space(6.0);
+
+    // ── Bucket (filtered) entries into bank shelves ─────────────────────────
+    let needle = state.search.to_lowercase();
+    let mut shelves: Vec<(String, Vec<usize>)> =
+        PRESET_BANKS.iter().map(|b| (b.to_string(), Vec::new())).collect();
+    for (i, e) in state.available_presets.iter().enumerate() {
+        if !needle.is_empty()
+            && !e.name.to_lowercase().contains(&needle)
+            && !e.category.to_lowercase().contains(&needle)
+        {
+            continue;
+        }
+        match shelves.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(&e.category)) {
+            Some((_, v)) => v.push(i),
+            None => shelves.push((e.category.clone(), vec![i])),
         }
     }
+    for (_, v) in &mut shelves {
+        v.sort_by_key(|&i| state.available_presets[i].name.to_lowercase());
+    }
 
-    ui.add_space(8.0);
-    ui.label("Load:");
+    // ── Shelves: 4 columns, rows sized to fill the page ─────────────────────
+    const COLS: usize = 4;
+    let gap = 8.0;
+    let col_w = ((ui.available_width() - gap * (COLS as f32 - 1.0)) / COLS as f32).floor();
+    let rows = shelves.len().div_ceil(COLS).max(1);
+    let shelf_h = ((ui.available_height() - gap * (rows as f32 - 1.0)) / rows as f32).max(140.0);
 
-    let mut clicked_name: Option<String> = None;
-    egui::ScrollArea::vertical()
-        .id_salt("preset_list")
-        .max_height(80.0)
-        .show(ui, |ui| {
-            for (i, entry) in state.available_presets.iter().enumerate() {
-                let is_selected = state.selected_preset == Some(i);
-                let label = if entry.is_factory {
-                    format!("{}  (factory)", entry.name)
-                } else {
-                    entry.name.clone()
-                };
-                if ui.selectable_label(is_selected, label).clicked() {
-                    state.selected_preset = Some(i);
-                    clicked_name = Some(entry.name.clone());
+    let mut clicked: Option<usize> = None;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        for col in 0..COLS {
+            ui.vertical(|ui| {
+                ui.set_width(col_w);
+                ui.spacing_mut().item_spacing.y = gap;
+                for (title, idxs) in shelves.iter().skip(col).step_by(COLS) {
+                    preset_shelf(ui, title, idxs, state, vec2(col_w, shelf_h), &mut clicked);
                 }
-            }
-        });
-    if let Some(ref name) = clicked_name {
-        if let Ok(preset) = load_preset(name) {
+            });
+        }
+    });
+
+    if let Some(i) = clicked {
+        let entry = state.available_presets[i].clone();
+        if let Ok(preset) = load_preset(&entry.name) {
+            state.selected_preset = Some(i);
             state.preset_name = preset.name.clone();
+            state.category = entry.category.clone();
             apply_preset(b, &preset);
         }
     }
@@ -869,6 +1064,7 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
             preset.env3_sustain,
             preset.env3_release,
         ],
+        env4: preset.env4,
         bpm: preset.tempo_bpm,
         delay_sync: preset.delay_sync,
         delay_beats: preset.delay_beats,
@@ -876,11 +1072,16 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     });
 }
 
-pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
+pub fn create_preset(b: &dyn SynthBackend, name: &str, category: &str) -> Preset {
     let ms = b.mod_state();
     Preset {
         name: name.to_string(),
         version: "1.0".to_string(),
+        category: if category.trim().is_empty() {
+            "User".to_string()
+        } else {
+            category.trim().to_string()
+        },
 
         osc1_waveform: WaveformType::from_index(b.get_param(SynthParam::Osc1Waveform) as u8),
         osc1_level: b.get_param(SynthParam::Osc1Level),
@@ -937,6 +1138,7 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
         env3_decay: ms.env3[1],
         env3_sustain: ms.env3[2],
         env3_release: ms.env3[3],
+        env4: ms.env4,
         mod_matrix: ms.matrix,
 
         tempo_bpm: ms.bpm,
@@ -994,54 +1196,103 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
 /// LFO waveform labels shared by all three LFO controls.
 const LFO_WF_LABELS: [&str; 5] = ["Sin", "Tri", "Sqr", "Saw", "Rnd"];
 
-/// One extra LFO block (LFO 2/3): waveform combo + rate + depth sliders.
+/// Width of one modulator block.
+const MOD_BLOCK_W: f32 = 210.0;
+
+fn lfo_wf_index(wf: LfoWaveform) -> usize {
+    match wf {
+        LfoWaveform::Sine => 0,
+        LfoWaveform::Triangle => 1,
+        LfoWaveform::Square => 2,
+        LfoWaveform::Saw => 3,
+        LfoWaveform::Random => 4,
+    }
+}
+
+fn lfo_wf_from_index(i: usize) -> LfoWaveform {
+    match i {
+        0 => LfoWaveform::Sine,
+        1 => LfoWaveform::Triangle,
+        2 => LfoWaveform::Square,
+        3 => LfoWaveform::Saw,
+        _ => LfoWaveform::Random,
+    }
+}
+
+fn mod_block_title(ui: &mut Ui, title: &str) {
+    ui.label(
+        RichText::new(title)
+            .size(10.0)
+            .strong()
+            .color(Color32::from_rgb(255, 180, 60)),
+    );
+}
+
+/// One extra LFO block (LFO 2/3). Explicit vertical layout keeps the title
+/// on its own row; controls are split into two parameter rows below it.
 fn extra_lfo(ui: &mut Ui, title: &str, s: &mut LfoSettings) {
     ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(title)
-                    .size(10.0)
-                    .strong()
-                    .color(Color32::from_rgb(255, 180, 60)),
-            );
-            let wf = match s.waveform {
-                LfoWaveform::Sine => 0,
-                LfoWaveform::Triangle => 1,
-                LfoWaveform::Square => 2,
-                LfoWaveform::Saw => 3,
-                LfoWaveform::Random => 4,
-            };
-            let mut wf_sel = wf;
-            egui::ComboBox::from_id_salt(format!("{}_wf", title))
-                .width(48.0)
-                .selected_text(LFO_WF_LABELS[wf])
-                .show_ui(ui, |ui| {
-                    for (i, label) in LFO_WF_LABELS.iter().enumerate() {
-                        ui.selectable_value(&mut wf_sel, i, *label);
-                    }
-                });
-            s.waveform = match wf_sel {
-                0 => LfoWaveform::Sine,
-                1 => LfoWaveform::Triangle,
-                2 => LfoWaveform::Square,
-                3 => LfoWaveform::Saw,
-                _ => LfoWaveform::Random,
-            };
-        });
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut s.sync, "Sync");
-            if s.sync {
-                division_combo(ui, format!("{}_div", title), &mut s.rate_beats);
-            } else {
-                ui.add(
+        ui.vertical(|ui| {
+            ui.set_width(MOD_BLOCK_W);
+            mod_block_title(ui, title);
+
+            let mut wf_sel = lfo_wf_index(s.waveform);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(format!("{}_wf", title))
+                    .width(56.0)
+                    .selected_text(LFO_WF_LABELS[wf_sel])
+                    .show_ui(ui, |ui| {
+                        for (i, label) in LFO_WF_LABELS.iter().enumerate() {
+                            ui.selectable_value(&mut wf_sel, i, *label);
+                        }
+                    });
+                ui.checkbox(&mut s.sync, RichText::new("Sync").size(10.0));
+                if s.sync {
+                    division_combo(ui, format!("{}_div", title), &mut s.rate_beats);
+                }
+            });
+            s.waveform = lfo_wf_from_index(wf_sel);
+
+            ui.horizontal(|ui| {
+                ui.spacing_mut().slider_width = 55.0;
+                ui.add(egui::Slider::new(&mut s.depth, 0.0..=1.0).text("Depth").fixed_decimals(2));
+                ui.add_enabled(
+                    !s.sync,
                     egui::Slider::new(&mut s.rate, 0.1..=20.0)
                         .text("Rate")
                         .logarithmic(true)
-                        .suffix(" Hz"),
+                        .fixed_decimals(2),
                 );
-            }
+            });
         });
-        ui.add(egui::Slider::new(&mut s.depth, 0.0..=1.0).text("Depth"));
+    });
+}
+
+/// One free envelope block (ENV 3/4): title row, then A/D and S/R sliders
+/// side by side on two rows.
+fn extra_env(ui: &mut Ui, title: &str, adsr: &mut [f32; 4]) {
+    let env_slider = |ui: &mut Ui, v: &mut f32, label: &str, level: bool| {
+        let slider = if level {
+            egui::Slider::new(v, 0.0..=1.0)
+        } else {
+            egui::Slider::new(v, 0.001..=5.0).logarithmic(true).suffix(" s")
+        };
+        ui.add(slider.text(label).fixed_decimals(2));
+    };
+    ui.group(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(MOD_BLOCK_W);
+            ui.spacing_mut().slider_width = 60.0;
+            mod_block_title(ui, title);
+            ui.horizontal(|ui| {
+                env_slider(ui, &mut adsr[0], "A", false);
+                env_slider(ui, &mut adsr[1], "D", false);
+            });
+            ui.horizontal(|ui| {
+                env_slider(ui, &mut adsr[2], "S", true);
+                env_slider(ui, &mut adsr[3], "R", false);
+            });
+        });
     });
 }
 
@@ -1075,108 +1326,318 @@ fn division_combo(ui: &mut Ui, id_salt: String, beats: &mut f32) {
         });
 }
 
-/// The modulation routing matrix: 16 slots of source → dest → amount,
-/// plus the LFO 2/3 and Env 3 controls that feed the matrix.
-pub fn mod_matrix_panel(ui: &mut Ui, b: &mut dyn SynthBackend) {
-    section_header(ui, "MOD MATRIX");
+/// Routing grid cell size, row-label width and rotated column-header height.
+const GRID_CELL: f32 = 24.0;
+const GRID_LABEL_W: f32 = 78.0;
+const GRID_HEADER_H: f32 = 84.0;
 
-    let mut ms = b.mod_state();
-
-    // Tempo + delay sync
-    ui.horizontal(|ui| {
-        ui.label("BPM");
-        ui.add(egui::Slider::new(&mut ms.bpm, 20.0..=300.0).fixed_decimals(1));
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut ms.lfo1.sync, "LFO1 Sync");
-        if ms.lfo1.sync {
-            division_combo(ui, "lfo1_div".into(), &mut ms.lfo1.rate_beats);
-        }
-        ui.checkbox(&mut ms.delay_sync, "Delay Sync");
-        if ms.delay_sync {
-            division_combo(ui, "delay_div".into(), &mut ms.delay_beats);
-        }
-    });
-
-    // Extra modulators
-    ui.horizontal(|ui| {
-        extra_lfo(ui, "LFO 2", &mut ms.lfo2);
-        extra_lfo(ui, "LFO 3", &mut ms.lfo3);
-    });
-
-    ui.group(|ui| {
-        ui.label(
-            RichText::new("ENV 3")
-                .size(10.0)
-                .strong()
-                .color(Color32::from_rgb(255, 180, 60)),
-        );
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::Slider::new(&mut ms.env3[0], 0.001..=5.0)
-                    .text("A")
-                    .logarithmic(true)
-                    .fixed_decimals(2),
-            );
-            ui.add(
-                egui::Slider::new(&mut ms.env3[1], 0.001..=5.0)
-                    .text("D")
-                    .logarithmic(true)
-                    .fixed_decimals(2),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.add(egui::Slider::new(&mut ms.env3[2], 0.0..=1.0).text("S"));
-            ui.add(
-                egui::Slider::new(&mut ms.env3[3], 0.001..=5.0)
-                    .text("R")
-                    .logarithmic(true)
-                    .fixed_decimals(2),
-            );
-        });
-    });
-
-    ui.add_space(6.0);
-    ui.separator();
-
-    // Routing slots
-    for i in 0..MOD_SLOTS {
-        let slot = &mut ms.matrix.slots[i];
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut slot.enabled, "");
-
-            egui::ComboBox::from_id_salt(format!("ms_src_{}", i))
-                .width(78.0)
-                .selected_text(slot.source.name())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut slot.source, ModSource::Off, "Off");
-                    for src in ModSource::all() {
-                        ui.selectable_value(&mut slot.source, *src, src.name());
-                    }
-                });
-
-            ui.label(RichText::new("→").size(10.0).color(THEME.gold_dark));
-
-            egui::ComboBox::from_id_salt(format!("ms_dst_{}", i))
-                .width(86.0)
-                .selected_text(slot.dest.name())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut slot.dest, ModDest::Off, "Off");
-                    for dst in ModDest::all() {
-                        ui.selectable_value(&mut slot.dest, *dst, dst.name());
-                    }
-                });
-
-            ui.add(
-                egui::Slider::new(&mut slot.amount, -1.0..=1.0)
-                    .fixed_decimals(2),
-            );
-        });
-    }
-
-    if ui.small_button("Clear all slots").clicked() {
-        ms.matrix.slots = [ModSlot::default(); MOD_SLOTS];
-    }
-
-    b.set_mod_state(ms);
+/// Thicker separator after these rows (LFOs | envelopes | performance).
+fn src_group_break(s: ModSource) -> bool {
+    matches!(s, ModSource::Lfo3 | ModSource::Env4)
 }
+
+/// Thicker separator after these columns (pitch | filter | amp | osc levels |
+/// osc pans | LFO rates | LFO depths).
+fn dst_group_break(d: ModDest) -> bool {
+    matches!(
+        d,
+        ModDest::AllPitch
+            | ModDest::FilterResonance
+            | ModDest::StereoWidth
+            | ModDest::Osc3Level
+            | ModDest::Osc3Pan
+            | ModDest::Lfo3Rate
+    )
+}
+
+/// Index of the enabled slot routing `s` → `d`, if any.
+fn find_route(m: &ModMatrix, s: ModSource, d: ModDest) -> Option<usize> {
+    m.slots
+        .iter()
+        .position(|x| x.enabled && x.source == s && x.dest == d)
+}
+
+/// Source (rows) × destination (columns) routing grid. Clicking a cell
+/// toggles a route (backed by a free matrix slot); hovering a lit cell pops
+/// up an amount slider.
+fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
+    let srcs: Vec<ModSource> = ModSource::all().iter().copied().filter(|s| s.is_wired()).collect();
+    let dsts: Vec<ModDest> = ModDest::all().iter().copied().filter(|d| d.is_wired()).collect();
+    let (rows, cols) = (srcs.len(), dsts.len());
+
+    let size = vec2(
+        GRID_LABEL_W + cols as f32 * GRID_CELL,
+        GRID_HEADER_H + rows as f32 * GRID_CELL,
+    );
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let origin = rect.min + vec2(GRID_LABEL_W, GRID_HEADER_H);
+    let cell_rect = |r: usize, c: usize| {
+        Rect::from_min_size(
+            origin + vec2(c as f32 * GRID_CELL, r as f32 * GRID_CELL),
+            Vec2::splat(GRID_CELL),
+        )
+    };
+    let grid_rect = Rect::from_min_size(origin, vec2(cols as f32 * GRID_CELL, rows as f32 * GRID_CELL));
+
+    let grid_id = ui.id().with("routing_grid");
+    let popup_rect_id = grid_id.with("popup_rect");
+    let full_id = grid_id.with("full_at");
+    let now = ui.input(|i| i.time);
+    let mut active: Option<(usize, usize)> = ui
+        .data(|d| d.get_temp::<Option<(usize, usize)>>(grid_id))
+        .flatten();
+    let prev_popup: Option<Rect> = ui.data(|d| d.get_temp(popup_rect_id));
+
+    // ── Interaction ─────────────────────────────────────────────────────────
+    let mut hovered: Option<(usize, usize)> = None;
+    for r in 0..rows {
+        for c in 0..cols {
+            let resp = ui.interact(cell_rect(r, c), grid_id.with((r, c)), Sense::click());
+            if resp.hovered() {
+                hovered = Some((r, c));
+            }
+            if resp.clicked() {
+                let (s, d) = (srcs[r], dsts[c]);
+                match find_route(&ms.matrix, s, d) {
+                    Some(i) => ms.matrix.slots[i] = ModSlot::default(),
+                    None => match ms.matrix.slots.iter().position(|x| !x.enabled) {
+                        Some(i) => {
+                            ms.matrix.slots[i] = ModSlot {
+                                source: s,
+                                dest: d,
+                                amount: 0.5,
+                                enabled: true,
+                            };
+                        }
+                        None => {
+                            ui.data_mut(|dm| dm.insert_temp(full_id, now));
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    // The amount popup stays open while the pointer is on its cell or on it.
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    match hovered {
+        Some((r, c)) if find_route(&ms.matrix, srcs[r], dsts[c]).is_some() => active = Some((r, c)),
+        Some(_) => active = None,
+        None => {
+            if let Some((r, c)) = active {
+                let keep = ui.ctx().egui_is_using_pointer()
+                    || pointer.is_some_and(|p| {
+                        cell_rect(r, c).expand(2.0).contains(p)
+                            || prev_popup.is_some_and(|pr| pr.expand(6.0).contains(p))
+                    });
+                if !keep {
+                    active = None;
+                }
+            }
+        }
+    }
+    if let Some((r, c)) = active {
+        if find_route(&ms.matrix, srcs[r], dsts[c]).is_none() {
+            active = None;
+        }
+    }
+
+    // ── Painting ────────────────────────────────────────────────────────────
+    {
+        let painter = ui.painter();
+        let focus = active.or(hovered);
+        painter.rect_filled(grid_rect, 3.0, Color32::from_black_alpha(90));
+
+        // Crosshair on the focused row/column
+        if let Some((r, c)) = focus {
+            let row = cell_rect(r, 0);
+            let col = cell_rect(0, c);
+            let tint = THEME.toxic_green.gamma_multiply(0.10);
+            painter.rect_filled(
+                Rect::from_min_max(pos2(rect.min.x, row.min.y), pos2(grid_rect.max.x, row.max.y)),
+                0.0,
+                tint,
+            );
+            painter.rect_filled(
+                Rect::from_min_max(pos2(col.min.x, rect.min.y), pos2(col.max.x, grid_rect.max.y)),
+                0.0,
+                tint,
+            );
+        }
+
+        // Grid lines, thicker between thematic groups
+        let thin = Stroke::new(1.0, Color32::from_white_alpha(14));
+        let thick = Stroke::new(1.0, THEME.gold_dark.gamma_multiply(0.7));
+        for c in 0..=cols {
+            let x = origin.x + c as f32 * GRID_CELL;
+            let stroke = if c == 0 || c == cols || dst_group_break(dsts[c - 1]) { thick } else { thin };
+            painter.line_segment([pos2(x, grid_rect.min.y), pos2(x, grid_rect.max.y)], stroke);
+        }
+        for r in 0..=rows {
+            let y = origin.y + r as f32 * GRID_CELL;
+            let stroke = if r == 0 || r == rows || src_group_break(srcs[r - 1]) { thick } else { thin };
+            painter.line_segment([pos2(grid_rect.min.x, y), pos2(grid_rect.max.x, y)], stroke);
+        }
+
+        // Row labels (sources)
+        for (r, s) in srcs.iter().enumerate() {
+            let color = if focus.map(|f| f.0) == Some(r) { THEME.gold_light } else { THEME.text_secondary };
+            painter.text(
+                pos2(origin.x - 6.0, cell_rect(r, 0).center().y),
+                Align2::RIGHT_CENTER,
+                s.name(),
+                FontId::proportional(10.0),
+                color,
+            );
+        }
+
+        // Rotated column labels (destinations), reading bottom-to-top
+        for (c, d) in dsts.iter().enumerate() {
+            let color = if focus.map(|f| f.1) == Some(c) { THEME.gold_light } else { THEME.text_secondary };
+            let galley = painter.layout_no_wrap(d.name().to_string(), FontId::proportional(10.0), color);
+            let x = cell_rect(0, c).center().x - galley.size().y / 2.0;
+            painter.add(
+                epaint::TextShape::new(pos2(x, origin.y - 6.0), galley, color)
+                    .with_angle(-std::f32::consts::FRAC_PI_2),
+            );
+        }
+
+        // Cells: lit node sized/colored by amount; faint dot when unrouted
+        for r in 0..rows {
+            for c in 0..cols {
+                let center = cell_rect(r, c).center();
+                if let Some(i) = find_route(&ms.matrix, srcs[r], dsts[c]) {
+                    let amt = ms.matrix.slots[i].amount.clamp(-1.0, 1.0);
+                    let color = if amt >= 0.0 { THEME.toxic_green } else { THEME.rust };
+                    painter.circle_filled(center, 3.5 + 5.5 * amt.abs(), color.gamma_multiply(0.35 + 0.65 * amt.abs()));
+                    painter.circle_stroke(center, 9.0, Stroke::new(1.0, color));
+                } else if hovered == Some((r, c)) {
+                    painter.circle_stroke(center, 9.0, Stroke::new(1.0, Color32::from_white_alpha(70)));
+                } else {
+                    painter.circle_filled(center, 1.5, Color32::from_white_alpha(28));
+                }
+            }
+        }
+    }
+
+    // ── Hover amount popup ──────────────────────────────────────────────────
+    let mut popup_rect = None;
+    if let Some((r, c)) = active {
+        if let Some(i) = find_route(&ms.matrix, srcs[r], dsts[c]) {
+            let cr = cell_rect(r, c);
+            // Open towards the side with room so it never covers its own cell.
+            let (pivot, pos) = if c + 7 < cols {
+                (Align2::LEFT_TOP, cr.right_top() + vec2(-1.0, -1.0))
+            } else {
+                (Align2::RIGHT_TOP, cr.left_top() + vec2(1.0, -1.0))
+            };
+            let area = egui::Area::new(grid_id.with("amount_popup"))
+                .order(Order::Foreground)
+                .pivot(pivot)
+                .fixed_pos(pos)
+                .show(ui.ctx(), |ui| {
+                    Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("{} → {}", srcs[r].name(), dsts[c].name()))
+                                .size(10.0)
+                                .color(THEME.gold),
+                        );
+                        ui.spacing_mut().slider_width = 120.0;
+                        ui.add(
+                            egui::Slider::new(&mut ms.matrix.slots[i].amount, -1.0..=1.0)
+                                .text("Amt")
+                                .fixed_decimals(2),
+                        );
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Invert").clicked() {
+                                ms.matrix.slots[i].amount = -ms.matrix.slots[i].amount;
+                            }
+                            if ui.small_button("✕ Remove").clicked() {
+                                ms.matrix.slots[i] = ModSlot::default();
+                            }
+                        });
+                    });
+                });
+            popup_rect = Some(area.response.rect);
+        }
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(grid_id, active);
+        match popup_rect {
+            Some(r) => {
+                d.insert_temp(popup_rect_id, r);
+            }
+            None => d.remove::<Rect>(popup_rect_id),
+        }
+    });
+
+    // ── Status line ─────────────────────────────────────────────────────────
+    let used = ms.matrix.slots.iter().filter(|s| s.enabled).count();
+    let hidden = ms
+        .matrix
+        .slots
+        .iter()
+        .filter(|s| s.enabled && !(s.source.is_wired() && s.dest.is_wired()))
+        .count();
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let color = if used == MOD_SLOTS { THEME.logo_red_light } else { THEME.gold };
+        ui.label(RichText::new(format!("Routes {}/{}", used, MOD_SLOTS)).size(10.0).strong().color(color));
+        if hidden > 0 {
+            ui.label(
+                RichText::new(format!("({} legacy route(s) not shown)", hidden))
+                    .size(9.0)
+                    .color(THEME.text_dim),
+            );
+        }
+        if ui.small_button("Clear all").clicked() {
+            ms.matrix = ModMatrix::default();
+        }
+    });
+    ui.label(
+        RichText::new("Click a cell to route a source to a destination · hover a lit cell to set its amount")
+            .size(9.0)
+            .color(THEME.text_dim),
+    );
+    if let Some(t) = ui.data(|d| d.get_temp::<f64>(full_id)) {
+        if now - t < 2.0 {
+            ui.label(
+                RichText::new("All routes are in use — remove one first")
+                    .size(10.0)
+                    .color(THEME.logo_red_light),
+            );
+            ui.ctx().request_repaint();
+        }
+    }
+}
+
+/// The ROUTING MATRIX page: the extra modulators (LFO 2/3, ENV 3/4) in a
+/// 2x2 block on top, with the source × destination grid below it.
+pub fn mod_matrix_panel(ui: &mut Ui, b: &mut dyn SynthBackend) {
+    section_header(ui, "ROUTING MATRIX");
+
+    let before = b.mod_state();
+    let mut ms = before;
+
+    ui.label(RichText::new("MODULATORS").size(10.0).color(THEME.gold_dark));
+    egui::Grid::new("modulators_2x2")
+        .num_columns(2)
+        .spacing([6.0, 6.0])
+        .show(ui, |ui| {
+            extra_lfo(ui, "LFO 2", &mut ms.lfo2);
+            extra_lfo(ui, "LFO 3", &mut ms.lfo3);
+            ui.end_row();
+            extra_env(ui, "ENV 3", &mut ms.env3);
+            extra_env(ui, "ENV 4", &mut ms.env4);
+            ui.end_row();
+        });
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(4.0);
+    routing_grid(ui, &mut ms);
+
+    if ms != before {
+        b.set_mod_state(ms);
+    }
+}
+

@@ -310,6 +310,18 @@ fn parse_midi_message(message: &[u8], channel_filter: Option<MidiChannel>) -> Op
                 None
             }
         }
+        0xD0 => {
+            // Channel Pressure (aftertouch)
+            message
+                .get(1)
+                .map(|&p| NoteEvent::aftertouch(p as f32 / 127.0))
+        }
+        0xA0 => {
+            // Polyphonic Key Pressure — applied as a global pressure value
+            message
+                .get(2)
+                .map(|&p| NoteEvent::aftertouch(p as f32 / 127.0))
+        }
         _ => None, // Ignore other message types for now
     }
 }

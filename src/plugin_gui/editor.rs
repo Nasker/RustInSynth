@@ -21,8 +21,8 @@ use crate::plugin_gui::backend_plugin::PluginBackend;
 use crate::plugin_gui::shared_state::PluginSharedState;
 
 /// Size of the editor window (matches standalone dimensions)
-pub const EDITOR_WIDTH: u32 = 1050;
-pub const EDITOR_HEIGHT: u32 = 540;
+pub const EDITOR_WIDTH: u32 = panels::WINDOW_SIZE[0] as u32;
+pub const EDITOR_HEIGHT: u32 = panels::WINDOW_SIZE[1] as u32;
 
 /// Persistent GUI-only state that lives across frames.
 pub struct EditorState {
@@ -94,6 +94,7 @@ pub fn create_editor(
                 version: format!("v{} (Plugin)", env!("CARGO_PKG_VERSION")),
                 show_cpu: true,
                 show_midi_panel: false,
+                tempo_follows_host: true,
             };
             panels::shell(ui.ctx(), &mut backend, &mut state.presets, &cfg);
         },

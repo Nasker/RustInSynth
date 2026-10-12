@@ -25,6 +25,7 @@ pub enum ModSource {
     AmpEnv,
     FilterEnv,
     Env3,
+    Env4,
     Velocity,
     KeyTrack,
     ModWheel,
@@ -43,6 +44,7 @@ impl ModSource {
             ModSource::AmpEnv => "Amp Env",
             ModSource::FilterEnv => "Filter Env",
             ModSource::Env3 => "Env 3",
+            ModSource::Env4 => "Env 4",
             ModSource::Velocity => "Velocity",
             ModSource::KeyTrack => "Key Track",
             ModSource::ModWheel => "Mod Wheel",
@@ -61,6 +63,7 @@ impl ModSource {
             ModSource::AmpEnv,
             ModSource::FilterEnv,
             ModSource::Env3,
+            ModSource::Env4,
             ModSource::Velocity,
             ModSource::KeyTrack,
             ModSource::ModWheel,
@@ -68,6 +71,11 @@ impl ModSource {
             ModSource::PitchBend,
             ModSource::Constant,
         ]
+    }
+
+    /// Whether the engine currently feeds a live value for this source.
+    pub fn is_wired(&self) -> bool {
+        !matches!(self, ModSource::Off)
     }
 
     /// Whether this source is bipolar (-1..1) rather than unipolar (0..1).
@@ -178,6 +186,21 @@ impl ModDest {
             ModDest::Lfo2Depth,
             ModDest::Lfo3Depth,
         ]
+    }
+
+    /// Whether the DSP currently applies this destination. Global effect
+    /// destinations are not yet wired into the effects chain.
+    pub fn is_wired(&self) -> bool {
+        self.is_per_voice()
+            || matches!(
+                self,
+                ModDest::Lfo1Rate
+                    | ModDest::Lfo2Rate
+                    | ModDest::Lfo3Rate
+                    | ModDest::Lfo1Depth
+                    | ModDest::Lfo2Depth
+                    | ModDest::Lfo3Depth
+            )
     }
 
     /// Whether this destination is evaluated per-voice (as opposed to global
@@ -293,6 +316,7 @@ pub struct ModSourceValues {
     pub amp_env: f32,
     pub filter_env: f32,
     pub env3: f32,
+    pub env4: f32,
     pub velocity: f32,
     pub key_track: f32,
     pub mod_wheel: f32,
@@ -310,6 +334,7 @@ impl ModSourceValues {
             ModSource::AmpEnv => self.amp_env,
             ModSource::FilterEnv => self.filter_env,
             ModSource::Env3 => self.env3,
+            ModSource::Env4 => self.env4,
             ModSource::Velocity => self.velocity,
             ModSource::KeyTrack => self.key_track,
             ModSource::ModWheel => self.mod_wheel,

@@ -28,9 +28,15 @@ pub struct Voice {
     envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
     filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
     env3: Box<dyn Envelope>,           // Free modulation envelope
+    env4: Box<dyn Envelope>,           // Second free modulation envelope
     lfos: [LFO; 3],                    // Per-voice low frequency oscillators
     mod_matrix: ModMatrix,             // Modulation routing matrix
     mod_wheel: f32,                    // 0.0 to 1.0, fed from CC1
+    pitch_bend_mod: f32,               // -1.0 to 1.0, pitch wheel as a mod source
+    aftertouch: f32,                   // 0.0 to 1.0, channel pressure
+    lfo_base: [(f32, f32); 3],         // Unmodulated (rate Hz, depth) per LFO
+    last_values: ModSourceValues,      // Previous sample's sources (mod-on-mod)
+    used_dests: u32,                   // Bitmask of ModDest targeted by the matrix
     current_note: Option<MidiNote>,
     velocity: Amplitude,
     sample_rate: SampleRate,
@@ -56,9 +62,15 @@ impl Voice {
             envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
             filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
             env3: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)),
+            env4: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)),
             lfos: [LFO::new(sample_rate), LFO::new(sample_rate), LFO::new(sample_rate)],
             mod_matrix: ModMatrix::default(),
             mod_wheel: 0.0,
+            pitch_bend_mod: 0.0,
+            aftertouch: 0.0,
+            lfo_base: [(1.0, 0.0); 3],
+            last_values: ModSourceValues::default(),
+            used_dests: 0,
             current_note: None,
             velocity: 1.0,
             sample_rate,
@@ -114,7 +126,8 @@ impl Voice {
         self.filter_left.set_cutoff(modulated_cutoff);
         self.filter_right.set_cutoff(modulated_cutoff);
 
-        let osc_sample = self.osc_bank.next_sample();
+        let (s1, s2, s3) = self.osc_bank.next_samples_individual();
+        let osc_sample = s1 * mods.osc_gain[0] + s2 * mods.osc_gain[1] + s3 * mods.osc_gain[2];
         let filtered_sample = self.filter_left.process(osc_sample);
 
         filtered_sample * mods.amp_env * self.velocity * mods.amplitude_gain
@@ -151,20 +164,50 @@ impl Voice {
         // Get individual oscillator samples and pan them
         let (s1, s2, s3) = self.osc_bank.next_samples_individual();
 
-        let stereo_osc = StereoSample::from_mono_panned(s1, pans.0)
-            + StereoSample::from_mono_panned(s2, pans.1)
-            + StereoSample::from_mono_panned(s3, pans.2);
+        let pan = |base: f32, off: f32| (base + off).clamp(-1.0, 1.0);
+        let stereo_osc = StereoSample::from_mono_panned(s1 * mods.osc_gain[0], pan(pans.0, mods.pan_offset[0]))
+            + StereoSample::from_mono_panned(s2 * mods.osc_gain[1], pan(pans.1, mods.pan_offset[1]))
+            + StereoSample::from_mono_panned(s3 * mods.osc_gain[2], pan(pans.2, mods.pan_offset[2]));
         
         // Filter the stereo signal (process L and R separately with independent filters)
         let filtered_left = self.filter_left.process(stereo_osc.left);
         let filtered_right = self.filter_right.process(stereo_osc.right);
-        let filtered_stereo = StereoSample::new(filtered_left, filtered_right);
+        let mut filtered_stereo = StereoSample::new(filtered_left, filtered_right);
+        if mods.width != 1.0 {
+            filtered_stereo = filtered_stereo.with_width(mods.width);
+        }
 
         filtered_stereo * (mods.amp_env * self.velocity * mods.amplitude_gain)
     }
 
     /// Resolved modulation offsets for the current sample (destination units).
     fn compute_modulation(&mut self) -> VoiceMods {
+        let used = self.used_dests;
+        let has = |d: ModDest| used & (1u32 << d as u32) != 0;
+
+        // Mod-on-mod: LFO rate/depth follow the previous sample's sources
+        // (one-sample lag, inaudible) so LFOs can modulate each other.
+        if used & LFO_MOD_MASK != 0 {
+            let prev = self.last_values;
+            let prev_get = |s: ModSource| prev.get(s);
+            for i in 0..3 {
+                let (base_rate, base_depth) = self.lfo_base[i];
+                let rate_off = if has(LFO_RATE_DESTS[i]) {
+                    self.mod_matrix.offset_for(LFO_RATE_DESTS[i], prev_get)
+                } else {
+                    0.0
+                };
+                let depth_off = if has(LFO_DEPTH_DESTS[i]) {
+                    self.mod_matrix.offset_for(LFO_DEPTH_DESTS[i], prev_get)
+                } else {
+                    0.0
+                };
+                // Rate: ±3 octaves at full amount; depth: additive.
+                self.lfos[i].set_rate(base_rate * 2.0f32.powf(rate_off * 3.0));
+                self.lfos[i].set_depth((base_depth + depth_off).clamp(0.0, 1.0));
+            }
+        }
+
         let lfo_values = [
             self.lfos[0].next_value(),
             self.lfos[1].next_value(),
@@ -173,6 +216,7 @@ impl Voice {
         let filter_env_amp = self.filter_envelope.next_amplitude();
         let amp_env = self.envelope.next_amplitude();
         let env3_amp = self.env3.next_amplitude();
+        let env4_amp = self.env4.next_amplitude();
 
         let key_track = self
             .current_note
@@ -184,17 +228,23 @@ impl Voice {
             amp_env,
             filter_env: filter_env_amp,
             env3: env3_amp,
+            env4: env4_amp,
             velocity: self.velocity,
             key_track,
             mod_wheel: self.mod_wheel,
+            pitch_bend: self.pitch_bend_mod,
+            aftertouch: self.aftertouch,
             ..Default::default()
         };
+        self.last_values = values;
         let get = |s: ModSource| values.get(s);
+        let off = |d: ModDest| if has(d) { self.mod_matrix.offset_for(d, get) } else { 0.0 };
 
-        let pitch_semitones = self.mod_matrix.offset_for(ModDest::AllPitch, get);
-        let cutoff_semitones = self.mod_matrix.offset_for(ModDest::FilterCutoff, get);
-        let resonance_offset = self.mod_matrix.offset_for(ModDest::FilterResonance, get);
-        let amplitude_offset = self.mod_matrix.offset_for(ModDest::Amplitude, get);
+        let pitch_semitones = off(ModDest::AllPitch);
+        let cutoff_semitones = off(ModDest::FilterCutoff);
+        let resonance_offset = off(ModDest::FilterResonance);
+        let amplitude_offset = off(ModDest::Amplitude);
+        let gain = |d: ModDest| (1.0 + off(d)).clamp(0.0, 2.0);
 
         VoiceMods {
             pitch_semitones,
@@ -203,6 +253,9 @@ impl Voice {
             amplitude_gain: (1.0 + amplitude_offset).max(0.0),
             amp_env,
             filter_env_amp,
+            osc_gain: [gain(ModDest::Osc1Level), gain(ModDest::Osc2Level), gain(ModDest::Osc3Level)],
+            pan_offset: [off(ModDest::Osc1Pan), off(ModDest::Osc2Pan), off(ModDest::Osc3Pan)],
+            width: (1.0 + off(ModDest::StereoWidth)).clamp(0.0, 2.0),
         }
     }
 
@@ -272,6 +325,8 @@ impl Voice {
         self.filter_envelope.trigger();
         self.env3.reset();
         self.env3.trigger();
+        self.env4.reset();
+        self.env4.trigger();
         for lfo in &mut self.lfos {
             lfo.reset();
         }
@@ -282,6 +337,7 @@ impl Voice {
         self.envelope.release();
         self.filter_envelope.release();
         self.env3.release();
+        self.env4.release();
     }
 
     /// Check if this voice is currently playing
@@ -312,6 +368,7 @@ impl Voice {
         self.envelope.reset();
         self.filter_envelope.reset();
         self.env3.reset();
+        self.env4.reset();
         for lfo in &mut self.lfos {
             lfo.reset();
         }
@@ -327,6 +384,7 @@ impl Voice {
         self.envelope.set_sample_rate(sample_rate);
         self.filter_envelope.set_sample_rate(sample_rate);
         self.env3.set_sample_rate(sample_rate);
+        self.env4.set_sample_rate(sample_rate);
         for lfo in &mut self.lfos {
             lfo.set_sample_rate(sample_rate);
         }
@@ -336,6 +394,7 @@ impl Voice {
     pub fn set_lfo_rate_at(&mut self, index: usize, rate: f32) {
         if let Some(lfo) = self.lfos.get_mut(index) {
             lfo.set_rate(rate);
+            self.lfo_base[index].0 = lfo.rate();
         }
     }
 
@@ -343,6 +402,7 @@ impl Voice {
     pub fn set_lfo_depth_at(&mut self, index: usize, depth: f32) {
         if let Some(lfo) = self.lfos.get_mut(index) {
             lfo.set_depth(depth);
+            self.lfo_base[index].1 = lfo.depth();
         }
     }
 
@@ -359,6 +419,14 @@ impl Voice {
         self.env3.set_decay(decay);
         self.env3.set_sustain(sustain);
         self.env3.set_release(release);
+    }
+
+    /// Set the second free envelope (Env4) ADSR times
+    pub fn set_env4_adsr(&mut self, adsr: [f32; 4]) {
+        self.env4.set_attack(adsr[0]);
+        self.env4.set_decay(adsr[1]);
+        self.env4.set_sustain(adsr[2]);
+        self.env4.set_release(adsr[3]);
     }
 
     /// Set LFO rate (0.1 to 20 Hz)
@@ -440,7 +508,31 @@ impl Voice {
 
     /// Set the modulation routing matrix
     pub fn set_mod_matrix(&mut self, matrix: ModMatrix) {
+        let had_lfo_mods = self.used_dests & LFO_MOD_MASK != 0;
         self.mod_matrix = matrix;
+        self.used_dests = matrix
+            .slots
+            .iter()
+            .filter(|s| s.enabled && s.source != ModSource::Off)
+            .fold(0u32, |m, s| m | (1u32 << s.dest as u32));
+        // Restore unmodulated LFO settings when mod-on-mod routes go away.
+        if had_lfo_mods && self.used_dests & LFO_MOD_MASK == 0 {
+            for i in 0..3 {
+                let (rate, depth) = self.lfo_base[i];
+                self.lfos[i].set_rate(rate);
+                self.lfos[i].set_depth(depth);
+            }
+        }
+    }
+
+    /// Set the pitch-wheel position (-1.0 to 1.0) used as a modulation source
+    pub fn set_pitch_bend_mod(&mut self, bend: f32) {
+        self.pitch_bend_mod = bend.clamp(-1.0, 1.0);
+    }
+
+    /// Set the aftertouch pressure (0.0 to 1.0) used as a modulation source
+    pub fn set_aftertouch(&mut self, pressure: f32) {
+        self.aftertouch = pressure.clamp(0.0, 1.0);
     }
 
     /// Set the mod wheel value (0.0 to 1.0) used as a modulation source
@@ -489,7 +581,24 @@ struct VoiceMods {
     amplitude_gain: f32,
     amp_env: f32,
     filter_env_amp: f32,
+    /// Per-oscillator level multipliers (1.0 = unmodulated).
+    osc_gain: [f32; 3],
+    /// Per-oscillator pan offsets added to the base pans.
+    pan_offset: [f32; 3],
+    /// Per-voice stereo width factor (1.0 = unmodulated).
+    width: f32,
 }
+
+/// Matrix destinations for LFO rate / depth (mod-on-mod), indexed by LFO.
+const LFO_RATE_DESTS: [ModDest; 3] = [ModDest::Lfo1Rate, ModDest::Lfo2Rate, ModDest::Lfo3Rate];
+const LFO_DEPTH_DESTS: [ModDest; 3] = [ModDest::Lfo1Depth, ModDest::Lfo2Depth, ModDest::Lfo3Depth];
+/// Bitmask of all mod-on-mod destinations.
+const LFO_MOD_MASK: u32 = (1 << ModDest::Lfo1Rate as u32)
+    | (1 << ModDest::Lfo2Rate as u32)
+    | (1 << ModDest::Lfo3Rate as u32)
+    | (1 << ModDest::Lfo1Depth as u32)
+    | (1 << ModDest::Lfo2Depth as u32)
+    | (1 << ModDest::Lfo3Depth as u32);
 
 /// Settings for one of the 3 LFOs
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -538,6 +647,8 @@ pub struct ModState {
     pub lfo3: LfoSettings,
     /// Env3 ADSR: [attack, decay, sustain, release]
     pub env3: [f32; 4],
+    /// Env4 ADSR: [attack, decay, sustain, release]
+    pub env4: [f32; 4],
     /// Tempo in BPM. Standalone: user-set; plugin: host transport.
     pub bpm: f32,
     /// Delay effect tempo sync.
@@ -556,6 +667,7 @@ impl Default for ModState {
             lfo2: LfoSettings::default(),
             lfo3: LfoSettings::default(),
             env3: [0.01, 0.3, 0.0, 0.3],
+            env4: [0.01, 0.3, 0.0, 0.3],
             bpm: 120.0,
             delay_sync: false,
             delay_beats: 1.0,
@@ -657,6 +769,8 @@ pub struct VoiceManager {
     env3_decay: f32,
     env3_sustain: f32,
     env3_release: f32,
+    // Second free modulation envelope (Env4) ADSR
+    env4: [f32; 4],
     // LFO1 tempo sync (rate/depth/waveform come from SynthParam fields)
     lfo1_sync: bool,
     lfo1_beats: f32,
@@ -729,6 +843,7 @@ impl VoiceManager {
             env3_decay: 0.3,
             env3_sustain: 0.0,
             env3_release: 0.3,
+            env4: [0.01, 0.3, 0.0, 0.3],
             mod_matrix: ModMatrix::default(),
             mod_wheel: 0.0,
             delay_sync: false,
@@ -1238,6 +1353,14 @@ impl VoiceManager {
         }
     }
 
+    /// Set the Env4 ADSR times on all voices
+    pub fn set_env4_adsr(&mut self, adsr: [f32; 4]) {
+        self.env4 = adsr;
+        for voice in &mut self.voices {
+            voice.set_env4_adsr(adsr);
+        }
+    }
+
     /// Get the Env3 ADSR times
     pub fn env3_adsr(&self) -> (f32, f32, f32, f32) {
         (
@@ -1269,6 +1392,9 @@ impl VoiceManager {
         self.set_lfo_settings(1, s.lfo2);
         self.set_lfo_settings(2, s.lfo3);
         self.set_env3_adsr(s.env3[0], s.env3[1], s.env3[2], s.env3[3]);
+        if s.env4 != self.env4 {
+            self.set_env4_adsr(s.env4);
+        }
         self.delay_sync = s.delay_sync;
         self.delay_beats = s.delay_beats;
         self.set_filter_type(s.filter_type);
@@ -1306,6 +1432,7 @@ impl VoiceManager {
                 self.env3_sustain,
                 self.env3_release,
             ],
+            env4: self.env4,
             bpm: self.bpm,
             delay_sync: self.delay_sync,
             delay_beats: self.delay_beats,
@@ -1318,6 +1445,13 @@ impl VoiceManager {
         self.mod_wheel = value.clamp(0.0, 1.0);
         for voice in &mut self.voices {
             voice.set_mod_wheel(self.mod_wheel);
+        }
+    }
+
+    /// Set aftertouch pressure (0.0 to 1.0) on all voices
+    pub fn set_aftertouch(&mut self, pressure: f32) {
+        for voice in &mut self.voices {
+            voice.set_aftertouch(pressure);
         }
     }
 
@@ -1417,6 +1551,7 @@ impl VoiceManager {
     pub fn set_pitch_bend(&mut self, bend: f32) {
         for voice in &mut self.voices {
             voice.osc_bank_mut().set_pitch_bend(bend);
+            voice.set_pitch_bend_mod(bend);
         }
     }
 
@@ -1544,6 +1679,9 @@ impl SynthEventReceiver for VoiceManager {
             SynthEventKind::PitchBend(bend) => {
                 self.set_pitch_bend(bend);
             }
+            SynthEventKind::Aftertouch(pressure) => {
+                self.set_aftertouch(pressure);
+            }
         }
     }
 }
@@ -1636,6 +1774,7 @@ impl VoiceManager {
                 self.env3_sustain,
                 self.env3_release,
             );
+            voice.set_env4_adsr(self.env4);
             voice.set_mod_matrix(self.mod_matrix);
             voice.set_mod_wheel(self.mod_wheel);
             // Portamento doesn't make as much sense in poly, but keep it
@@ -1835,6 +1974,7 @@ impl VoiceManager {
             env3_decay: self.env3_decay,
             env3_sustain: self.env3_sustain,
             env3_release: self.env3_release,
+            env4: self.env4,
 
             mod_matrix: self.mod_matrix,
 
@@ -2086,6 +2226,180 @@ mod tests {
 
         voice.note_off();
         assert!(voice.is_releasing());
+    }
+
+    /// Regression: mod-on-mod routes (LFO rate/depth destinations) are applied
+    /// around the stored base values, and removing the routes restores them.
+    #[test]
+    fn test_mod_on_mod_uses_base_values() {
+        let mut voice = Voice::new(44100);
+        voice.set_lfo_rate(2.0);
+        voice.set_lfo_depth(0.5);
+        voice.note_on(69, 1.0);
+
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Constant,
+            dest: ModDest::Lfo1Rate,
+            amount: 1.0,
+            enabled: true,
+        };
+        m.slots[1] = ModSlot {
+            source: ModSource::Constant,
+            dest: ModDest::Lfo1Depth,
+            amount: -1.0,
+            enabled: true,
+        };
+        voice.set_mod_matrix(m);
+        for _ in 0..64 {
+            let _ = voice.next_sample();
+        }
+        // Rate: +3 octaves at full amount → 2 Hz * 2^3 = 16 Hz; depth clamps to 0.
+        assert!(
+            (voice.lfos[0].rate() - 16.0).abs() < 1e-3,
+            "expected modulated rate 16 Hz, got {}",
+            voice.lfos[0].rate()
+        );
+        assert_eq!(voice.lfos[0].depth(), 0.0);
+
+        // Routes removed → base rate/depth restored.
+        voice.set_mod_matrix(ModMatrix::default());
+        assert!((voice.lfos[0].rate() - 2.0).abs() < 1e-3);
+        assert_eq!(voice.lfos[0].depth(), 0.5);
+    }
+
+    /// Regression: routing all oscillator levels down to zero silences the
+    /// voice even while the amplitude envelope is open.
+    #[test]
+    fn test_osc_level_routes_silence_voice() {
+        let mut voice = Voice::new(44100);
+        let mut m = ModMatrix::default();
+        for (i, d) in [ModDest::Osc1Level, ModDest::Osc2Level, ModDest::Osc3Level]
+            .iter()
+            .enumerate()
+        {
+            m.slots[i] = ModSlot {
+                source: ModSource::Constant,
+                dest: *d,
+                amount: -1.0,
+                enabled: true,
+            };
+        }
+        voice.set_mod_matrix(m);
+        voice.note_on(69, 1.0);
+        for _ in 0..2000 {
+            assert_eq!(voice.next_sample(), 0.0);
+        }
+    }
+
+    /// Regression: the StereoWidth destination collapses a panned voice to
+    /// mono at full negative amount.
+    #[test]
+    fn test_stereo_width_route_collapses_to_mono() {
+        let mut voice = Voice::new(44100);
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Constant,
+            dest: ModDest::StereoWidth,
+            amount: -1.0,
+            enabled: true,
+        };
+        voice.set_mod_matrix(m);
+        voice.note_on(69, 1.0);
+        let mut audible = false;
+        for _ in 0..2000 {
+            let s = voice.next_sample_stereo((-0.8, 0.0, 0.8));
+            assert_eq!(s.left, s.right, "width 0 must collapse to mono");
+            if s.left != 0.0 {
+                audible = true;
+            }
+        }
+        assert!(audible);
+    }
+
+    /// Regression: per-oscillator pan routes shift the stereo image.
+    #[test]
+    fn test_pan_route_shifts_image() {
+        let max_diff = |m: ModMatrix| {
+            let mut v = Voice::new(44100);
+            v.set_mod_matrix(m);
+            v.note_on(69, 1.0);
+            let mut d = 0.0f32;
+            for _ in 0..2000 {
+                let s = v.next_sample_stereo((0.0, 0.0, 0.0));
+                d = d.max((s.left - s.right).abs());
+            }
+            d
+        };
+        let centered = max_diff(ModMatrix::default());
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Constant,
+            dest: ModDest::Osc1Pan,
+            amount: -1.0,
+            enabled: true,
+        };
+        let panned = max_diff(m);
+        assert_eq!(centered, 0.0, "centered oscillators must stay centered");
+        assert!(panned > 0.01, "pan route must create stereo separation");
+    }
+
+    /// Regression: aftertouch and pitch bend are live modulation sources.
+    #[test]
+    fn test_performance_sources_modulate() {
+        let mk = |src: ModSource| {
+            let mut m = ModMatrix::default();
+            m.slots[0] = ModSlot {
+                source: src,
+                dest: ModDest::Amplitude,
+                amount: -1.0,
+                enabled: true,
+            };
+            m
+        };
+        // Full pressure pushes the amplitude route to zero.
+        let mut v = Voice::new(44100);
+        v.set_mod_matrix(mk(ModSource::Aftertouch));
+        v.set_aftertouch(1.0);
+        v.note_on(69, 1.0);
+        for _ in 0..1000 {
+            assert_eq!(v.next_sample(), 0.0);
+        }
+
+        // Same for pitch bend fully up.
+        let mut v = Voice::new(44100);
+        v.set_mod_matrix(mk(ModSource::PitchBend));
+        v.set_pitch_bend_mod(1.0);
+        v.note_on(69, 1.0);
+        for _ in 0..1000 {
+            assert_eq!(v.next_sample(), 0.0);
+        }
+    }
+
+    /// Regression: Env4 is a live modulation source (same wiring as Env3).
+    #[test]
+    fn test_env4_source_modulates() {
+        let mut voice = Voice::new(44100);
+        // Long attack so Env4 is mid-rise while samples are produced.
+        voice.set_env4_adsr([0.5, 0.1, 1.0, 0.1]);
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Env4,
+            dest: ModDest::Amplitude,
+            amount: -1.0,
+            enabled: true,
+        };
+        voice.set_mod_matrix(m);
+        voice.note_on(69, 1.0);
+
+        // Sample 1: Env4 ≈ 0 → gain ≈ 1 (audible). Later: Env4 ≈ high →
+        // amplitude_gain = 1 - env4 < 1 (quieter).
+        let first = voice.next_sample().abs();
+        for _ in 0..22050 {
+            let _ = voice.next_sample();
+        }
+        let later = (0..200).map(|_| voice.next_sample().abs()).fold(0.0f32, f32::max);
+        assert!(later <= first || first == 0.0, "env4 should attenuate over time");
     }
 
     #[test]

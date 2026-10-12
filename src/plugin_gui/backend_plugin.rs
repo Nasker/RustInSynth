@@ -289,10 +289,10 @@ impl<'a> SynthBackend for PluginBackend<'a> {
     fn set_mod_state(&mut self, state: ModState) {
         // Route filter_type through the host param so DAW automation and the
         // GUI combo share a single source of truth.
-        self.setter.set_parameter(
-            &self.params.filter_type,
-            state.filter_type.index() as i32,
-        );
+        let filter_index = state.filter_type.index() as i32;
+        if self.params.filter_type.value() != filter_index {
+            self.setter.set_parameter(&self.params.filter_type, filter_index);
+        }
         self.shared.set_mod_state(state);
     }
 

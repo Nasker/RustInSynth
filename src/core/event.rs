@@ -47,6 +47,8 @@ pub enum SynthEventKind {
     ControlChange { cc: u8, value: u8 },
     /// Pitch bend: value is -1.0 to +1.0 (center = 0.0)
     PitchBend(f32),
+    /// Channel (or polyphonic) pressure: value is 0.0 to 1.0
+    Aftertouch(f32),
 }
 
 /// Type of note event - for backwards compatibility
@@ -98,6 +100,15 @@ impl SynthEvent {
     pub fn control_change(cc: u8, value: u8) -> Self {
         Self {
             kind: SynthEventKind::ControlChange { cc, value },
+            note: 0,
+            velocity: 0.0,
+        }
+    }
+
+    /// Create an aftertouch (pressure) event from a normalized value (0.0 to 1.0)
+    pub fn aftertouch(value: f32) -> Self {
+        Self {
+            kind: SynthEventKind::Aftertouch(value.clamp(0.0, 1.0)),
             note: 0,
             velocity: 0.0,
         }

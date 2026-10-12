@@ -1,6 +1,7 @@
 pub mod effects;
 pub mod envelope;
 pub mod event;
+pub mod factory_bank;
 pub mod filter;
 pub mod lfo;
 pub mod mod_matrix;

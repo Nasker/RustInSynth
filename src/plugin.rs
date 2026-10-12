@@ -467,6 +467,10 @@ impl Plugin for RustInSynthPlugin {
                     let scaled_bend = (value - 0.5) * 2.0; // [-1.0, 1.0]
                     self.voice_manager.receive_event(SynthEvent::pitch_bend(scaled_bend));
                 }
+                NoteEvent::MidiChannelPressure { pressure, .. }
+                | NoteEvent::PolyPressure { pressure, .. } => {
+                    self.voice_manager.receive_event(SynthEvent::aftertouch(pressure));
+                }
                 NoteEvent::MidiCC { cc, value, .. } => {
                     // value is 0.0 to 1.0 float in NIH-plug
                     let cc_val = (value * 127.0).round() as u8;
