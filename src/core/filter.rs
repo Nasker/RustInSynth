@@ -9,6 +9,7 @@ pub enum FilterMode {
     LowPass,
     HighPass,
     BandPass,
+    Notch,
 }
 
 impl FilterMode {
@@ -17,6 +18,7 @@ impl FilterMode {
             FilterMode::LowPass => "LowPass",
             FilterMode::HighPass => "HighPass",
             FilterMode::BandPass => "BandPass",
+            FilterMode::Notch => "Notch",
         }
     }
 }
@@ -167,6 +169,7 @@ impl Filter for SVFilter {
             FilterMode::LowPass => self.low,
             FilterMode::HighPass => soft_clip_filter(self.high),
             FilterMode::BandPass => self.band,
+            FilterMode::Notch => soft_clip_filter(self.low + self.high),
         }
     }
 
@@ -197,6 +200,212 @@ impl Filter for SVFilter {
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
         self.update_coefficients();
+    }
+}
+
+/// 4-pole "ladder" lowpass filter (Moog-style cascade).
+/// Deeper 24 dB/oct slope and squelchy resonance compared to the SVF.
+/// Uses the classic Huovilainen-style model with tanh saturation in the
+/// feedback path for stable self-oscillation.
+pub struct LadderFilter {
+    cutoff: Frequency,
+    resonance: f32,
+    sample_rate: SampleRate,
+    // 4 cascaded one-pole stages
+    stage: [f32; 4],
+    // Smoothed coefficients
+    g: f32,        // frequency coefficient (current)
+    g_target: f32,
+    res: f32,      // resonance feedback amount (current)
+    res_target: f32,
+}
+
+impl LadderFilter {
+    pub fn new(cutoff: Frequency, resonance: f32, sample_rate: SampleRate) -> Self {
+        let mut f = Self {
+            cutoff,
+            resonance: resonance.clamp(0.0, 1.0),
+            sample_rate,
+            stage: [0.0; 4],
+            g: 0.0,
+            g_target: 0.0,
+            res: 0.0,
+            res_target: 0.0,
+        };
+        f.update_coefficients();
+        f.g = f.g_target;
+        f.res = f.res_target;
+        f
+    }
+
+    fn update_coefficients(&mut self) {
+        let max_cutoff = self.sample_rate as f32 * 0.45;
+        let safe = self.cutoff.clamp(20.0, max_cutoff);
+        // g = 1 - exp(-2π fc / fs), the one-pole coefficient
+        self.g_target = 1.0 - (-2.0 * PI * safe / self.sample_rate as f32).exp();
+        // Resonance maps to feedback gain 0..4 (self-oscillation at ~4)
+        self.res_target = self.resonance * 4.0;
+    }
+
+    #[inline]
+    fn smooth(&mut self) {
+        const SMOOTH: f32 = 0.005;
+        self.g += SMOOTH * (self.g_target - self.g);
+        self.res += SMOOTH * (self.res_target - self.res);
+    }
+}
+
+impl Filter for LadderFilter {
+    fn process(&mut self, input: Sample) -> Sample {
+        self.smooth();
+        // Saturated feedback keeps high resonance stable
+        let feedback = fast_tanh(self.stage[3] * self.res);
+        let mut x = input - feedback;
+        x = fast_tanh(x);
+        for s in self.stage.iter_mut() {
+            *s += self.g * (fast_tanh(x) - *s);
+            x = *s;
+        }
+        soft_clip_filter(self.stage[3])
+    }
+
+    fn set_cutoff(&mut self, cutoff: Frequency) {
+        self.cutoff = cutoff;
+        self.update_coefficients();
+    }
+
+    fn set_resonance(&mut self, resonance: f32) {
+        self.resonance = resonance.clamp(0.0, 1.0);
+        self.update_coefficients();
+    }
+
+    fn cutoff(&self) -> Frequency { self.cutoff }
+    fn resonance(&self) -> f32 { self.resonance }
+    fn reset(&mut self) { self.stage = [0.0; 4]; }
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        self.update_coefficients();
+    }
+}
+
+/// Feedback comb filter — short delay line with feedback.
+/// Cutoff maps to the comb delay frequency; resonance maps to feedback.
+/// Produces metallic / resonator sounds.
+pub struct CombFilter {
+    cutoff: Frequency,
+    resonance: f32,
+    sample_rate: SampleRate,
+    buffer: Vec<f32>,
+    index: usize,
+    delay_samples: usize,
+    feedback: f32,
+}
+
+impl CombFilter {
+    pub fn new(cutoff: Frequency, resonance: f32, sample_rate: SampleRate) -> Self {
+        let max_delay = (sample_rate as f32 / 20.0) as usize + 1; // down to 20 Hz
+        let mut f = Self {
+            cutoff,
+            resonance: resonance.clamp(0.0, 0.99),
+            sample_rate,
+            buffer: vec![0.0; max_delay.max(2)],
+            index: 0,
+            delay_samples: 1,
+            feedback: 0.0,
+        };
+        f.update_coefficients();
+        f
+    }
+
+    fn update_coefficients(&mut self) {
+        let max_cutoff = (self.sample_rate as f32 * 0.45).min(MAX_CUTOFF);
+        let safe = self.cutoff.clamp(20.0, max_cutoff);
+        self.delay_samples = ((self.sample_rate as f32 / safe) as usize)
+            .clamp(1, self.buffer.len() - 1);
+        self.feedback = self.resonance.clamp(0.0, 0.98);
+    }
+}
+
+impl Filter for CombFilter {
+    fn process(&mut self, input: Sample) -> Sample {
+        let read = (self.index + self.buffer.len() - self.delay_samples) % self.buffer.len();
+        let delayed = self.buffer[read];
+        // Comb: input + feedback * delayed sample, soft-clipped
+        let out = input + self.feedback * fast_tanh(delayed);
+        self.buffer[self.index] = soft_clip_filter(out);
+        self.index = (self.index + 1) % self.buffer.len();
+        delayed
+    }
+
+    fn set_cutoff(&mut self, cutoff: Frequency) {
+        self.cutoff = cutoff;
+        self.update_coefficients();
+    }
+
+    fn set_resonance(&mut self, resonance: f32) {
+        self.resonance = resonance.clamp(0.0, 0.98);
+        self.update_coefficients();
+    }
+
+    fn cutoff(&self) -> Frequency { self.cutoff }
+    fn resonance(&self) -> f32 { self.resonance }
+    fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.index = 0;
+    }
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        self.buffer = vec![0.0; (sample_rate as f32 / 20.0) as usize + 1];
+        self.index = 0;
+        self.update_coefficients();
+    }
+}
+
+/// Selects which filter topology a voice uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum FilterType {
+    #[default]
+    Svf,
+    Ladder,
+    Comb,
+}
+
+impl FilterType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            FilterType::Svf => "SVF",
+            FilterType::Ladder => "Ladder",
+            FilterType::Comb => "Comb",
+        }
+    }
+    pub fn from_index(i: u8) -> Self {
+        match i {
+            1 => FilterType::Ladder,
+            2 => FilterType::Comb,
+            _ => FilterType::Svf,
+        }
+    }
+    pub fn index(&self) -> u8 {
+        match self {
+            FilterType::Svf => 0,
+            FilterType::Ladder => 1,
+            FilterType::Comb => 2,
+        }
+    }
+    pub const ALL: [FilterType; 3] = [FilterType::Svf, FilterType::Ladder, FilterType::Comb];
+}
+
+/// Build a filter of the given topology.
+pub fn make_filter(
+    ty: FilterType,
+    cutoff: Frequency,
+    resonance: f32,
+    sample_rate: SampleRate,
+) -> Box<dyn Filter> {
+    match ty {
+        FilterType::Svf => Box::new(SVFilter::new(cutoff, resonance, sample_rate)),
+        FilterType::Ladder => Box::new(LadderFilter::new(cutoff, resonance, sample_rate)),
+        FilterType::Comb => Box::new(CombFilter::new(cutoff, resonance, sample_rate)),
     }
 }
 

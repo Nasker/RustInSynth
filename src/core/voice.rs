@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
-use super::filter::{Filter, SVFilter};
+use super::filter::{make_filter, Filter, FilterType};
 use super::lfo::{LFO, LfoDestination, LfoWaveform};
+use super::mod_matrix::{ModDest, ModMatrix, ModSlot, ModSource, ModSourceValues};
 use super::oscillator::{Oscillator, OscillatorBank};
 use super::param_spec::cc_to_plain;
 use super::params::{CCMapping, SynthParam};
@@ -23,14 +24,19 @@ pub struct Voice {
     osc_bank: OscillatorBank,
     filter_left: Box<dyn Filter>,
     filter_right: Box<dyn Filter>,
+    filter_type: FilterType,           // Current filter topology
     envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
     filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
-    lfo: LFO,                          // Low frequency oscillator for modulation
+    env3: Box<dyn Envelope>,           // Free modulation envelope
+    lfos: [LFO; 3],                    // Per-voice low frequency oscillators
+    mod_matrix: ModMatrix,             // Modulation routing matrix
+    mod_wheel: f32,                    // 0.0 to 1.0, fed from CC1
     current_note: Option<MidiNote>,
     velocity: Amplitude,
     sample_rate: SampleRate,
     // Filter envelope modulation
     base_cutoff: Frequency,
+    base_resonance: f32,
     filter_env_amount: f32,            // 0.0 to 1.0 (amount of envelope applied)
     // LFO modulation
     base_frequency: Frequency,         // Base note frequency for pitch modulation
@@ -44,15 +50,20 @@ impl Voice {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
             osc_bank: OscillatorBank::new(sample_rate),
-            filter_left: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
-            filter_right: Box::new(SVFilter::new(20000.0, 0.0, sample_rate)),
+            filter_left: make_filter(FilterType::Svf, 20000.0, 0.0, sample_rate),
+            filter_right: make_filter(FilterType::Svf, 20000.0, 0.0, sample_rate),
+            filter_type: FilterType::Svf,
             envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
             filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
-            lfo: LFO::new(sample_rate),
+            env3: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)),
+            lfos: [LFO::new(sample_rate), LFO::new(sample_rate), LFO::new(sample_rate)],
+            mod_matrix: ModMatrix::default(),
+            mod_wheel: 0.0,
             current_note: None,
             velocity: 1.0,
             sample_rate,
             base_cutoff: 20000.0,
+            base_resonance: 0.0,
             filter_env_amount: 0.0, // Off by default
             base_frequency: 440.0,
             portamento_time: 0.0,
@@ -93,59 +104,20 @@ impl Voice {
             }
         }
 
-        // Get LFO value for this sample
-        let lfo_value = self.lfo.next_value();
+        let mods = self.compute_modulation();
+        self.apply_resonance_offset(mods.resonance_offset);
 
-        // Apply LFO pitch modulation (vibrato) if enabled
-        let current_freq = if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
-            // Vibrato: modulate pitch by up to ±1 semitone at full depth
-            let vibrato_semitones = lfo_value; // -1.0 to +1.0 semitones
-            let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
-            self.base_frequency * vibrato_ratio
-        } else {
-            self.base_frequency
-        };
-        self.osc_bank.set_frequency(current_freq);
+        self.osc_bank.set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
 
-        // Calculate filter envelope and LFO modulation
-        let filter_env_amp = self.filter_envelope.next_amplitude();
-        let filter_lfo = if self.lfo.destination() == LfoDestination::FilterCutoff {
-            lfo_value // -1.0 to +1.0
-        } else {
-            0.0
-        };
-
-        let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
-            let max_cutoff = 20000.0f32;
-            // Octave-based envelope: each step of env_amount sweeps equal perceptual distance
-            // 6 octaves of range (e.g. 500Hz -> 32kHz) at full amount
-            let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
-            let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
-            // LFO: ±2 octaves at full depth, centred on the envelope position
-            let lfo_depth = self.lfo.depth();
-            let lfo_semitones = 24.0 * lfo_depth * filter_lfo;
-            let lfo_factor = 2.0f32.powf(lfo_semitones / 12.0);
-            (env_cutoff * lfo_factor).clamp(20.0, max_cutoff)
-        } else {
-            self.base_cutoff
-        };
+        let modulated_cutoff = self.modulated_cutoff(mods.filter_env_amp, mods.cutoff_semitones);
         // For mono output, use left filter (both filters have same parameters)
         self.filter_left.set_cutoff(modulated_cutoff);
         self.filter_right.set_cutoff(modulated_cutoff);
 
         let osc_sample = self.osc_bank.next_sample();
         let filtered_sample = self.filter_left.process(osc_sample);
-        let env_amplitude = self.envelope.next_amplitude();
 
-        // Apply LFO amplitude modulation (tremolo) if enabled
-        let lfo_amp = if self.lfo.destination() == LfoDestination::Amplitude {
-            // Tremolo: 1.0 ± depth (never goes negative)
-            1.0 + lfo_value * 0.5 // 0.5 to 1.5 range at full depth
-        } else {
-            1.0
-        };
-
-        filtered_sample * env_amplitude * self.velocity * lfo_amp
+        filtered_sample * mods.amp_env * self.velocity * mods.amplitude_gain
     }
     
     /// Generate the next stereo sample from this voice with per-oscillator panning
@@ -166,38 +138,12 @@ impl Voice {
             }
         }
 
-        // Get LFO value for this sample
-        let lfo_value = self.lfo.next_value();
+        let mods = self.compute_modulation();
+        self.apply_resonance_offset(mods.resonance_offset);
 
-        // Apply LFO pitch modulation (vibrato) if enabled
-        let current_freq = if self.lfo.destination() == LfoDestination::Pitch && lfo_value != 0.0 {
-            let vibrato_semitones = lfo_value;
-            let vibrato_ratio = 2.0_f32.powf(vibrato_semitones / 12.0);
-            self.base_frequency * vibrato_ratio
-        } else {
-            self.base_frequency
-        };
-        self.osc_bank.set_frequency(current_freq);
+        self.osc_bank.set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
 
-        // Calculate filter envelope and LFO modulation
-        let filter_env_amp = self.filter_envelope.next_amplitude();
-        let filter_lfo = if self.lfo.destination() == LfoDestination::FilterCutoff {
-            lfo_value
-        } else {
-            0.0
-        };
-
-        let modulated_cutoff = if self.filter_env_amount > 0.0 || filter_lfo != 0.0 {
-            let max_cutoff = 20000.0f32;
-            let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
-            let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
-            let lfo_depth = self.lfo.depth();
-            let lfo_semitones = 24.0 * lfo_depth * filter_lfo;
-            let lfo_factor = 2.0f32.powf(lfo_semitones / 12.0);
-            (env_cutoff * lfo_factor).clamp(20.0, max_cutoff)
-        } else {
-            self.base_cutoff
-        };
+        let modulated_cutoff = self.modulated_cutoff(mods.filter_env_amp, mods.cutoff_semitones);
         // Set cutoff on both filters for stereo processing
         self.filter_left.set_cutoff(modulated_cutoff);
         self.filter_right.set_cutoff(modulated_cutoff);
@@ -213,17 +159,91 @@ impl Voice {
         let filtered_left = self.filter_left.process(stereo_osc.left);
         let filtered_right = self.filter_right.process(stereo_osc.right);
         let filtered_stereo = StereoSample::new(filtered_left, filtered_right);
-        
-        let env_amplitude = self.envelope.next_amplitude();
 
-        // Apply LFO amplitude modulation (tremolo) if enabled
-        let lfo_amp = if self.lfo.destination() == LfoDestination::Amplitude {
-            1.0 + lfo_value * 0.5
-        } else {
-            1.0
+        filtered_stereo * (mods.amp_env * self.velocity * mods.amplitude_gain)
+    }
+
+    /// Resolved modulation offsets for the current sample (destination units).
+    fn compute_modulation(&mut self) -> VoiceMods {
+        let lfo_values = [
+            self.lfos[0].next_value(),
+            self.lfos[1].next_value(),
+            self.lfos[2].next_value(),
+        ];
+        let filter_env_amp = self.filter_envelope.next_amplitude();
+        let amp_env = self.envelope.next_amplitude();
+        let env3_amp = self.env3.next_amplitude();
+
+        let key_track = self
+            .current_note
+            .map(|n| (n as f32 - 60.0) / 60.0)
+            .unwrap_or(0.0);
+
+        let values = ModSourceValues {
+            lfo: lfo_values,
+            amp_env,
+            filter_env: filter_env_amp,
+            env3: env3_amp,
+            velocity: self.velocity,
+            key_track,
+            mod_wheel: self.mod_wheel,
+            ..Default::default()
         };
+        let get = |s: ModSource| values.get(s);
 
-        filtered_stereo * (env_amplitude * self.velocity * lfo_amp)
+        let pitch_semitones = self.mod_matrix.offset_for(ModDest::AllPitch, get);
+        let cutoff_semitones = self.mod_matrix.offset_for(ModDest::FilterCutoff, get);
+        let resonance_offset = self.mod_matrix.offset_for(ModDest::FilterResonance, get);
+        let amplitude_offset = self.mod_matrix.offset_for(ModDest::Amplitude, get);
+
+        VoiceMods {
+            pitch_semitones,
+            cutoff_semitones,
+            resonance_offset,
+            amplitude_gain: (1.0 + amplitude_offset).max(0.0),
+            amp_env,
+            filter_env_amp,
+        }
+    }
+
+    /// Apply filter envelope + matrix cutoff offset (semitones) to the base
+    /// cutoff, clamped to the audible range.
+    fn modulated_cutoff(&self, filter_env_amp: f32, cutoff_semitones: f32) -> Frequency {
+        let max_cutoff = 20000.0f32;
+        if self.filter_env_amount <= 0.0 && cutoff_semitones == 0.0 {
+            return self.base_cutoff;
+        }
+        // Octave-based envelope: 6 octaves of sweep at full amount.
+        let octave_sweep = 6.0 * self.filter_env_amount * filter_env_amp;
+        let env_cutoff = (self.base_cutoff * 2.0f32.powf(octave_sweep)).min(max_cutoff);
+        let cutoff_factor = 2.0f32.powf(cutoff_semitones / 12.0);
+        (env_cutoff * cutoff_factor).clamp(20.0, max_cutoff)
+    }
+
+    /// Swap the filter topology for both channels, preserving cutoff/resonance.
+    pub fn set_filter_type(&mut self, ty: FilterType) {
+        if ty == self.filter_type {
+            return;
+        }
+        self.filter_type = ty;
+        let cutoff = self.filter_left.cutoff();
+        let res = self.filter_left.resonance();
+        self.filter_left = make_filter(ty, cutoff, res, self.sample_rate);
+        self.filter_right = make_filter(ty, cutoff, res, self.sample_rate);
+    }
+
+    /// Current filter topology.
+    pub fn filter_type(&self) -> FilterType {
+        self.filter_type
+    }
+
+    /// Apply a matrix resonance offset on top of the base resonance.
+    fn apply_resonance_offset(&mut self, offset: f32) {
+        if offset != 0.0 {
+            let res = (self.base_resonance + offset).clamp(0.0, 1.0);
+            self.filter_left.set_resonance(res);
+            self.filter_right.set_resonance(res);
+        }
     }
 
     /// Trigger a note on this voice
@@ -250,13 +270,18 @@ impl Voice {
         self.filter_envelope.reset();
         self.envelope.trigger();
         self.filter_envelope.trigger();
-        self.lfo.reset();
+        self.env3.reset();
+        self.env3.trigger();
+        for lfo in &mut self.lfos {
+            lfo.reset();
+        }
     }
 
     /// Release the current note
     pub fn note_off(&mut self) {
         self.envelope.release();
         self.filter_envelope.release();
+        self.env3.release();
     }
 
     /// Check if this voice is currently playing
@@ -286,7 +311,10 @@ impl Voice {
         self.filter_right.reset();
         self.envelope.reset();
         self.filter_envelope.reset();
-        self.lfo.reset();
+        self.env3.reset();
+        for lfo in &mut self.lfos {
+            lfo.reset();
+        }
         self.current_note = None;
     }
 
@@ -298,47 +326,79 @@ impl Voice {
         self.filter_right.set_sample_rate(sample_rate);
         self.envelope.set_sample_rate(sample_rate);
         self.filter_envelope.set_sample_rate(sample_rate);
-        self.lfo.set_sample_rate(sample_rate);
+        self.env3.set_sample_rate(sample_rate);
+        for lfo in &mut self.lfos {
+            lfo.set_sample_rate(sample_rate);
+        }
+    }
+
+    /// Set LFO rate (0.1 to 20 Hz) for one of the 3 LFOs
+    pub fn set_lfo_rate_at(&mut self, index: usize, rate: f32) {
+        if let Some(lfo) = self.lfos.get_mut(index) {
+            lfo.set_rate(rate);
+        }
+    }
+
+    /// Set LFO depth (0.0 to 1.0) for one of the 3 LFOs
+    pub fn set_lfo_depth_at(&mut self, index: usize, depth: f32) {
+        if let Some(lfo) = self.lfos.get_mut(index) {
+            lfo.set_depth(depth);
+        }
+    }
+
+    /// Set LFO waveform for one of the 3 LFOs
+    pub fn set_lfo_waveform_at(&mut self, index: usize, waveform: LfoWaveform) {
+        if let Some(lfo) = self.lfos.get_mut(index) {
+            lfo.set_waveform(waveform);
+        }
+    }
+
+    /// Set the free envelope (Env3) ADSR times
+    pub fn set_env3_adsr(&mut self, attack: f32, decay: f32, sustain: f32, release: f32) {
+        self.env3.set_attack(attack);
+        self.env3.set_decay(decay);
+        self.env3.set_sustain(sustain);
+        self.env3.set_release(release);
     }
 
     /// Set LFO rate (0.1 to 20 Hz)
     pub fn set_lfo_rate(&mut self, rate: f32) {
-        self.lfo.set_rate(rate);
+        self.set_lfo_rate_at(0, rate);
     }
 
     /// Set LFO depth (0.0 to 1.0)
     pub fn set_lfo_depth(&mut self, depth: f32) {
-        self.lfo.set_depth(depth);
+        self.set_lfo_depth_at(0, depth);
     }
 
     /// Set LFO waveform
     pub fn set_lfo_waveform(&mut self, waveform: LfoWaveform) {
-        self.lfo.set_waveform(waveform);
+        self.set_lfo_waveform_at(0, waveform);
     }
 
-    /// Set LFO destination
+    /// Set LFO destination (legacy; routing is handled by the mod matrix)
     pub fn set_lfo_destination(&mut self, destination: LfoDestination) {
-        self.lfo.set_destination(destination);
+        self.lfos[0].set_destination(destination);
     }
 
     /// Get LFO rate
     pub fn lfo_rate(&self) -> f32 {
-        self.lfo.rate()
+        self.lfos[0].rate()
     }
 
     /// Get LFO depth
     pub fn lfo_depth(&self) -> f32 {
-        self.lfo.depth()
+        self.lfos[0].depth()
     }
 
     /// Get LFO waveform
     pub fn lfo_waveform(&self) -> LfoWaveform {
-        self.lfo.waveform()
+        self.lfos[0].waveform()
     }
 
     /// Get LFO destination
     pub fn lfo_destination(&self) -> LfoDestination {
-        self.lfo.destination()
+        self.lfos[0].destination()
     }
 
     /// Set the filter envelope attack time
@@ -378,6 +438,16 @@ impl Voice {
         self.filter_right.set_cutoff(cutoff);
     }
 
+    /// Set the modulation routing matrix
+    pub fn set_mod_matrix(&mut self, matrix: ModMatrix) {
+        self.mod_matrix = matrix;
+    }
+
+    /// Set the mod wheel value (0.0 to 1.0) used as a modulation source
+    pub fn set_mod_wheel(&mut self, value: f32) {
+        self.mod_wheel = value.clamp(0.0, 1.0);
+    }
+
     /// Set the attack time
     pub fn set_attack(&mut self, attack_time: f32) {
         self.envelope.set_attack(attack_time);
@@ -400,8 +470,97 @@ impl Voice {
 
     /// Set the filter resonance
     pub fn set_filter_resonance(&mut self, resonance: f32) {
+        self.base_resonance = resonance;
         self.filter_left.set_resonance(resonance);
         self.filter_right.set_resonance(resonance);
+    }
+
+    /// Get the modulation matrix
+    pub fn mod_matrix(&self) -> &ModMatrix {
+        &self.mod_matrix
+    }
+}
+
+/// Per-sample resolved modulation for a voice (destination units).
+struct VoiceMods {
+    pitch_semitones: f32,
+    cutoff_semitones: f32,
+    resonance_offset: f32,
+    amplitude_gain: f32,
+    amp_env: f32,
+    filter_env_amp: f32,
+}
+
+/// Settings for one of the 3 LFOs
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LfoSettings {
+    pub rate: f32,
+    pub depth: f32,
+    pub waveform: LfoWaveform,
+    /// When true, `rate` is ignored and the LFO period is `rate_beats`
+    /// quarter-notes at the current tempo.
+    pub sync: bool,
+    /// Synced LFO period in beats (e.g. 1.0 = quarter note, 0.5 = eighth).
+    pub rate_beats: f32,
+}
+
+impl Default for LfoSettings {
+    fn default() -> Self {
+        Self {
+            rate: 6.0,
+            depth: 0.0,
+            waveform: LfoWaveform::Sine,
+            sync: false,
+            rate_beats: 1.0,
+        }
+    }
+}
+
+/// Effective LFO rate in Hz for a settings block at a given tempo.
+pub fn lfo_rate_hz(s: &LfoSettings, bpm: f32) -> f32 {
+    if s.sync {
+        (bpm / 60.0) / s.rate_beats.max(0.01)
+    } else {
+        s.rate
+    }
+}
+
+/// Complete modulation state shared between GUI and audio thread:
+/// the routing matrix plus the extra modulator settings that are not
+/// part of the SynthParam bank.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModState {
+    pub matrix: ModMatrix,
+    /// LFO 1 settings used only for sync fields (rate/depth/waveform come
+    /// from SynthParam); kept here so the whole tempo state lives together.
+    pub lfo1: LfoSettings,
+    pub lfo2: LfoSettings,
+    pub lfo3: LfoSettings,
+    /// Env3 ADSR: [attack, decay, sustain, release]
+    pub env3: [f32; 4],
+    /// Tempo in BPM. Standalone: user-set; plugin: host transport.
+    pub bpm: f32,
+    /// Delay effect tempo sync.
+    pub delay_sync: bool,
+    /// Synced delay time in beats.
+    pub delay_beats: f32,
+    /// Filter topology (SVF / Ladder / Comb).
+    pub filter_type: FilterType,
+}
+
+impl Default for ModState {
+    fn default() -> Self {
+        Self {
+            matrix: ModMatrix::default(),
+            lfo1: LfoSettings::default(),
+            lfo2: LfoSettings::default(),
+            lfo3: LfoSettings::default(),
+            env3: [0.01, 0.3, 0.0, 0.3],
+            bpm: 120.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
+        }
     }
 }
 
@@ -491,6 +650,26 @@ pub struct VoiceManager {
     lfo_depth: f32,
     lfo_waveform: LfoWaveform,
     lfo_destination: LfoDestination,
+    lfo2: LfoSettings,
+    lfo3: LfoSettings,
+    // Free modulation envelope (Env3) ADSR
+    env3_attack: f32,
+    env3_decay: f32,
+    env3_sustain: f32,
+    env3_release: f32,
+    // LFO1 tempo sync (rate/depth/waveform come from SynthParam fields)
+    lfo1_sync: bool,
+    lfo1_beats: f32,
+    // Tempo
+    bpm: f32,
+    // Modulation
+    mod_matrix: ModMatrix,
+    mod_wheel: f32,
+    // Delay tempo sync (applied by the engine to the effects chain)
+    delay_sync: bool,
+    delay_beats: f32,
+    // Filter topology for all voices
+    filter_type: FilterType,
     osc_state: OscBankState,
     // Portamento
     portamento_time: f32,
@@ -541,6 +720,20 @@ impl VoiceManager {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2: LfoSettings::default(),
+            lfo3: LfoSettings::default(),
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            bpm: 120.0,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            mod_wheel: 0.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             osc_state,
             // Portamento
             portamento_time: 0.0,
@@ -902,8 +1095,66 @@ impl VoiceManager {
     /// Set LFO rate for all voices (0.1 to 20 Hz)
     pub fn set_lfo_rate(&mut self, rate: f32) {
         self.lfo_rate = rate.clamp(0.1, 20.0);
+        let rate = self.effective_lfo_rate(0);
         for voice in &mut self.voices {
-            voice.set_lfo_rate(self.lfo_rate);
+            voice.set_lfo_rate(rate);
+        }
+    }
+
+    /// Effective rate in Hz for LFO `index` given current sync/tempo.
+    fn effective_lfo_rate(&self, index: usize) -> f32 {
+        match index {
+            0 if self.lfo1_sync => (self.bpm / 60.0) / self.lfo1_beats.max(0.01),
+            0 => self.lfo_rate,
+            1 => lfo_rate_hz(&self.lfo2, self.bpm),
+            2 => lfo_rate_hz(&self.lfo3, self.bpm),
+            _ => self.lfo_rate,
+        }
+    }
+
+    /// Swap the filter topology on every voice, preserving cutoff/resonance.
+    pub fn set_filter_type(&mut self, ty: FilterType) {
+        if ty == self.filter_type {
+            return;
+        }
+        self.filter_type = ty;
+        for voice in &mut self.voices {
+            voice.set_filter_type(ty);
+        }
+    }
+
+    /// Current filter topology.
+    pub fn filter_type(&self) -> FilterType {
+        self.filter_type
+    }
+
+    /// Set the tempo in BPM; recomputes rates of synced LFOs.
+    pub fn set_bpm(&mut self, bpm: f32) {
+        self.bpm = bpm.clamp(20.0, 300.0);
+        let rates = [
+            self.effective_lfo_rate(0),
+            self.effective_lfo_rate(1),
+            self.effective_lfo_rate(2),
+        ];
+        for voice in &mut self.voices {
+            for i in 0..3 {
+                voice.set_lfo_rate_at(i, rates[i]);
+            }
+        }
+    }
+
+    /// Current tempo in BPM.
+    pub fn bpm(&self) -> f32 {
+        self.bpm
+    }
+
+    /// Enable/disable tempo sync for LFO1 and set its beat period.
+    pub fn set_lfo1_sync(&mut self, sync: bool, beats: f32) {
+        self.lfo1_sync = sync;
+        self.lfo1_beats = beats.max(0.01);
+        let rate = self.effective_lfo_rate(0);
+        for voice in &mut self.voices {
+            voice.set_lfo_rate_at(0, rate);
         }
     }
 
@@ -949,6 +1200,125 @@ impl VoiceManager {
     /// Get current LFO destination
     pub fn lfo_destination(&self) -> LfoDestination {
         self.lfo_destination
+    }
+
+    /// Set rate/depth/waveform for LFO 2 or 3 (index 1 or 2)
+    pub fn set_lfo_settings(&mut self, index: usize, s: LfoSettings) {
+        let slot = match index {
+            1 => &mut self.lfo2,
+            2 => &mut self.lfo3,
+            _ => return,
+        };
+        *slot = s;
+        let rate = self.effective_lfo_rate(index);
+        for voice in &mut self.voices {
+            voice.set_lfo_rate_at(index, rate);
+            voice.set_lfo_depth_at(index, s.depth);
+            voice.set_lfo_waveform_at(index, s.waveform);
+        }
+    }
+
+    /// Get settings for LFO 2 or 3 (index 1 or 2)
+    pub fn lfo_settings(&self, index: usize) -> Option<LfoSettings> {
+        match index {
+            1 => Some(self.lfo2),
+            2 => Some(self.lfo3),
+            _ => None,
+        }
+    }
+
+    /// Set the free envelope (Env3) ADSR times on all voices
+    pub fn set_env3_adsr(&mut self, attack: f32, decay: f32, sustain: f32, release: f32) {
+        self.env3_attack = attack;
+        self.env3_decay = decay;
+        self.env3_sustain = sustain;
+        self.env3_release = release;
+        for voice in &mut self.voices {
+            voice.set_env3_adsr(attack, decay, sustain, release);
+        }
+    }
+
+    /// Get the Env3 ADSR times
+    pub fn env3_adsr(&self) -> (f32, f32, f32, f32) {
+        (
+            self.env3_attack,
+            self.env3_decay,
+            self.env3_sustain,
+            self.env3_release,
+        )
+    }
+
+    /// Set the modulation routing matrix on the manager and all voices
+    pub fn set_mod_matrix(&mut self, matrix: ModMatrix) {
+        self.mod_matrix = matrix;
+        for voice in &mut self.voices {
+            voice.set_mod_matrix(matrix);
+        }
+    }
+
+    /// Get the current modulation routing matrix
+    pub fn mod_matrix(&self) -> &ModMatrix {
+        &self.mod_matrix
+    }
+
+    /// Apply a full modulation state (matrix + LFOs + Env3 + tempo)
+    pub fn apply_mod_state(&mut self, s: &ModState) {
+        self.set_bpm(s.bpm);
+        self.set_mod_matrix(s.matrix);
+        self.set_lfo1_sync(s.lfo1.sync, s.lfo1.rate_beats);
+        self.set_lfo_settings(1, s.lfo2);
+        self.set_lfo_settings(2, s.lfo3);
+        self.set_env3_adsr(s.env3[0], s.env3[1], s.env3[2], s.env3[3]);
+        self.delay_sync = s.delay_sync;
+        self.delay_beats = s.delay_beats;
+        self.set_filter_type(s.filter_type);
+    }
+
+    /// Delay tempo-sync state for the engine to apply to the effects chain:
+    /// (synced, beats, bpm).
+    pub fn delay_sync_state(&self) -> (bool, f32, f32) {
+        (self.delay_sync, self.delay_beats, self.bpm)
+    }
+
+    /// Set delay tempo-sync state (stored on the manager; applied by the
+    /// engine to the effects chain).
+    pub fn set_delay_sync(&mut self, sync: bool, beats: f32) {
+        self.delay_sync = sync;
+        self.delay_beats = beats.max(0.05);
+    }
+
+    /// Snapshot the current modulation state
+    pub fn mod_state(&self) -> ModState {
+        ModState {
+            matrix: self.mod_matrix,
+            lfo1: LfoSettings {
+                rate: self.lfo_rate,
+                depth: self.lfo_depth,
+                waveform: self.lfo_waveform,
+                sync: self.lfo1_sync,
+                rate_beats: self.lfo1_beats,
+            },
+            lfo2: self.lfo2,
+            lfo3: self.lfo3,
+            env3: [
+                self.env3_attack,
+                self.env3_decay,
+                self.env3_sustain,
+                self.env3_release,
+            ],
+            bpm: self.bpm,
+            delay_sync: self.delay_sync,
+            delay_beats: self.delay_beats,
+            filter_type: self.filter_type,
+        }
+    }
+
+    /// Set the mod wheel value (0.0 to 1.0) on all voices
+    pub fn set_mod_wheel(&mut self, value: f32) {
+        self.mod_wheel = value.clamp(0.0, 1.0);
+        for voice in &mut self.voices {
+            voice.set_mod_wheel(self.mod_wheel);
+        }
     }
 
     /// Get current oscillator bank state
@@ -1162,6 +1532,11 @@ impl SynthEventReceiver for VoiceManager {
                 self.set_osc_waveform(3, waveform);
             }
             SynthEventKind::ControlChange { cc, value } => {
+                // CC1 is the mod wheel: always available as a mod matrix source,
+                // in addition to any explicit CC mapping.
+                if cc == 1 {
+                    self.set_mod_wheel(value as f32 / 127.0);
+                }
                 if let Some(param) = self.cc_mapping.get_param(cc) {
                     self.handle_param_change(param, value);
                 }
@@ -1249,6 +1624,20 @@ impl VoiceManager {
             voice.set_lfo_depth(self.lfo_depth);
             voice.set_lfo_waveform(self.lfo_waveform);
             voice.set_lfo_destination(self.lfo_destination);
+            voice.set_lfo_rate_at(1, self.lfo2.rate);
+            voice.set_lfo_depth_at(1, self.lfo2.depth);
+            voice.set_lfo_waveform_at(1, self.lfo2.waveform);
+            voice.set_lfo_rate_at(2, self.lfo3.rate);
+            voice.set_lfo_depth_at(2, self.lfo3.depth);
+            voice.set_lfo_waveform_at(2, self.lfo3.waveform);
+            voice.set_env3_adsr(
+                self.env3_attack,
+                self.env3_decay,
+                self.env3_sustain,
+                self.env3_release,
+            );
+            voice.set_mod_matrix(self.mod_matrix);
+            voice.set_mod_wheel(self.mod_wheel);
             // Portamento doesn't make as much sense in poly, but keep it
             voice.portamento_time = self.portamento_time;
             
@@ -1262,6 +1651,30 @@ impl VoiceManager {
             voice.note_off();
         }
     }
+}
+
+/// Convert a legacy `lfo_destination` preset field into an equivalent
+/// matrix slot, preserving the old modulation depth semantics.
+pub(crate) fn legacy_lfo_slot(preset: &Preset) -> Option<ModSlot> {
+    if preset.lfo_depth <= 0.0 {
+        return None;
+    }
+    let (dest, amount) = match preset.lfo_destination {
+        // Old vibrato: ±1 semitone at depth 1.0 -> depth already scales the
+        // LFO output, so amount maps to the 12-semitone destination range.
+        LfoDestination::Pitch => (ModDest::AllPitch, preset.lfo_depth / 12.0),
+        // Old filter LFO: ±2 octaves at full depth (depth was applied twice).
+        LfoDestination::FilterCutoff => (ModDest::FilterCutoff, preset.lfo_depth * 0.4),
+        // Old tremolo: ±50% amplitude at depth 1.0.
+        LfoDestination::Amplitude => (ModDest::Amplitude, preset.lfo_depth * 0.5),
+        LfoDestination::Off => return None,
+    };
+    Some(ModSlot {
+        source: ModSource::Lfo1,
+        dest,
+        amount,
+        enabled: true,
+    })
 }
 
 /// Soft clipping function to prevent harsh digital distortion
@@ -1315,6 +1728,38 @@ impl VoiceManager {
         self.set_lfo_depth(preset.lfo_depth);
         self.set_lfo_waveform(preset.lfo_waveform);
         self.set_lfo_destination(preset.lfo_destination);
+
+        // Tempo + sync (must run before LFO rate so synced rates resolve)
+        self.set_bpm(preset.tempo_bpm);
+        self.set_lfo1_sync(preset.lfo1_sync, preset.lfo1_beats);
+        self.lfo2.sync = preset.lfo2_sync;
+        self.lfo2.rate_beats = preset.lfo2_beats;
+        self.lfo3.sync = preset.lfo3_sync;
+        self.lfo3.rate_beats = preset.lfo3_beats;
+        self.set_delay_sync(preset.delay_sync, preset.delay_beats);
+        self.set_filter_type(preset.filter_type);
+        // lfo2/lfo3 sync fields were written directly above; refresh all
+        // effective rates so the voices pick them up.
+        let rates = [
+            self.effective_lfo_rate(0),
+            self.effective_lfo_rate(1),
+            self.effective_lfo_rate(2),
+        ];
+        for voice in &mut self.voices {
+            for i in 0..3 {
+                voice.set_lfo_rate_at(i, rates[i]);
+            }
+        }
+
+        // Mod matrix: use the stored matrix, or migrate the legacy
+        // lfo_destination into slot 0 for old presets.
+        let mut matrix = preset.mod_matrix;
+        if matrix.is_empty() {
+            if let Some(slot) = legacy_lfo_slot(preset) {
+                matrix.slots[0] = slot;
+            }
+        }
+        self.set_mod_matrix(matrix);
 
         // Pitch bend
         for voice in &mut self.voices {
@@ -1379,6 +1824,30 @@ impl VoiceManager {
             lfo_depth: self.lfo_depth,
             lfo_waveform: self.lfo_waveform,
             lfo_destination: self.lfo_destination,
+
+            lfo2_rate: self.lfo2.rate,
+            lfo2_depth: self.lfo2.depth,
+            lfo2_waveform: self.lfo2.waveform,
+            lfo3_rate: self.lfo3.rate,
+            lfo3_depth: self.lfo3.depth,
+            lfo3_waveform: self.lfo3.waveform,
+            env3_attack: self.env3_attack,
+            env3_decay: self.env3_decay,
+            env3_sustain: self.env3_sustain,
+            env3_release: self.env3_release,
+
+            mod_matrix: self.mod_matrix,
+
+            tempo_bpm: self.bpm,
+            lfo1_sync: self.lfo1_sync,
+            lfo1_beats: self.lfo1_beats,
+            lfo2_sync: self.lfo2.sync,
+            lfo2_beats: self.lfo2.rate_beats,
+            lfo3_sync: self.lfo3.sync,
+            lfo3_beats: self.lfo3.rate_beats,
+            delay_sync: self.delay_sync,
+            delay_beats: self.delay_beats,
+            filter_type: self.filter_type,
 
             pitch_bend_range: if let Some(voice) = self.voices.first() {
                 voice.osc_bank().pitch_bend_range()

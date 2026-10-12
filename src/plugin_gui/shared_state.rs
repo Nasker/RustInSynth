@@ -12,6 +12,10 @@ use std::sync::{
     Arc,
 };
 
+use parking_lot::Mutex;
+
+use crate::core::voice::ModState;
+
 /// Lightweight state shared between the plugin GUI and the audio thread.
 #[derive(Clone)]
 pub struct PluginSharedState {
@@ -21,6 +25,8 @@ pub struct PluginSharedState {
     voice_count: Arc<AtomicUsize>,
     /// Maximum number of voices the engine can play.
     max_voices: Arc<AtomicUsize>,
+    /// Modulation state (matrix + LFO2/3 + Env3), written by GUI, read by DSP.
+    mod_state: Arc<Mutex<ModState>>,
 }
 
 impl PluginSharedState {
@@ -29,6 +35,7 @@ impl PluginSharedState {
             cpu_load: Arc::new(AtomicU32::new(0)),
             voice_count: Arc::new(AtomicUsize::new(0)),
             max_voices: Arc::new(AtomicUsize::new(0)),
+            mod_state: Arc::new(Mutex::new(ModState::default())),
         }
     }
 
@@ -59,6 +66,16 @@ impl PluginSharedState {
     /// Returns a clone of the inner `Arc` so the audio thread can write to it.
     pub fn cpu_load_arc(&self) -> Arc<AtomicU32> {
         Arc::clone(&self.cpu_load)
+    }
+
+    /// Current modulation state (matrix + LFO2/3 + Env3).
+    pub fn mod_state(&self) -> ModState {
+        *self.mod_state.lock()
+    }
+
+    /// Set the modulation state (GUI side).
+    pub fn set_mod_state(&self, state: ModState) {
+        *self.mod_state.lock() = state;
     }
 }
 

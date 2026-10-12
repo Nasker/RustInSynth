@@ -9,26 +9,46 @@ use egui::*;
 use crate::core::event::WaveformType;
 use crate::core::lfo::{LfoDestination, LfoWaveform};
 use crate::core::params::SynthParam;
-use crate::core::presets::{list_presets, load_preset, save_preset, Preset};
-use crate::core::voice::PolyphonyMode;
+use crate::core::mod_matrix::{ModDest, ModSlot, ModSource, MOD_SLOTS};
+use crate::core::presets::{list_library, load_preset, save_preset, Preset, PresetEntry};
+use crate::core::voice::{LfoSettings, ModState, PolyphonyMode};
 use crate::gui::backend::{MidiLearnState, SynthBackend};
 use crate::gui::theme::{hangar_background, paint_chrome_title, section_header, spaced_label, THEME};
 use crate::gui::widgets::{gold_value_slider, param_slider};
 
+/// Which right-hand panel is shown in the tabbed column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RightTab {
+    /// Modulation routing matrix.
+    #[default]
+    Matrix,
+    /// Preset library / manager.
+    Presets,
+}
+
 /// GUI-only preset state shared by both the standalone app and the plugin editor.
 pub struct PresetState {
     pub preset_name: String,
-    pub available_presets: Vec<String>,
+    /// Library entries: factory presets + user presets on disk.
+    pub available_presets: Vec<PresetEntry>,
     pub selected_preset: Option<usize>,
+    /// Active tab in the right-hand column (Matrix or Presets).
+    pub right_tab: RightTab,
 }
 
 impl PresetState {
     pub fn new() -> Self {
         Self {
             preset_name: "New Preset".to_string(),
-            available_presets: list_presets().unwrap_or_default(),
+            available_presets: list_library(),
             selected_preset: None,
+            right_tab: RightTab::default(),
         }
+    }
+
+    /// Re-scan the library (e.g. after saving a new preset).
+    pub fn refresh(&mut self) {
+        self.available_presets = list_library();
     }
 }
 
@@ -186,13 +206,38 @@ pub fn shell(
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            ui.set_width(175.0);
-                            presets(ui, b, preset_state);
-                            if cfg.show_midi_panel {
-                                ui.add_space(16.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-                                midi(ui, b);
+                            ui.set_width(310.0);
+
+                            // Tab strip: MATRIX | PRESETS — keeps total width fixed.
+                            ui.horizontal(|ui| {
+                                for (tab, label) in
+                                    [(RightTab::Matrix, "MATRIX"), (RightTab::Presets, "PRESETS")]
+                                {
+                                    let selected = preset_state.right_tab == tab;
+                                    if ui
+                                        .selectable_label(
+                                            selected,
+                                            RichText::new(label).size(11.0).strong(),
+                                        )
+                                        .clicked()
+                                    {
+                                        preset_state.right_tab = tab;
+                                    }
+                                }
+                            });
+                            ui.separator();
+
+                            match preset_state.right_tab {
+                                RightTab::Matrix => mod_matrix_panel(ui, b),
+                                RightTab::Presets => {
+                                    presets(ui, b, preset_state);
+                                    if cfg.show_midi_panel {
+                                        ui.add_space(16.0);
+                                        ui.separator();
+                                        ui.add_space(8.0);
+                                        midi(ui, b);
+                                    }
+                                }
                             }
                         });
                     });
@@ -316,6 +361,17 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "FILTER");
 
+    // Filter topology selector (stored in ModState so it reaches the DSP)
+    let mut ms = b.mod_state();
+    egui::ComboBox::from_id_salt("filter_type")
+        .selected_text(ms.filter_type.name())
+        .show_ui(ui, |ui| {
+            for ty in crate::core::filter::FilterType::ALL {
+                ui.selectable_value(&mut ms.filter_type, ty, ty.name());
+            }
+        });
+    b.set_mod_state(ms);
+
     param_slider(ui, b, SynthParam::FilterCutoff, "Cutoff");
     param_slider(ui, b, SynthParam::FilterResonance, "Res");
 
@@ -430,6 +486,25 @@ pub fn pitch_voice(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "EFFECTS");
 
+    // DISTORTION
+    ui.group(|ui| {
+        let mut dist_on = b.distortion_enabled();
+        if ui.checkbox(&mut dist_on, RichText::new("DIST").size(10.0).strong()).changed() {
+            b.set_distortion_enabled(dist_on);
+        }
+
+        let mut drive = b.distortion_drive();
+        if gold_value_slider(ui, egui::Slider::new(&mut drive, 0.0..=1.0).text("Drive").custom_formatter(format_slider_value)).changed() {
+            b.set_distortion_drive(drive);
+        }
+        let mut mix = b.distortion_mix();
+        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+            b.set_distortion_mix(mix);
+        }
+    });
+
+    ui.add_space(4.0);
+
     // DELAY
     ui.group(|ui| {
         let mut delay_on = b.delay_enabled();
@@ -515,7 +590,7 @@ pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
         if let Err(e) = save_preset(&preset) {
             eprintln!("Failed to save preset: {}", e);
         } else {
-            state.available_presets = list_presets().unwrap_or_default();
+            state.refresh();
         }
     }
 
@@ -527,11 +602,16 @@ pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
         .id_salt("preset_list")
         .max_height(80.0)
         .show(ui, |ui| {
-            for (i, name) in state.available_presets.iter().enumerate() {
+            for (i, entry) in state.available_presets.iter().enumerate() {
                 let is_selected = state.selected_preset == Some(i);
-                if ui.selectable_label(is_selected, name).clicked() {
+                let label = if entry.is_factory {
+                    format!("{}  (factory)", entry.name)
+                } else {
+                    entry.name.clone()
+                };
+                if ui.selectable_label(is_selected, label).clicked() {
                     state.selected_preset = Some(i);
-                    clicked_name = Some(name.clone());
+                    clicked_name = Some(entry.name.clone());
                 }
             }
         });
@@ -729,6 +809,11 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     // Polyphony mode
     b.set_polyphony_mode(preset.polyphony_mode);
 
+    // Effects - Distortion
+    b.set_distortion_enabled(preset.distortion_enabled);
+    b.set_distortion_drive(preset.distortion_drive);
+    b.set_distortion_mix(preset.distortion_mix);
+
     // Effects - Delay
     b.set_delay_enabled(preset.delay_enabled);
     b.set_delay_time(preset.delay_time);
@@ -746,9 +831,53 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_chorus_rate(preset.chorus_rate);
     b.set_chorus_depth(preset.chorus_depth);
     b.set_chorus_mix(preset.chorus_mix);
+
+    // Modulation state: migrate legacy lfo_destination into the matrix when
+    // the preset has no routing stored.
+    let mut matrix = preset.mod_matrix;
+    if matrix.is_empty() {
+        if let Some(slot) = crate::core::voice::legacy_lfo_slot(preset) {
+            matrix.slots[0] = slot;
+        }
+    }
+    b.set_mod_state(ModState {
+        matrix,
+        lfo1: LfoSettings {
+            rate: preset.lfo_rate,
+            depth: preset.lfo_depth,
+            waveform: preset.lfo_waveform,
+            sync: preset.lfo1_sync,
+            rate_beats: preset.lfo1_beats,
+        },
+        lfo2: LfoSettings {
+            rate: preset.lfo2_rate,
+            depth: preset.lfo2_depth,
+            waveform: preset.lfo2_waveform,
+            sync: preset.lfo2_sync,
+            rate_beats: preset.lfo2_beats,
+        },
+        lfo3: LfoSettings {
+            rate: preset.lfo3_rate,
+            depth: preset.lfo3_depth,
+            waveform: preset.lfo3_waveform,
+            sync: preset.lfo3_sync,
+            rate_beats: preset.lfo3_beats,
+        },
+        env3: [
+            preset.env3_attack,
+            preset.env3_decay,
+            preset.env3_sustain,
+            preset.env3_release,
+        ],
+        bpm: preset.tempo_bpm,
+        delay_sync: preset.delay_sync,
+        delay_beats: preset.delay_beats,
+        filter_type: preset.filter_type,
+    });
 }
 
 pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
+    let ms = b.mod_state();
     Preset {
         name: name.to_string(),
         version: "1.0".to_string(),
@@ -798,6 +927,28 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
             2 => LfoDestination::FilterCutoff,
             _ => LfoDestination::Amplitude,
         },
+        lfo2_rate: ms.lfo2.rate,
+        lfo2_depth: ms.lfo2.depth,
+        lfo2_waveform: ms.lfo2.waveform,
+        lfo3_rate: ms.lfo3.rate,
+        lfo3_depth: ms.lfo3.depth,
+        lfo3_waveform: ms.lfo3.waveform,
+        env3_attack: ms.env3[0],
+        env3_decay: ms.env3[1],
+        env3_sustain: ms.env3[2],
+        env3_release: ms.env3[3],
+        mod_matrix: ms.matrix,
+
+        tempo_bpm: ms.bpm,
+        lfo1_sync: ms.lfo1.sync,
+        lfo1_beats: ms.lfo1.rate_beats,
+        lfo2_sync: ms.lfo2.sync,
+        lfo2_beats: ms.lfo2.rate_beats,
+        lfo3_sync: ms.lfo3.sync,
+        lfo3_beats: ms.lfo3.rate_beats,
+        delay_sync: ms.delay_sync,
+        delay_beats: ms.delay_beats,
+        filter_type: ms.filter_type,
 
         pitch_bend_range: b.get_param(SynthParam::PitchBendRange) as u8,
         portamento_time: b.get_param(SynthParam::PortamentoTime),
@@ -813,6 +964,10 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
         polyphony_mode: b.polyphony_mode(),
 
         // Effects - Delay
+        distortion_enabled: b.distortion_enabled(),
+        distortion_drive: b.distortion_drive(),
+        distortion_mix: b.distortion_mix(),
+
         delay_enabled: b.delay_enabled(),
         delay_time: b.delay_time(),
         delay_feedback: b.delay_feedback(),
@@ -830,4 +985,198 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str) -> Preset {
         chorus_depth: b.chorus_depth(),
         chorus_mix: b.chorus_mix(),
     }
+}
+
+// ============================================================================
+// Mod Matrix + extra modulators
+// ============================================================================
+
+/// LFO waveform labels shared by all three LFO controls.
+const LFO_WF_LABELS: [&str; 5] = ["Sin", "Tri", "Sqr", "Saw", "Rnd"];
+
+/// One extra LFO block (LFO 2/3): waveform combo + rate + depth sliders.
+fn extra_lfo(ui: &mut Ui, title: &str, s: &mut LfoSettings) {
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(title)
+                    .size(10.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 180, 60)),
+            );
+            let wf = match s.waveform {
+                LfoWaveform::Sine => 0,
+                LfoWaveform::Triangle => 1,
+                LfoWaveform::Square => 2,
+                LfoWaveform::Saw => 3,
+                LfoWaveform::Random => 4,
+            };
+            let mut wf_sel = wf;
+            egui::ComboBox::from_id_salt(format!("{}_wf", title))
+                .width(48.0)
+                .selected_text(LFO_WF_LABELS[wf])
+                .show_ui(ui, |ui| {
+                    for (i, label) in LFO_WF_LABELS.iter().enumerate() {
+                        ui.selectable_value(&mut wf_sel, i, *label);
+                    }
+                });
+            s.waveform = match wf_sel {
+                0 => LfoWaveform::Sine,
+                1 => LfoWaveform::Triangle,
+                2 => LfoWaveform::Square,
+                3 => LfoWaveform::Saw,
+                _ => LfoWaveform::Random,
+            };
+        });
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut s.sync, "Sync");
+            if s.sync {
+                division_combo(ui, format!("{}_div", title), &mut s.rate_beats);
+            } else {
+                ui.add(
+                    egui::Slider::new(&mut s.rate, 0.1..=20.0)
+                        .text("Rate")
+                        .logarithmic(true)
+                        .suffix(" Hz"),
+                );
+            }
+        });
+        ui.add(egui::Slider::new(&mut s.depth, 0.0..=1.0).text("Depth"));
+    });
+}
+
+/// Common note divisions as (label, beats-per-cycle) pairs.
+const DIVISIONS: [(&str, f32); 9] = [
+    ("4 Bars", 16.0),
+    ("2 Bars", 8.0),
+    ("1 Bar", 4.0),
+    ("1/2", 2.0),
+    ("1/4", 1.0),
+    ("1/8", 0.5),
+    ("1/16", 0.25),
+    ("1/32", 0.125),
+    ("1/64", 0.0625),
+];
+
+/// Combo box selecting a note division (period in quarter-note beats).
+fn division_combo(ui: &mut Ui, id_salt: String, beats: &mut f32) {
+    let current = DIVISIONS
+        .iter()
+        .find(|(_, b)| (*b - *beats).abs() < 0.001)
+        .map(|(l, _)| *l)
+        .unwrap_or("1/4");
+    egui::ComboBox::from_id_salt(id_salt)
+        .width(58.0)
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for (label, b) in DIVISIONS {
+                ui.selectable_value(beats, b, label);
+            }
+        });
+}
+
+/// The modulation routing matrix: 16 slots of source → dest → amount,
+/// plus the LFO 2/3 and Env 3 controls that feed the matrix.
+pub fn mod_matrix_panel(ui: &mut Ui, b: &mut dyn SynthBackend) {
+    section_header(ui, "MOD MATRIX");
+
+    let mut ms = b.mod_state();
+
+    // Tempo + delay sync
+    ui.horizontal(|ui| {
+        ui.label("BPM");
+        ui.add(egui::Slider::new(&mut ms.bpm, 20.0..=300.0).fixed_decimals(1));
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut ms.lfo1.sync, "LFO1 Sync");
+        if ms.lfo1.sync {
+            division_combo(ui, "lfo1_div".into(), &mut ms.lfo1.rate_beats);
+        }
+        ui.checkbox(&mut ms.delay_sync, "Delay Sync");
+        if ms.delay_sync {
+            division_combo(ui, "delay_div".into(), &mut ms.delay_beats);
+        }
+    });
+
+    // Extra modulators
+    ui.horizontal(|ui| {
+        extra_lfo(ui, "LFO 2", &mut ms.lfo2);
+        extra_lfo(ui, "LFO 3", &mut ms.lfo3);
+    });
+
+    ui.group(|ui| {
+        ui.label(
+            RichText::new("ENV 3")
+                .size(10.0)
+                .strong()
+                .color(Color32::from_rgb(255, 180, 60)),
+        );
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Slider::new(&mut ms.env3[0], 0.001..=5.0)
+                    .text("A")
+                    .logarithmic(true)
+                    .fixed_decimals(2),
+            );
+            ui.add(
+                egui::Slider::new(&mut ms.env3[1], 0.001..=5.0)
+                    .text("D")
+                    .logarithmic(true)
+                    .fixed_decimals(2),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.add(egui::Slider::new(&mut ms.env3[2], 0.0..=1.0).text("S"));
+            ui.add(
+                egui::Slider::new(&mut ms.env3[3], 0.001..=5.0)
+                    .text("R")
+                    .logarithmic(true)
+                    .fixed_decimals(2),
+            );
+        });
+    });
+
+    ui.add_space(6.0);
+    ui.separator();
+
+    // Routing slots
+    for i in 0..MOD_SLOTS {
+        let slot = &mut ms.matrix.slots[i];
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut slot.enabled, "");
+
+            egui::ComboBox::from_id_salt(format!("ms_src_{}", i))
+                .width(78.0)
+                .selected_text(slot.source.name())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut slot.source, ModSource::Off, "Off");
+                    for src in ModSource::all() {
+                        ui.selectable_value(&mut slot.source, *src, src.name());
+                    }
+                });
+
+            ui.label(RichText::new("→").size(10.0).color(THEME.gold_dark));
+
+            egui::ComboBox::from_id_salt(format!("ms_dst_{}", i))
+                .width(86.0)
+                .selected_text(slot.dest.name())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut slot.dest, ModDest::Off, "Off");
+                    for dst in ModDest::all() {
+                        ui.selectable_value(&mut slot.dest, *dst, dst.name());
+                    }
+                });
+
+            ui.add(
+                egui::Slider::new(&mut slot.amount, -1.0..=1.0)
+                    .fixed_decimals(2),
+            );
+        });
+    }
+
+    if ui.small_button("Clear all slots").clicked() {
+        ms.matrix.slots = [ModSlot::default(); MOD_SLOTS];
+    }
+
+    b.set_mod_state(ms);
 }

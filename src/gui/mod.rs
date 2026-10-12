@@ -24,6 +24,7 @@ pub use app::run_gui;
 
 use crate::core::param_spec::{self, PARAM_SPECS};
 use crate::core::params::SynthParam;
+use crate::core::voice::ModState;
 
 /// Number of parameters in the synth
 pub const NUM_PARAMS: usize = PARAM_SPECS.len();
@@ -98,6 +99,8 @@ pub struct SharedState {
     pub midi_feedback: Arc<dashmap::DashMap<u8, u8>>, // CC -> value
     // CPU load from audio thread (0.0 - 1.0, stored as u32 bits)
     pub cpu_load: Arc<std::sync::atomic::AtomicU32>,
+    // Modulation state (matrix + LFO2/3 + Env3) — not part of ParamBank
+    pub mod_state: Arc<parking_lot::Mutex<ModState>>,
 }
 
 impl SharedState {
@@ -106,6 +109,7 @@ impl SharedState {
             params: Arc::new(ParamBank::new()),
             midi_feedback: Arc::new(dashmap::DashMap::new()),
             cpu_load: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            mod_state: Arc::new(parking_lot::Mutex::new(ModState::default())),
         }
     }
     

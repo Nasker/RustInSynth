@@ -8,7 +8,7 @@ use crate::core::param_spec::cc_to_plain;
 use crate::core::params::{
     load_custom_cc_mappings, save_custom_cc_mappings, CCMapping, SynthParam,
 };
-use crate::core::voice::PolyphonyMode;
+use crate::core::voice::{ModState, PolyphonyMode};
 use crate::gui::SharedState;
 use crate::gui::backend::{CcMapping, MidiLearnState, SynthBackend};
 use crate::input::midi::MidiInputHandler;
@@ -107,6 +107,27 @@ impl SynthBackend for StandaloneBackend {
 
     fn set_param(&mut self, param: SynthParam, value: f32) {
         self.shared.params.set(param, value);
+    }
+
+    // ── Effects: Distortion ──────────────────────────────────────────────────
+
+    fn distortion_enabled(&self) -> bool {
+        self.audio_engine.distortion_enabled()
+    }
+    fn set_distortion_enabled(&mut self, enabled: bool) {
+        self.audio_engine.set_distortion_enabled(enabled);
+    }
+    fn distortion_drive(&self) -> f32 {
+        self.audio_engine.distortion_drive()
+    }
+    fn set_distortion_drive(&mut self, drive: f32) {
+        self.audio_engine.set_distortion_drive(drive);
+    }
+    fn distortion_mix(&self) -> f32 {
+        self.audio_engine.distortion_mix()
+    }
+    fn set_distortion_mix(&mut self, mix: f32) {
+        self.audio_engine.set_distortion_mix(mix);
     }
 
     // ── Effects: Delay ───────────────────────────────────────────────────────
@@ -228,6 +249,17 @@ impl SynthBackend for StandaloneBackend {
             3 => self.shared.params.set(SynthParam::Osc3Pan, pan),
             _ => {}
         }
+    }
+
+    // ── Modulation ───────────────────────────────────────────────────────────
+
+    fn mod_state(&self) -> ModState {
+        *self.shared.mod_state.lock()
+    }
+
+    fn set_mod_state(&mut self, state: ModState) {
+        *self.shared.mod_state.lock() = state;
+        self.audio_engine.set_mod_state(&state);
     }
 
     // ── MIDI ─────────────────────────────────────────────────────────────────

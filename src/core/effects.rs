@@ -79,6 +79,10 @@ pub struct Delay {
     feedback: f32,        // Feedback amount (0.0 - 0.95)
     mix: f32,             // Dry/wet mix (0.0 = dry, 1.0 = wet)
     ping_pong: bool,      // Enable ping-pong mode
+    // Tempo sync: when on, delay_time = beats * 60/bpm
+    tempo_sync: bool,
+    sync_beats: f32,
+    bpm: f32,
     sample_rate: SampleRate,
 }
 
@@ -91,6 +95,9 @@ impl Delay {
             feedback: 0.4,
             mix: 0.3,
             ping_pong: true,  // Ping-pong on by default for stereo goodness
+            tempo_sync: false,
+            sync_beats: 1.0,
+            bpm: 120.0,
             sample_rate,
         }
     }
@@ -110,7 +117,29 @@ impl Delay {
     pub fn set_ping_pong(&mut self, enabled: bool) {
         self.ping_pong = enabled;
     }
-    
+
+    /// Set the tempo in BPM (for tempo-synced delay times).
+    pub fn set_bpm(&mut self, bpm: f32) {
+        self.bpm = bpm.clamp(20.0, 300.0);
+        self.update_synced_time();
+    }
+
+    /// Enable/disable tempo sync and set the delay length in beats.
+    pub fn set_tempo_sync(&mut self, enabled: bool, beats: f32) {
+        self.tempo_sync = enabled;
+        self.sync_beats = beats.clamp(0.05, 16.0);
+        self.update_synced_time();
+    }
+
+    fn update_synced_time(&mut self) {
+        if self.tempo_sync {
+            self.delay_time = (self.sync_beats * 60.0 / self.bpm).clamp(0.001, 2.0);
+        }
+    }
+
+    pub fn tempo_sync(&self) -> bool { self.tempo_sync }
+    pub fn sync_beats(&self) -> f32 { self.sync_beats }
+
     pub fn delay_time(&self) -> f32 { self.delay_time }
     pub fn feedback(&self) -> f32 { self.feedback }
     pub fn mix(&self) -> f32 { self.mix }
@@ -476,14 +505,69 @@ impl Effect for Chorus {
 }
 
 // ============================================================================
+// DISTORTION
+// ============================================================================
+
+/// Waveshaping distortion (tanh drive).
+/// `drive` is 0..1 mapped to 1x..30x pre-gain; `mix` is dry/wet.
+/// Output is level-compensated so cranking drive doesn't blow the mix out.
+pub struct Distortion {
+    drive: f32,
+    mix: f32,
+}
+
+impl Distortion {
+    pub fn new() -> Self {
+        Self {
+            drive: 0.0,
+            mix: 0.5,
+        }
+    }
+
+    #[inline]
+    fn shape(&self, x: f32) -> f32 {
+        if self.drive <= 0.0 {
+            return x;
+        }
+        let gain = 1.0 + 29.0 * self.drive;
+        // tanh clip, then divide back by a gentle sqrt so loudness is tame
+        (x * gain).tanh() / gain.sqrt()
+    }
+
+    pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
+        let l = self.shape(input.left);
+        let r = self.shape(input.right);
+        StereoSample::new(
+            input.left * (1.0 - self.mix) + l * self.mix,
+            input.right * (1.0 - self.mix) + r * self.mix,
+        )
+    }
+
+    pub fn set_drive(&mut self, drive: f32) {
+        self.drive = drive.clamp(0.0, 1.0);
+    }
+    pub fn set_mix(&mut self, mix: f32) {
+        self.mix = mix.clamp(0.0, 1.0);
+    }
+    pub fn drive(&self) -> f32 {
+        self.drive
+    }
+    pub fn mix(&self) -> f32 {
+        self.mix
+    }
+}
+
+// ============================================================================
 // EFFECTS CHAIN
 // ============================================================================
 
 /// Chain of effects processed in series
 pub struct EffectsChain {
+    pub distortion: Distortion,
     pub delay: Delay,
     pub reverb: Reverb,
     pub chorus: Chorus,
+    pub distortion_enabled: bool,
     pub delay_enabled: bool,
     pub reverb_enabled: bool,
     pub chorus_enabled: bool,
@@ -492,9 +576,11 @@ pub struct EffectsChain {
 impl EffectsChain {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
+            distortion: Distortion::new(),
             delay: Delay::new(sample_rate),
             reverb: Reverb::new(sample_rate),
             chorus: Chorus::new(sample_rate),
+            distortion_enabled: false,
             delay_enabled: false,
             reverb_enabled: false,
             chorus_enabled: false,
@@ -511,7 +597,10 @@ impl EffectsChain {
     pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
         let mut output = input;
         
-        // Process in order: Chorus → Delay → Reverb
+        // Process in order: Distortion → Chorus → Delay → Reverb
+        if self.distortion_enabled {
+            output = self.distortion.process_stereo(output);
+        }
         if self.chorus_enabled {
             output = self.chorus.process_stereo(output);
         }
@@ -537,6 +626,20 @@ impl EffectsChain {
         self.chorus.reset();
     }
 
+    // ── Distortion wrappers ──────────────────────────────────────────────────
+
+    pub fn set_distortion_enabled(&mut self, enabled: bool) {
+        self.distortion_enabled = enabled;
+    }
+
+    pub fn set_distortion_drive(&mut self, drive: f32) {
+        self.distortion.set_drive(drive);
+    }
+
+    pub fn set_distortion_mix(&mut self, mix: f32) {
+        self.distortion.set_mix(mix);
+    }
+
     // ── Delay wrappers ───────────────────────────────────────────────────────
 
     pub fn set_delay_enabled(&mut self, enabled: bool) {
@@ -553,6 +656,16 @@ impl EffectsChain {
 
     pub fn set_delay_mix(&mut self, mix: f32) {
         self.delay.set_mix(mix);
+    }
+
+    /// Set tempo for all tempo-synced effects.
+    pub fn set_bpm(&mut self, bpm: f32) {
+        self.delay.set_bpm(bpm);
+    }
+
+    /// Enable/disable tempo sync on the delay and set its beat length.
+    pub fn set_delay_tempo_sync(&mut self, enabled: bool, beats: f32) {
+        self.delay.set_tempo_sync(enabled, beats);
     }
 
     // ── Reverb wrappers ──────────────────────────────────────────────────────
@@ -593,10 +706,16 @@ impl EffectsChain {
 
     // ── Getters ──────────────────────────────────────────────────────────────
 
+    pub fn distortion_enabled(&self) -> bool { self.distortion_enabled }
+    pub fn distortion_drive(&self) -> f32 { self.distortion.drive() }
+    pub fn distortion_mix(&self) -> f32 { self.distortion.mix() }
+
     pub fn delay_enabled(&self) -> bool { self.delay_enabled }
     pub fn delay_time(&self) -> f32 { self.delay.delay_time() }
     pub fn delay_feedback(&self) -> f32 { self.delay.feedback() }
     pub fn delay_mix(&self) -> f32 { self.delay.mix() }
+    pub fn delay_tempo_sync(&self) -> bool { self.delay.tempo_sync() }
+    pub fn delay_sync_beats(&self) -> f32 { self.delay.sync_beats() }
 
     pub fn reverb_enabled(&self) -> bool { self.reverb_enabled }
     pub fn reverb_room_size(&self) -> f32 { self.reverb.room_size() }

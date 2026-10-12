@@ -156,6 +156,15 @@ impl AudioEngine {
         self.stream = None;
     }
 
+    /// Apply the modulation state (matrix + extra modulators + tempo)
+    /// to all voices and tempo-synced effects.
+    pub fn set_mod_state(&self, state: &crate::core::voice::ModState) {
+        self.voice_manager.lock().apply_mod_state(state);
+        let mut fx = self.effects_chain.lock();
+        fx.set_bpm(state.bpm);
+        fx.set_delay_tempo_sync(state.delay_sync, state.delay_beats);
+    }
+
     /// Send a note event to the synth
     pub fn send_event(&self, event: NoteEvent) {
         self.voice_manager.lock().receive_event(event);
@@ -321,6 +330,26 @@ impl AudioEngine {
         Arc::clone(&self.effects_chain)
     }
     
+    // Distortion
+    pub fn set_distortion_enabled(&self, enabled: bool) {
+        self.effects_chain.lock().distortion_enabled = enabled;
+    }
+    pub fn distortion_enabled(&self) -> bool {
+        self.effects_chain.lock().distortion_enabled
+    }
+    pub fn set_distortion_drive(&self, drive: f32) {
+        self.effects_chain.lock().distortion.set_drive(drive);
+    }
+    pub fn distortion_drive(&self) -> f32 {
+        self.effects_chain.lock().distortion.drive()
+    }
+    pub fn set_distortion_mix(&self, mix: f32) {
+        self.effects_chain.lock().distortion.set_mix(mix);
+    }
+    pub fn distortion_mix(&self) -> f32 {
+        self.effects_chain.lock().distortion.mix()
+    }
+
     // Delay
     pub fn set_delay_enabled(&self, enabled: bool) {
         self.effects_chain.lock().delay_enabled = enabled;

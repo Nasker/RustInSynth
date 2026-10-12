@@ -9,7 +9,7 @@ use std::sync::Arc;
 use nih_plug::prelude::ParamSetter;
 
 use crate::core::params::SynthParam;
-use crate::core::voice::PolyphonyMode;
+use crate::core::voice::{ModState, PolyphonyMode};
 use crate::gui::backend::{CcMapping, MidiLearnState, SynthBackend};
 use crate::plugin::RustInSynthParams;
 use crate::plugin_gui::shared_state::PluginSharedState;
@@ -122,6 +122,30 @@ impl<'a> SynthBackend for PluginBackend<'a> {
             self.setter.end_set_parameter(p),
             self.setter.end_set_parameter(p)
         )
+    }
+
+    // ── Effects: Distortion ──────────────────────────────────────────────────
+
+    fn distortion_enabled(&self) -> bool {
+        self.params.distortion_enabled.value()
+    }
+    fn set_distortion_enabled(&mut self, enabled: bool) {
+        self.setter
+            .set_parameter(&self.params.distortion_enabled, enabled);
+    }
+    fn distortion_drive(&self) -> f32 {
+        self.params.distortion_drive.value()
+    }
+    fn set_distortion_drive(&mut self, drive: f32) {
+        self.setter
+            .set_parameter(&self.params.distortion_drive, drive);
+    }
+    fn distortion_mix(&self) -> f32 {
+        self.params.distortion_mix.value()
+    }
+    fn set_distortion_mix(&mut self, mix: f32) {
+        self.setter
+            .set_parameter(&self.params.distortion_mix, mix);
     }
 
     // ── Effects: Delay ───────────────────────────────────────────────────────
@@ -251,6 +275,25 @@ impl<'a> SynthBackend for PluginBackend<'a> {
             3 => self.setter.set_parameter(&self.params.osc3_pan, pan),
             _ => {}
         }
+    }
+
+    // ── Modulation ───────────────────────────────────────────────────────────
+
+    fn mod_state(&self) -> ModState {
+        let mut s = self.shared.mod_state();
+        // Filter type lives on the host param so automation wins; mirror it.
+        s.filter_type =
+            crate::core::filter::FilterType::from_index(self.params.filter_type.value() as u8);
+        s
+    }
+    fn set_mod_state(&mut self, state: ModState) {
+        // Route filter_type through the host param so DAW automation and the
+        // GUI combo share a single source of truth.
+        self.setter.set_parameter(
+            &self.params.filter_type,
+            state.filter_type.index() as i32,
+        );
+        self.shared.set_mod_state(state);
     }
 
     // ── MIDI (not applicable in plugin mode) ─────────────────────────────────

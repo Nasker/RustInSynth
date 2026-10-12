@@ -4,7 +4,7 @@
 //! a single GUI codebase (`SynthApp`) can drive both.
 
 use crate::core::params::SynthParam;
-use crate::core::voice::PolyphonyMode;
+use crate::core::voice::{ModState, PolyphonyMode};
 
 /// A CC-to-parameter mapping entry
 #[derive(Debug, Clone)]
@@ -37,6 +37,19 @@ pub trait SynthBackend {
     /// recording works; the standalone backend leaves them as no-ops.
     fn begin_param_change(&mut self, _param: SynthParam) {}
     fn end_param_change(&mut self, _param: SynthParam) {}
+
+    // ========================================================================
+    // Effects – Distortion
+    // ========================================================================
+
+    fn distortion_enabled(&self) -> bool;
+    fn set_distortion_enabled(&mut self, enabled: bool);
+
+    fn distortion_drive(&self) -> f32;
+    fn set_distortion_drive(&mut self, drive: f32);
+
+    fn distortion_mix(&self) -> f32;
+    fn set_distortion_mix(&mut self, mix: f32);
 
     // ========================================================================
     // Effects – Delay
@@ -105,6 +118,16 @@ pub trait SynthBackend {
 
     fn osc_pan(&self, osc_num: u8) -> f32;
     fn set_osc_pan(&mut self, osc_num: u8, pan: f32);
+
+    // ========================================================================
+    // Modulation (matrix + LFO2/3 + Env3 — outside SynthParam)
+    // ========================================================================
+
+    /// Snapshot of the full modulation state.
+    fn mod_state(&self) -> ModState;
+
+    /// Apply a full modulation state.
+    fn set_mod_state(&mut self, state: ModState);
 
     // ========================================================================
     // MIDI

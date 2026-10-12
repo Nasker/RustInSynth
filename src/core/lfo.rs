@@ -136,9 +136,11 @@ impl LFO {
         self.destination
     }
 
-    /// Generate next modulation value (-1.0 to +1.0)
+    /// Generate next modulation value (-1.0 to +1.0).
+    /// Routing is handled by the mod matrix, so the LFO always runs once a
+    /// nonzero depth is set.
     pub fn next_value(&mut self) -> f32 {
-        if self.destination == LfoDestination::Off || self.depth == 0.0 {
+        if self.depth == 0.0 {
             return 0.0;
         }
 

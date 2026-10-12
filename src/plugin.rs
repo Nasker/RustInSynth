@@ -5,6 +5,7 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use crate::core::effects::EffectsChain;
+use crate::core::filter::FilterType;
 use crate::core::event::{SynthEvent, WaveformType, SynthEventReceiver};
 use crate::core::lfo::{LfoDestination, LfoWaveform};
 use crate::core::param_spec::{self, ParamCurve, ParamSpec};
@@ -133,6 +134,18 @@ pub struct RustInSynthParams {
     #[id = "polyphony_mode"]
     pub polyphony_mode: IntParam,
 
+    // Filter topology: 0 = SVF, 1 = Ladder, 2 = Comb
+    #[id = "filter_type"]
+    pub filter_type: IntParam,
+
+    // Distortion
+    #[id = "distortion_enabled"]
+    pub distortion_enabled: BoolParam,
+    #[id = "distortion_drive"]
+    pub distortion_drive: FloatParam,
+    #[id = "distortion_mix"]
+    pub distortion_mix: FloatParam,
+
     // Delay
     #[id = "delay_enabled"]
     pub delay_enabled: BoolParam,
@@ -251,6 +264,24 @@ impl Default for RustInSynthParams {
                 "Polyphony Mode",
                 0, // 0 = Mono, 1 = Poly (match standalone default)
                 IntRange::Linear { min: 0, max: 1 },
+            ),
+
+            filter_type: IntParam::new(
+                "Filter Type",
+                0, // 0 = SVF, 1 = Ladder, 2 = Comb
+                IntRange::Linear { min: 0, max: 2 },
+            ),
+
+            distortion_enabled: BoolParam::new("Distortion Enabled", false),
+            distortion_drive: FloatParam::new(
+                "Distortion Drive",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            distortion_mix: FloatParam::new(
+                "Distortion Mix",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
             delay_enabled: BoolParam::new("Delay Enabled", false),
@@ -409,6 +440,18 @@ impl Plugin for RustInSynthPlugin {
     ) -> ProcessStatus {
         // 1. Sync non-allocating parameter values from host controls
         self.sync_plugin_params_safe();
+
+        // 1b. Apply the modulation state (matrix + LFO2/3 + Env3) shared by the editor.
+        // In a plugin the tempo always follows the host transport; fall back
+        // to the stored bpm when the host reports none (not playing / unsupported).
+        let mut mod_state = self.gui_shared.mod_state();
+        if let Some(host_bpm) = context.transport().tempo {
+            mod_state.bpm = host_bpm as f32;
+        }
+        self.voice_manager.apply_mod_state(&mod_state);
+        self.effects_chain.set_bpm(mod_state.bpm);
+        self.effects_chain
+            .set_delay_tempo_sync(mod_state.delay_sync, mod_state.delay_beats);
 
         // 2. Process incoming MIDI notes and events
         while let Some(event) = context.next_event() {
@@ -629,8 +672,17 @@ impl RustInSynthPlugin {
             PolyphonyMode::Poly
         };
         self.voice_manager.set_polyphony_mode(mode);
+        self.voice_manager
+            .set_filter_type(FilterType::from_index(self.params.filter_type.value() as u8));
 
         // Effects (not CC-mapped; always applied)
+        self.effects_chain
+            .set_distortion_enabled(self.params.distortion_enabled.value());
+        self.effects_chain
+            .set_distortion_drive(self.params.distortion_drive.value());
+        self.effects_chain
+            .set_distortion_mix(self.params.distortion_mix.value());
+
         self.effects_chain.set_delay_enabled(self.params.delay_enabled.value());
         self.effects_chain.set_delay_time(self.params.delay_time.value());
         self.effects_chain.set_delay_feedback(self.params.delay_feedback.value());

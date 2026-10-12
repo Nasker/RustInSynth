@@ -3,8 +3,10 @@ use std::fs;
 use std::path::Path;
 
 use super::event::WaveformType;
+use super::filter::FilterType;
 use super::lfo::LfoDestination;
 use super::lfo::LfoWaveform;
+use super::mod_matrix::ModMatrix;
 use super::voice::PolyphonyMode;
 
 /// A complete synthesizer preset/patch
@@ -54,6 +56,56 @@ pub struct Preset {
     pub lfo_waveform: LfoWaveform,
     pub lfo_destination: LfoDestination,
 
+    // Extra modulators
+    #[serde(default)]
+    pub lfo2_rate: f32,
+    #[serde(default)]
+    pub lfo2_depth: f32,
+    #[serde(default)]
+    pub lfo2_waveform: LfoWaveform,
+    #[serde(default)]
+    pub lfo3_rate: f32,
+    #[serde(default)]
+    pub lfo3_depth: f32,
+    #[serde(default)]
+    pub lfo3_waveform: LfoWaveform,
+    #[serde(default)]
+    pub env3_attack: f32,
+    #[serde(default)]
+    pub env3_decay: f32,
+    #[serde(default)]
+    pub env3_sustain: f32,
+    #[serde(default)]
+    pub env3_release: f32,
+
+    // Modulation routing matrix (supersedes lfo_destination for new presets)
+    #[serde(default)]
+    pub mod_matrix: ModMatrix,
+
+    // Tempo sync
+    #[serde(default = "default_bpm")]
+    pub tempo_bpm: f32,
+    #[serde(default)]
+    pub lfo1_sync: bool,
+    #[serde(default = "default_beat")]
+    pub lfo1_beats: f32,
+    #[serde(default)]
+    pub lfo2_sync: bool,
+    #[serde(default = "default_beat")]
+    pub lfo2_beats: f32,
+    #[serde(default)]
+    pub lfo3_sync: bool,
+    #[serde(default = "default_beat")]
+    pub lfo3_beats: f32,
+    #[serde(default)]
+    pub delay_sync: bool,
+    #[serde(default = "default_beat")]
+    pub delay_beats: f32,
+
+    // Filter topology
+    #[serde(default)]
+    pub filter_type: FilterType,
+
     // Pitch bend
     pub pitch_bend_range: u8,
 
@@ -74,6 +126,14 @@ pub struct Preset {
     // Polyphony mode
     #[serde(default)]
     pub polyphony_mode: PolyphonyMode,
+
+    // Effects - Distortion
+    #[serde(default)]
+    pub distortion_enabled: bool,
+    #[serde(default)]
+    pub distortion_drive: f32,
+    #[serde(default)]
+    pub distortion_mix: f32,
 
     // Effects - Delay
     #[serde(default)]
@@ -154,6 +214,27 @@ impl Default for Preset {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
 
             // Pitch bend
             pitch_bend_range: 12,
@@ -171,6 +252,9 @@ impl Default for Preset {
             polyphony_mode: PolyphonyMode::Mono,
 
             // Effects - Delay (default off)
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: false,
             delay_time: 0.3,
             delay_feedback: 0.3,
@@ -194,6 +278,44 @@ impl Default for Preset {
     }
 }
 
+/// On-disk preset format version. v1 = bare `Preset` JSON; v2 = envelope.
+pub const PRESET_FORMAT_VERSION: u32 = 2;
+
+/// Versioned envelope written to disk since format v2.  The `preset` field
+/// keeps the flat `Preset` shape so `serde(default)` inside it still gives
+/// field-level forward/backward compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetFile {
+    pub format_version: u32,
+    pub preset: Preset,
+}
+
+impl PresetFile {
+    pub fn new(preset: Preset) -> Self {
+        Self {
+            format_version: PRESET_FORMAT_VERSION,
+            preset,
+        }
+    }
+}
+
+/// Parse a JSON string as a preset in either format:
+/// v2 envelope (`{"format_version": 2, "preset": {...}}`) or v1 bare Preset.
+fn parse_preset_json(json: &str) -> Result<Preset, PresetError> {
+    // Peek at whether the document has a "preset" field (v2 envelope).
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| PresetError::Deserialization(e.to_string()))?;
+    if value.get("preset").is_some() {
+        let file: PresetFile = serde_json::from_value(value)
+            .map_err(|e| PresetError::Deserialization(e.to_string()))?;
+        Ok(file.preset)
+    } else {
+        // v1: bare Preset document — serde(default) fills fields added later.
+        serde_json::from_value(value)
+            .map_err(|e| PresetError::Deserialization(e.to_string()))
+    }
+}
+
 impl Preset {
     /// Create a new preset with the given name
     pub fn new(name: &str) -> Self {
@@ -203,33 +325,31 @@ impl Preset {
         }
     }
 
-    /// Save preset to a JSON file
+    /// Save preset to a JSON file (format v2 envelope)
     pub fn save_to_file(&self, path: &Path) -> Result<(), PresetError> {
-        let json = serde_json::to_string_pretty(self)
+        let file = PresetFile::new(self.clone());
+        let json = serde_json::to_string_pretty(&file)
             .map_err(|e| PresetError::Serialization(e.to_string()))?;
         fs::write(path, json)
             .map_err(|e| PresetError::Io(e.to_string()))?;
         Ok(())
     }
 
-    /// Load preset from a JSON file
+    /// Load preset from a JSON file (accepts v1 bare and v2 envelope files)
     pub fn load_from_file(path: &Path) -> Result<Self, PresetError> {
         let json = fs::read_to_string(path)
             .map_err(|e| PresetError::Io(e.to_string()))?;
-        let preset: Preset = serde_json::from_str(&json)
-            .map_err(|e| PresetError::Deserialization(e.to_string()))?;
-        Ok(preset)
+        Self::from_json(&json)
     }
 
-    /// Load preset from JSON string
+    /// Load preset from JSON string (accepts v1 bare and v2 envelope)
     pub fn from_json(json: &str) -> Result<Self, PresetError> {
-        serde_json::from_str(json)
-            .map_err(|e| PresetError::Deserialization(e.to_string()))
+        parse_preset_json(json)
     }
 
-    /// Export preset to JSON string
+    /// Export preset to JSON string (format v2 envelope)
     pub fn to_json(&self) -> Result<String, PresetError> {
-        serde_json::to_string_pretty(self)
+        serde_json::to_string_pretty(&PresetFile::new(self.clone()))
             .map_err(|e| PresetError::Serialization(e.to_string()))
     }
 }
@@ -255,6 +375,14 @@ impl std::fmt::Display for PresetError {
 impl std::error::Error for PresetError {}
 
 /// Get the default presets directory path
+fn default_bpm() -> f32 {
+    120.0
+}
+
+fn default_beat() -> f32 {
+    1.0
+}
+
 pub fn default_presets_dir() -> std::path::PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
@@ -270,7 +398,9 @@ pub fn ensure_presets_dir() -> Result<std::path::PathBuf, PresetError> {
     Ok(dir)
 }
 
-/// List all preset files in the presets directory
+/// List all presets: factory presets first, then user presets from the
+/// presets directory.  A user preset with the same name shadows the
+/// factory one.
 pub fn list_presets() -> Result<Vec<String>, PresetError> {
     let dir = ensure_presets_dir()?;
     let mut presets = Vec::new();
@@ -288,14 +418,50 @@ pub fn list_presets() -> Result<Vec<String>, PresetError> {
     }
 
     presets.sort();
+    presets.dedup();
     Ok(presets)
 }
 
-/// Load a preset by name (from default location)
+/// Full library listing: factory names (marked with `is_factory`) merged
+/// with user presets on disk.
+pub fn list_library() -> Vec<PresetEntry> {
+    let mut entries: Vec<PresetEntry> = factory_presets()
+        .into_iter()
+        .map(|p| PresetEntry {
+            name: p.name,
+            is_factory: true,
+        })
+        .collect();
+    if let Ok(user) = list_presets() {
+        for name in user {
+            entries.push(PresetEntry {
+                name,
+                is_factory: false,
+            });
+        }
+    }
+    entries
+}
+
+/// One row in the preset library.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PresetEntry {
+    pub name: String,
+    pub is_factory: bool,
+}
+
+/// Load a preset by name.  User files take precedence; falls back to the
+/// factory bank so built-in presets are always available.
 pub fn load_preset(name: &str) -> Result<Preset, PresetError> {
     let dir = default_presets_dir();
     let path = dir.join(format!("{}.json", name));
-    Preset::load_from_file(&path)
+    if path.exists() {
+        return Preset::load_from_file(&path);
+    }
+    factory_presets()
+        .into_iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| PresetError::Io(format!("Preset not found: {}", name)))
 }
 
 /// Save a preset by name (to default location)
@@ -340,6 +506,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 2,
             portamento_time: 0.05,
             master_volume: 0.6,
@@ -378,6 +565,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.15,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Pitch,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 12,
             portamento_time: 0.12,
             master_volume: 0.5,
@@ -416,6 +624,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.1,
             lfo_waveform: LfoWaveform::Triangle,
             lfo_destination: LfoDestination::FilterCutoff,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 7,
             portamento_time: 0.0,
             master_volume: 0.45,
@@ -454,6 +683,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 12,
             portamento_time: 0.0,
             master_volume: 0.5,
@@ -492,6 +742,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.5,
             lfo_waveform: LfoWaveform::Triangle,
             lfo_destination: LfoDestination::FilterCutoff,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 24,
             portamento_time: 0.0,
             master_volume: 0.4,
@@ -530,6 +801,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 2,
             portamento_time: 0.03,
             master_volume: 0.55,
@@ -568,6 +860,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.9,
             lfo_waveform: LfoWaveform::Square,
             lfo_destination: LfoDestination::FilterCutoff,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 2,
             portamento_time: 0.0,
             master_volume: 0.5,
@@ -606,6 +919,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.05,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Amplitude,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 2,
             portamento_time: 0.0,
             master_volume: 0.5,
@@ -644,6 +978,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.2,
             lfo_waveform: LfoWaveform::Triangle,
             lfo_destination: LfoDestination::FilterCutoff,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 12,
             portamento_time: 0.15,
             master_volume: 0.55,
@@ -652,6 +1007,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.8,
             stereo_width: 1.8,
             polyphony_mode: PolyphonyMode::Poly,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: true,
             delay_time: 0.375,
             delay_feedback: 0.35,
@@ -698,6 +1056,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.03,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Pitch,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 2,
             portamento_time: 0.001,
             master_volume: 0.65,
@@ -706,6 +1085,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.4,
             stereo_width: 1.2,
             polyphony_mode: PolyphonyMode::Poly,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: true,
             delay_time: 0.25,
             delay_feedback: 0.3,
@@ -752,6 +1134,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.6,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::FilterCutoff,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 24,
             portamento_time: 0.8,
             master_volume: 0.5,
@@ -760,6 +1163,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.6,
             stereo_width: 2.0,
             polyphony_mode: PolyphonyMode::Poly,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: true,
             delay_time: 0.5,
             delay_feedback: 0.5,
@@ -806,6 +1212,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 2,
             portamento_time: 0.001,
             master_volume: 0.7,
@@ -814,6 +1241,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.15,
             stereo_width: 0.6,
             polyphony_mode: PolyphonyMode::Mono,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: false,
             delay_time: 0.3,
             delay_feedback: 0.2,
@@ -860,6 +1290,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.1,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Amplitude,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 7,
             portamento_time: 0.02,
             master_volume: 0.6,
@@ -868,6 +1319,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.5,
             stereo_width: 1.5,
             polyphony_mode: PolyphonyMode::Poly,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: true,
             delay_time: 0.187,
             delay_feedback: 0.45,
@@ -914,6 +1368,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.0,
             lfo_waveform: LfoWaveform::Sine,
             lfo_destination: LfoDestination::Off,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 12,
             portamento_time: 0.08,
             master_volume: 0.7,
@@ -922,6 +1397,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.0,
             stereo_width: 1.0,
             polyphony_mode: PolyphonyMode::Mono,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: true,
             delay_time: 0.125,
             delay_feedback: 0.25,
@@ -968,6 +1446,27 @@ pub fn factory_presets() -> Vec<Preset> {
             lfo_depth: 0.25,
             lfo_waveform: LfoWaveform::Triangle,
             lfo_destination: LfoDestination::Pitch,
+            lfo2_rate: 6.0,
+            lfo2_depth: 0.0,
+            lfo2_waveform: LfoWaveform::Sine,
+            lfo3_rate: 6.0,
+            lfo3_depth: 0.0,
+            lfo3_waveform: LfoWaveform::Sine,
+            env3_attack: 0.01,
+            env3_decay: 0.3,
+            env3_sustain: 0.0,
+            env3_release: 0.3,
+            mod_matrix: ModMatrix::default(),
+            tempo_bpm: 120.0,
+            lfo1_sync: false,
+            lfo1_beats: 1.0,
+            lfo2_sync: false,
+            lfo2_beats: 1.0,
+            lfo3_sync: false,
+            lfo3_beats: 1.0,
+            delay_sync: false,
+            delay_beats: 1.0,
+            filter_type: FilterType::Svf,
             pitch_bend_range: 12,
             portamento_time: 0.04,
             master_volume: 0.6,
@@ -976,6 +1475,9 @@ pub fn factory_presets() -> Vec<Preset> {
             osc3_pan: 0.3,
             stereo_width: 1.4,
             polyphony_mode: PolyphonyMode::Poly,
+            distortion_enabled: false,
+            distortion_drive: 0.0,
+            distortion_mix: 0.5,
             delay_enabled: true,
             delay_time: 0.333,
             delay_feedback: 0.4,
@@ -1050,5 +1552,82 @@ mod tests {
     fn test_preset_version() {
         let preset = Preset::default();
         assert_eq!(preset.version, "1.0");
+    }
+
+    #[test]
+    fn test_v2_roundtrip() {
+        let preset = Preset::default();
+        let json = preset.to_json().unwrap();
+        // Saved as an envelope
+        assert!(json.contains("\"format_version\""));
+        assert!(json.contains("\"preset\""));
+        let loaded = Preset::from_json(&json).unwrap();
+        assert_eq!(loaded.name, preset.name);
+        assert_eq!(loaded.filter_cutoff, preset.filter_cutoff);
+    }
+
+    #[test]
+    fn test_v1_bare_preset_still_loads() {
+        // A v1 document is just the bare Preset struct, possibly missing
+        // newer fields entirely — serde(default) fills them.
+        let json = r#"{
+            "name": "Old Pad",
+            "version": "1.0",
+            "osc1_waveform": "Sine",
+            "osc1_level": 1.0,
+            "osc1_phase": 0.0,
+            "osc2_waveform": "Saw",
+            "osc2_level": 0.0,
+            "osc2_semitones": 0,
+            "osc2_cents": 0,
+            "osc2_phase": 0.0,
+            "osc3_waveform": "Sine",
+            "osc3_level": 0.0,
+            "osc3_semitones": 0,
+            "osc3_cents": 0,
+            "osc3_phase": 0.0,
+            "filter_cutoff": 5000.0,
+            "filter_resonance": 0.3,
+            "amp_attack": 0.01,
+            "amp_decay": 0.1,
+            "amp_sustain": 0.7,
+            "amp_release": 0.2,
+            "filter_attack": 0.01,
+            "filter_decay": 0.3,
+            "filter_sustain": 0.0,
+            "filter_release": 0.3,
+            "filter_env_amount": 0.0,
+            "lfo_rate": 6.0,
+            "lfo_depth": 0.0,
+            "lfo_waveform": "Sine",
+            "lfo_destination": "Off",
+            "pitch_bend_range": 12,
+            "master_volume": 0.5,
+            "delay_enabled": false,
+            "delay_time": 0.3,
+            "delay_feedback": 0.3,
+            "delay_mix": 0.3,
+            "reverb_enabled": false,
+            "reverb_room_size": 0.5,
+            "reverb_damping": 0.5,
+            "reverb_mix": 0.3,
+            "chorus_enabled": false,
+            "chorus_rate": 0.5,
+            "chorus_depth": 0.5,
+            "chorus_mix": 0.3
+        }"#;
+        let p = Preset::from_json(json).unwrap();
+        assert_eq!(p.name, "Old Pad");
+        assert_eq!(p.tempo_bpm, 120.0); // defaulted
+        assert!(!p.lfo1_sync);
+        assert_eq!(p.delay_beats, 1.0);
+    }
+
+    #[test]
+    fn test_factory_preset_loadable_by_name() {
+        // Factory presets must be loadable even without a file on disk.
+        let p = load_preset("Sub Bass").unwrap();
+        assert_eq!(p.name, "Sub Bass");
+        assert!(load_preset("Does Not Exist 42").is_err());
     }
 }
