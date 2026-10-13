@@ -5,6 +5,7 @@
 //! themed banks; `extended` adds the themed presets built around the
 //! modulation matrix, tempo sync and the extra modulators.
 
+use super::effects::DistortionType as DT;
 use super::event::WaveformType as W;
 use super::filter::FilterType;
 use super::lfo::LfoWaveform as L;
@@ -81,6 +82,7 @@ pub(crate) fn extended() -> Vec<Preset> {
     v.extend(pluck());
     v.extend(seq());
     v.extend(fx());
+    v.extend(showcase());
     v
 }
 
@@ -690,6 +692,334 @@ fn fx() -> Vec<Preset> {
             ]),
             reverb_enabled: true, reverb_room_size: 0.9, reverb_damping: 0.4, reverb_mix: 0.4,
             ..base("Downlifter", "FX")
+        },
+    ]
+}
+
+/// Showcase bank for the newer engine features: Osc4 as an audio-rate FM/RM
+/// modulator, the serial second filter, and the extra distortion types.
+/// In FM/RM presets osc4 keeps `level = 0` — its raw output still feeds the
+/// modulation matrix even while the oscillator itself is silent.
+fn showcase() -> Vec<Preset> {
+    vec![
+        // -- Bass ------------------------------------------------------------
+        // West-coast growl: osc4 sine frequency-modulates osc1, then the Fold
+        // waveshaper piles on extra harmonics. Classic Buchla bark.
+        Preset {
+            osc1_waveform: W::Sine, osc1_level: 1.0,
+            osc2_waveform: W::Sine, osc2_level: 0.5, osc2_semitones: -12, osc2_cents: 0,
+            osc3_waveform: W::Saw, osc3_level: 0.2, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 0, osc4_cents: 0,
+            filter_type: FilterType::Ladder, filter_cutoff: 900.0, filter_resonance: 0.2,
+            amp_attack: 0.005, amp_decay: 0.2, amp_sustain: 1.0, amp_release: 0.15,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Pitch, 0.45),
+                (S::ModWheel, D::FilterCutoff, 0.4),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Fold,
+            distortion_drive: 0.55, distortion_mix: 0.6,
+            ..base("Fold FM Bass", "Bass")
+        },
+        // Audio-rate growl: osc4 ring-modulates the lead saw while a synced
+        // LFO chews through the serial second filter. Fuzz keeps it violent.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 1.0,
+            osc2_waveform: W::Saw, osc2_level: 0.8, osc2_semitones: 0, osc2_cents: 11,
+            osc3_waveform: W::Square, osc3_level: 0.5, osc3_semitones: -12, osc3_cents: 0,
+            osc4_waveform: W::Saw, osc4_semitones: -12, osc4_cents: 0,
+            filter_type: FilterType::Ladder, filter_cutoff: 420.0, filter_resonance: 0.3,
+            filter2_type: FilterType::Svf, filter2_cutoff: 1400.0, filter2_resonance: 0.45,
+            amp_attack: 0.005, amp_decay: 0.15, amp_sustain: 1.0, amp_release: 0.12,
+            lfo_rate: 2.0, lfo_depth: 1.0, lfo_waveform: L::Sine,
+            lfo1_sync: true, lfo1_beats: 0.5,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Level, 0.7),
+                (S::Lfo1, D::Filter2Cutoff, 0.5),
+                (S::ModWheel, D::Lfo1Rate, 0.34),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Fuzz,
+            distortion_drive: 0.5, distortion_mix: 0.55,
+            ..base("Neuro Ripsaw", "Bass")
+        },
+        // Hollow metal bass: serial ladder into a resonant comb, bitcrushed
+        // edges, slow filter2 drift keeps it alive.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 1.0,
+            osc2_waveform: W::Square, osc2_level: 0.7, osc2_semitones: -12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            filter_type: FilterType::Ladder, filter_cutoff: 700.0, filter_resonance: 0.25,
+            filter2_type: FilterType::Comb, filter2_cutoff: 500.0, filter2_resonance: 0.6,
+            amp_attack: 0.004, amp_decay: 0.2, amp_sustain: 0.95, amp_release: 0.1,
+            lfo2_rate: 0.3, lfo2_depth: 1.0, lfo2_waveform: L::Triangle,
+            mod_matrix: matrix(&[
+                (S::Lfo2, D::Filter2Cutoff, 0.3),
+                (S::Velocity, D::FilterCutoff, 0.25),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Bitcrush,
+            distortion_drive: 0.3, distortion_mix: 0.35,
+            ..base("Comb Reactor", "Bass")
+        },
+        // -- Lead ------------------------------------------------------------
+        // Classic ring-mod lead: osc4 an octave up multiplies the carrier for
+        // bell-like partials; mod wheel fades in vibrato.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 1.0,
+            osc2_waveform: W::Triangle, osc2_level: 0.6, osc2_semitones: 0, osc2_cents: 5,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 12, osc4_cents: 0,
+            filter_cutoff: 4500.0, filter_resonance: 0.2,
+            amp_attack: 0.01, amp_decay: 0.2, amp_sustain: 0.85, amp_release: 0.25,
+            portamento_time: 0.05,
+            lfo2_rate: 5.5, lfo2_depth: 0.0, lfo2_waveform: L::Sine,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Level, 0.6),
+                (S::Lfo2, D::AllPitch, 0.03),
+                (S::ModWheel, D::Lfo2Depth, 1.0),
+            ]),
+            delay_enabled: true, delay_sync: true, delay_beats: 0.5,
+            delay_feedback: 0.35, delay_mix: 0.25,
+            ..base("Ring Mod Lead", "Lead")
+        },
+        // Fusion FM brass: osc4 modulates only osc2's pitch — a bright FM
+        // layer riding on an analog saw bed, serial filter2 tames the fizz.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 0.9,
+            osc2_waveform: W::Sine, osc2_level: 0.8, osc2_semitones: 0, osc2_cents: 0,
+            osc3_waveform: W::Saw, osc3_level: 0.4, osc3_semitones: -12, osc3_cents: 8,
+            osc4_waveform: W::Sine, osc4_semitones: 0, osc4_cents: 0,
+            filter_cutoff: 3200.0, filter_resonance: 0.25,
+            filter2_type: FilterType::Svf, filter2_cutoff: 6000.0, filter2_resonance: 0.0,
+            amp_attack: 0.02, amp_decay: 0.3, amp_sustain: 0.9, amp_release: 0.2,
+            portamento_time: 0.04,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc2Pitch, 0.4),
+                (S::ModWheel, D::FilterCutoff, 0.4),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Tube,
+            distortion_drive: 0.25, distortion_mix: 0.35,
+            ..base("FM Fusion", "Lead")
+        },
+        // Evolving bell lead: LFO3 slowly bends osc4's pitch, so the FM ratio
+        // never sits still — every note rings a little differently.
+        Preset {
+            osc1_waveform: W::Sine, osc1_level: 1.0,
+            osc2_waveform: W::Triangle, osc2_level: 0.4, osc2_semitones: 12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 7, osc4_cents: 0,
+            filter_cutoff: 7000.0, filter_resonance: 0.15,
+            amp_attack: 0.005, amp_decay: 1.0, amp_sustain: 0.4, amp_release: 0.8,
+            lfo3_rate: 0.18, lfo3_depth: 1.0, lfo3_waveform: L::Sine,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Pitch, 0.3),
+                (S::Lfo3, D::Osc4Pitch, 0.4),
+                (S::Velocity, D::FilterCutoff, 0.25),
+            ]),
+            delay_enabled: true, delay_sync: true, delay_beats: 0.75,
+            delay_feedback: 0.4, delay_mix: 0.3,
+            reverb_enabled: true, reverb_room_size: 0.7, reverb_damping: 0.4, reverb_mix: 0.3,
+            ..base("Drift Bells", "Lead")
+        },
+        // -- Pad -------------------------------------------------------------
+        // Vowel morph pad: the serial SVF's resonant peak sweeps slowly behind
+        // the main lowpass — the synth "talks" while the chord holds.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 0.8,
+            osc2_waveform: W::Saw, osc2_level: 0.7, osc2_semitones: 0, osc2_cents: 9,
+            osc3_waveform: W::Triangle, osc3_level: 0.6, osc3_semitones: -12, osc3_cents: 0,
+            filter_cutoff: 1500.0, filter_resonance: 0.15,
+            filter2_type: FilterType::Svf, filter2_cutoff: 900.0, filter2_resonance: 0.7,
+            amp_attack: 0.9, amp_decay: 0.5, amp_sustain: 0.9, amp_release: 2.0,
+            polyphony_mode: PolyphonyMode::Poly,
+            lfo2_rate: 0.12, lfo2_depth: 1.0, lfo2_waveform: L::Sine,
+            mod_matrix: matrix(&[
+                (S::Lfo2, D::Filter2Cutoff, 0.4),
+                (S::Aftertouch, D::FilterCutoff, 0.3),
+            ]),
+            chorus_enabled: true, chorus_rate: 0.5, chorus_depth: 0.4, chorus_mix: 0.3,
+            reverb_enabled: true, reverb_room_size: 0.85, reverb_damping: 0.5, reverb_mix: 0.4,
+            ..base("Vowel Choir", "Pad")
+        },
+        // FM shimmer pad: a whisper of osc4 FM on osc2 adds glassy overtones
+        // that bloom through the huge reverb.
+        Preset {
+            osc1_waveform: W::Triangle, osc1_level: 0.8,
+            osc2_waveform: W::Sine, osc2_level: 0.7, osc2_semitones: 12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.5, osc3_semitones: 19, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 12, osc4_cents: 0,
+            filter_cutoff: 3500.0, filter_resonance: 0.15,
+            filter2_type: FilterType::Svf, filter2_cutoff: 5000.0, filter2_resonance: 0.2,
+            amp_attack: 1.4, amp_decay: 0.6, amp_sustain: 0.85, amp_release: 3.0,
+            polyphony_mode: PolyphonyMode::Poly,
+            lfo2_rate: 0.1, lfo2_depth: 1.0, lfo2_waveform: L::Sine,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc2Pitch, 0.15),
+                (S::Lfo2, D::StereoWidth, 0.4),
+                (S::Lfo2, D::FilterCutoff, 0.1),
+            ]),
+            chorus_enabled: true, chorus_rate: 0.6, chorus_depth: 0.45, chorus_mix: 0.35,
+            reverb_enabled: true, reverb_room_size: 0.95, reverb_damping: 0.4, reverb_mix: 0.5,
+            ..base("FM Aurora", "Pad")
+        },
+        // Ring-shimmer pad: a touch of RM on the top oscillator sprinkles
+        // metallic dust over a warm analog bed; Env3 slowly opens filter1.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 0.7,
+            osc2_waveform: W::Triangle, osc2_level: 0.7, osc2_semitones: 0, osc2_cents: -8,
+            osc3_waveform: W::Sine, osc3_level: 0.6, osc3_semitones: 12, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 19, osc4_cents: 0,
+            osc3_pan: 0.4,
+            filter_cutoff: 2200.0, filter_resonance: 0.2,
+            amp_attack: 1.0, amp_decay: 0.5, amp_sustain: 0.9, amp_release: 2.5,
+            polyphony_mode: PolyphonyMode::Poly,
+            lfo2_rate: 0.3, lfo2_depth: 1.0, lfo2_waveform: L::Sine,
+            env3_attack: 2.0, env3_decay: 1.0, env3_sustain: 0.6, env3_release: 2.0,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc3Level, 0.35),
+                (S::Lfo2, D::Osc3Pan, -0.6),
+                (S::Env3, D::FilterCutoff, 0.25),
+            ]),
+            reverb_enabled: true, reverb_room_size: 0.9, reverb_damping: 0.5, reverb_mix: 0.45,
+            ..base("Ringed Nebula", "Pad")
+        },
+        // -- Keys ------------------------------------------------------------
+        // FM electric piano: osc4 at an inharmonic +14 ratio gives the classic
+        // bell-tine overtones; harder hits open the filter.
+        Preset {
+            osc1_waveform: W::Sine, osc1_level: 1.0,
+            osc2_waveform: W::Sine, osc2_level: 0.5, osc2_semitones: 12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 14, osc4_cents: 0,
+            filter_cutoff: 5000.0, filter_resonance: 0.1,
+            amp_attack: 0.002, amp_decay: 1.1, amp_sustain: 0.3, amp_release: 0.5,
+            polyphony_mode: PolyphonyMode::Poly,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Pitch, 0.35),
+                (S::Velocity, D::FilterCutoff, 0.3),
+            ]),
+            chorus_enabled: true, chorus_rate: 0.7, chorus_depth: 0.3, chorus_mix: 0.25,
+            reverb_enabled: true, reverb_room_size: 0.5, reverb_damping: 0.5, reverb_mix: 0.15,
+            ..base("FM Tines", "Keys")
+        },
+        // Lo-fi clav: bitcrusher grit on a snappy filtered square.
+        Preset {
+            osc1_waveform: W::Square, osc1_level: 1.0,
+            osc2_waveform: W::Saw, osc2_level: 0.5, osc2_semitones: 12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            filter_cutoff: 2600.0, filter_resonance: 0.3, filter_env_amount: 0.4,
+            filter_attack: 0.001, filter_decay: 0.09, filter_sustain: 0.0, filter_release: 0.08,
+            amp_attack: 0.001, amp_decay: 0.25, amp_sustain: 0.0, amp_release: 0.1,
+            polyphony_mode: PolyphonyMode::Poly,
+            mod_matrix: matrix(&[(S::KeyTrack, D::FilterCutoff, 0.3)]),
+            distortion_enabled: true, distortion_type: DT::Bitcrush,
+            distortion_drive: 0.55, distortion_mix: 0.5,
+            ..base("Bit Clav", "Keys")
+        },
+        // -- Pluck -----------------------------------------------------------
+        // Steel-drum pluck: strong RM on the carrier at a +19 modulator gives
+        // instant metallic mallet tone.
+        Preset {
+            osc1_waveform: W::Sine, osc1_level: 1.0,
+            osc2_waveform: W::Triangle, osc2_level: 0.5, osc2_semitones: 12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 19, osc4_cents: 0,
+            filter_cutoff: 4000.0, filter_resonance: 0.15,
+            amp_attack: 0.001, amp_decay: 0.6, amp_sustain: 0.0, amp_release: 0.5,
+            polyphony_mode: PolyphonyMode::Poly,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Level, 0.8),
+                (S::Velocity, D::FilterCutoff, 0.25),
+            ]),
+            delay_enabled: true, delay_sync: true, delay_beats: 0.5,
+            delay_feedback: 0.3, delay_mix: 0.2,
+            ..base("Steel Drum", "Pluck")
+        },
+        // Folded pluck: a short FM stab pushed through the wavefolder —
+        // harmonics bloom then snap shut with the filter envelope.
+        Preset {
+            osc1_waveform: W::Sine, osc1_level: 1.0,
+            osc2_waveform: W::Saw, osc2_level: 0.4, osc2_semitones: 0, osc2_cents: 6,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 7, osc4_cents: 0,
+            filter_type: FilterType::Ladder, filter_cutoff: 1800.0, filter_resonance: 0.3,
+            filter_env_amount: 0.5,
+            filter_attack: 0.001, filter_decay: 0.15, filter_sustain: 0.0, filter_release: 0.12,
+            amp_attack: 0.001, amp_decay: 0.4, amp_sustain: 0.0, amp_release: 0.3,
+            polyphony_mode: PolyphonyMode::Poly,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Pitch, 0.5),
+                (S::Velocity, D::FilterCutoff, 0.3),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Fold,
+            distortion_drive: 0.45, distortion_mix: 0.5,
+            ..base("Folded Pluck", "Pluck")
+        },
+        // -- Seq -------------------------------------------------------------
+        // Gated growl: a 16th gate chops an RM saw stack while LFO1 sweeps
+        // the serial filter — rhythmic and mean.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 0.9,
+            osc2_waveform: W::Saw, osc2_level: 0.8, osc2_semitones: 0, osc2_cents: 10,
+            osc3_waveform: W::Square, osc3_level: 0.5, osc3_semitones: -12, osc3_cents: 0,
+            osc4_waveform: W::Square, osc4_semitones: -12, osc4_cents: 0,
+            filter_type: FilterType::Ladder, filter_cutoff: 800.0, filter_resonance: 0.3,
+            filter2_type: FilterType::Svf, filter2_cutoff: 1200.0, filter2_resonance: 0.5,
+            amp_attack: 0.005, amp_decay: 0.2, amp_sustain: 0.8, amp_release: 0.15,
+            lfo_rate: 2.0, lfo_depth: 1.0, lfo_waveform: L::Triangle,
+            lfo1_sync: true, lfo1_beats: 1.0,
+            lfo2_rate: 8.0, lfo2_depth: 1.0, lfo2_waveform: L::Square,
+            lfo2_sync: true, lfo2_beats: 0.25,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Level, 0.5),
+                (S::Lfo1, D::Filter2Cutoff, 0.45),
+                (S::Lfo2, D::Amplitude, 0.7),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Fuzz,
+            distortion_drive: 0.4, distortion_mix: 0.45,
+            delay_enabled: true, delay_sync: true, delay_beats: 0.5,
+            delay_feedback: 0.3, delay_mix: 0.2,
+            ..base("Gated Growl", "Seq")
+        },
+        // -- FX --------------------------------------------------------------
+        // Full ring-mod chaos: two carriers multiplied by a saw modulator,
+        // resonant comb on top — pure clangorous metal.
+        Preset {
+            osc1_waveform: W::Saw, osc1_level: 0.9,
+            osc2_waveform: W::Square, osc2_level: 0.8, osc2_semitones: 7, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Saw, osc4_semitones: -7, osc4_cents: 0,
+            filter_cutoff: 3000.0, filter_resonance: 0.4,
+            filter2_type: FilterType::Comb, filter2_cutoff: 800.0, filter2_resonance: 0.55,
+            amp_attack: 0.02, amp_decay: 0.5, amp_sustain: 0.9, amp_release: 0.6,
+            lfo2_rate: 0.4, lfo2_depth: 1.0, lfo2_waveform: L::Sine,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Level, 0.8),
+                (S::Osc4, D::Osc2Level, 0.8),
+                (S::Lfo2, D::Filter2Cutoff, 0.4),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Fold,
+            distortion_drive: 0.5, distortion_mix: 0.5,
+            reverb_enabled: true, reverb_room_size: 0.8, reverb_damping: 0.4, reverb_mix: 0.35,
+            ..base("Metal Storm", "FX")
+        },
+        // Haunted broadcast: bitcrushed noise ring-modulated into eerie
+        // radio-tuning sweeps drifting across the stereo field.
+        Preset {
+            osc1_waveform: W::Noise, osc1_level: 0.7,
+            osc2_waveform: W::Sine, osc2_level: 0.5, osc2_semitones: 12, osc2_cents: 0,
+            osc3_waveform: W::Sine, osc3_level: 0.0, osc3_semitones: 0, osc3_cents: 0,
+            osc4_waveform: W::Sine, osc4_semitones: 5, osc4_cents: 0,
+            filter_cutoff: 2500.0, filter_resonance: 0.5,
+            amp_attack: 0.3, amp_decay: 0.5, amp_sustain: 0.9, amp_release: 1.5,
+            lfo2_rate: 0.25, lfo2_depth: 1.0, lfo2_waveform: L::Triangle,
+            mod_matrix: matrix(&[
+                (S::Osc4, D::Osc1Level, 0.6),
+                (S::Lfo2, D::FilterCutoff, 0.4),
+                (S::Lfo2, D::Osc1Pan, 0.6),
+            ]),
+            distortion_enabled: true, distortion_type: DT::Bitcrush,
+            distortion_drive: 0.5, distortion_mix: 0.5,
+            reverb_enabled: true, reverb_room_size: 0.85, reverb_damping: 0.3, reverb_mix: 0.45,
+            ..base("Ghost Radio", "FX")
         },
     ]
 }
