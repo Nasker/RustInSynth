@@ -31,6 +31,9 @@ pub enum ModSource {
     ModWheel,
     Aftertouch,
     PitchBend,
+    /// Audio-rate source: oscillator 4's raw output from the previous
+    /// sample. Enables FM (→ pitch dests) and ring modulation (→ level dests).
+    Osc4,
     Constant,
 }
 
@@ -50,6 +53,7 @@ impl ModSource {
             ModSource::ModWheel => "Mod Wheel",
             ModSource::Aftertouch => "Aftertouch",
             ModSource::PitchBend => "Pitch Bend",
+            ModSource::Osc4 => "Osc 4",
             ModSource::Constant => "Constant",
         }
     }
@@ -69,6 +73,7 @@ impl ModSource {
             ModSource::ModWheel,
             ModSource::Aftertouch,
             ModSource::PitchBend,
+            ModSource::Osc4,
             ModSource::Constant,
         ]
     }
@@ -87,6 +92,7 @@ impl ModSource {
                 | ModSource::Lfo3
                 | ModSource::KeyTrack
                 | ModSource::PitchBend
+                | ModSource::Osc4
         )
     }
 }
@@ -125,6 +131,17 @@ pub enum ModDest {
     Lfo1Depth,
     Lfo2Depth,
     Lfo3Depth,
+    // Oscillator 4
+    Osc4Level,
+    Osc4Pan,
+    // Per-oscillator pitch (semitones; exponential, FM-capable via Osc4 src)
+    Osc1Pitch,
+    Osc2Pitch,
+    Osc3Pitch,
+    Osc4Pitch,
+    // Second serial filter
+    Filter2Cutoff,
+    Filter2Resonance,
 }
 
 impl ModDest {
@@ -142,6 +159,14 @@ impl ModDest {
             ModDest::Osc1Pan => "Osc 1 Pan",
             ModDest::Osc2Pan => "Osc 2 Pan",
             ModDest::Osc3Pan => "Osc 3 Pan",
+            ModDest::Osc4Level => "Osc 4 Level",
+            ModDest::Osc4Pan => "Osc 4 Pan",
+            ModDest::Osc1Pitch => "Osc 1 Pitch",
+            ModDest::Osc2Pitch => "Osc 2 Pitch",
+            ModDest::Osc3Pitch => "Osc 3 Pitch",
+            ModDest::Osc4Pitch => "Osc 4 Pitch",
+            ModDest::Filter2Cutoff => "Cutoff 2",
+            ModDest::Filter2Resonance => "Resonance 2",
             ModDest::DelayTime => "Delay Time",
             ModDest::DelayFeedback => "Delay Fdbk",
             ModDest::DelayMix => "Delay Mix",
@@ -158,20 +183,29 @@ impl ModDest {
         }
     }
 
-    /// All selectable destinations (excludes `Off`).
+    /// All selectable destinations (excludes `Off`). Order is the grid column
+    /// order: pitch group, filters, amp/stereo, osc mix, then FX + mod-on-mod.
     pub fn all() -> &'static [ModDest] {
         &[
             ModDest::AllPitch,
+            ModDest::Osc1Pitch,
+            ModDest::Osc2Pitch,
+            ModDest::Osc3Pitch,
+            ModDest::Osc4Pitch,
             ModDest::FilterCutoff,
             ModDest::FilterResonance,
+            ModDest::Filter2Cutoff,
+            ModDest::Filter2Resonance,
             ModDest::Amplitude,
             ModDest::StereoWidth,
             ModDest::Osc1Level,
             ModDest::Osc2Level,
             ModDest::Osc3Level,
+            ModDest::Osc4Level,
             ModDest::Osc1Pan,
             ModDest::Osc2Pan,
             ModDest::Osc3Pan,
+            ModDest::Osc4Pan,
             ModDest::DelayTime,
             ModDest::DelayFeedback,
             ModDest::DelayMix,
@@ -216,9 +250,17 @@ impl ModDest {
                 | ModDest::Osc1Level
                 | ModDest::Osc2Level
                 | ModDest::Osc3Level
+                | ModDest::Osc4Level
+                | ModDest::Osc1Pitch
+                | ModDest::Osc2Pitch
+                | ModDest::Osc3Pitch
+                | ModDest::Osc4Pitch
+                | ModDest::Filter2Cutoff
+                | ModDest::Filter2Resonance
                 | ModDest::Osc1Pan
                 | ModDest::Osc2Pan
                 | ModDest::Osc3Pan
+                | ModDest::Osc4Pan
         )
     }
 }
@@ -236,8 +278,14 @@ pub fn dest_range(dest: ModDest) -> f32 {
         ModDest::FilterResonance => 1.0,
         ModDest::Amplitude => 1.0,
         ModDest::StereoWidth => 1.0,
-        ModDest::Osc1Level | ModDest::Osc2Level | ModDest::Osc3Level => 1.0,
-        ModDest::Osc1Pan | ModDest::Osc2Pan | ModDest::Osc3Pan => 1.0,
+        ModDest::Osc1Level | ModDest::Osc2Level | ModDest::Osc3Level | ModDest::Osc4Level => 1.0,
+        ModDest::Osc1Pan | ModDest::Osc2Pan | ModDest::Osc3Pan | ModDest::Osc4Pan => 1.0,
+        ModDest::Osc1Pitch
+        | ModDest::Osc2Pitch
+        | ModDest::Osc3Pitch
+        | ModDest::Osc4Pitch => 12.0,      // ±12 semitones (FM range)
+        ModDest::Filter2Cutoff => 60.0,    // ±5 octaves
+        ModDest::Filter2Resonance => 1.0,
         ModDest::DelayTime
         | ModDest::DelayFeedback
         | ModDest::DelayMix
@@ -306,6 +354,21 @@ impl ModMatrix {
         }
         acc * dest_range(dest)
     }
+
+    /// Total routing amount from one specific source to a destination,
+    /// scaled by `dest_range`. Unlike [`offset_for`] the source's value is
+    /// NOT multiplied in — the caller uses it to drive a process that
+    /// applies the source signal itself (e.g. Osc4 ring modulation, where
+    /// the carrier is multiplied by the raw modulator sample).
+    pub fn source_amount(&self, dest: ModDest, src: ModSource) -> f32 {
+        let mut acc = 0.0;
+        for slot in &self.slots {
+            if slot.enabled && slot.dest == dest && slot.source == src {
+                acc += slot.amount;
+            }
+        }
+        acc * dest_range(dest)
+    }
 }
 
 /// Snapshot of per-source values for one sample, as seen by a single voice.
@@ -322,6 +385,8 @@ pub struct ModSourceValues {
     pub mod_wheel: f32,
     pub aftertouch: f32,
     pub pitch_bend: f32,
+    /// Oscillator 4 output from the previous sample (audio-rate source).
+    pub osc4: f32,
 }
 
 impl ModSourceValues {
@@ -340,6 +405,7 @@ impl ModSourceValues {
             ModSource::ModWheel => self.mod_wheel,
             ModSource::Aftertouch => self.aftertouch,
             ModSource::PitchBend => self.pitch_bend,
+            ModSource::Osc4 => self.osc4,
             ModSource::Constant => 1.0,
         }
     }

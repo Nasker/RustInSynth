@@ -1,5 +1,7 @@
 //! Audio effects: Delay, Reverb, Chorus
 
+use serde::{Deserialize, Serialize};
+
 use super::types::{Sample, SampleRate, StereoSample};
 
 /// Trait for audio effects (mono)
@@ -508,12 +510,71 @@ impl Effect for Chorus {
 // DISTORTION
 // ============================================================================
 
-/// Waveshaping distortion (tanh drive).
-/// `drive` is 0..1 mapped to 1x..30x pre-gain; `mix` is dry/wet.
+/// Distortion waveshaper topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DistortionType {
+    /// Warm tanh soft-clip, level-compensated.
+    Tube,
+    /// Aggressive hard clip with a slight asymmetric bias.
+    Fuzz,
+    /// Sample-hold decimation + bit-depth quantizer (lo-fi crunch).
+    Bitcrush,
+    /// Sine wavefolder: folds peaks back on themselves at high drive.
+    Fold,
+}
+
+impl DistortionType {
+    pub const ALL: [DistortionType; 4] = [
+        DistortionType::Tube,
+        DistortionType::Fuzz,
+        DistortionType::Bitcrush,
+        DistortionType::Fold,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            DistortionType::Tube => "Tube",
+            DistortionType::Fuzz => "Fuzz",
+            DistortionType::Bitcrush => "Bitcrush",
+            DistortionType::Fold => "Fold",
+        }
+    }
+
+    pub fn from_index(i: u8) -> Self {
+        match i {
+            1 => DistortionType::Fuzz,
+            2 => DistortionType::Bitcrush,
+            3 => DistortionType::Fold,
+            _ => DistortionType::Tube,
+        }
+    }
+
+    pub fn index(self) -> u8 {
+        match self {
+            DistortionType::Tube => 0,
+            DistortionType::Fuzz => 1,
+            DistortionType::Bitcrush => 2,
+            DistortionType::Fold => 3,
+        }
+    }
+}
+
+impl Default for DistortionType {
+    fn default() -> Self {
+        DistortionType::Tube
+    }
+}
+
+/// Waveshaping distortion with selectable topology.
+/// `drive` is 0..1 mapped to type-specific intensity; `mix` is dry/wet.
 /// Output is level-compensated so cranking drive doesn't blow the mix out.
 pub struct Distortion {
     drive: f32,
     mix: f32,
+    dtype: DistortionType,
+    // Bitcrush: samples held so far and held value, per channel [L, R].
+    bc_count: [u32; 2],
+    bc_held: [Sample; 2],
 }
 
 impl Distortion {
@@ -521,22 +582,52 @@ impl Distortion {
         Self {
             drive: 0.0,
             mix: 0.5,
+            dtype: DistortionType::Tube,
+            bc_count: [0; 2],
+            bc_held: [0.0; 2],
         }
     }
 
     #[inline]
-    fn shape(&self, x: f32) -> f32 {
+    fn shape(&mut self, x: f32, ch: usize) -> f32 {
         if self.drive <= 0.0 {
             return x;
         }
-        let gain = 1.0 + 29.0 * self.drive;
-        // tanh clip, then divide back by a gentle sqrt so loudness is tame
-        (x * gain).tanh() / gain.sqrt()
+        match self.dtype {
+            DistortionType::Tube => {
+                let gain = 1.0 + 29.0 * self.drive;
+                // tanh clip, then divide back by a gentle sqrt so loudness is tame
+                (x * gain).tanh() / gain.sqrt()
+            }
+            DistortionType::Fuzz => {
+                let gain = 1.0 + 49.0 * self.drive;
+                // Bias for asymmetry, then hard clip; keep level roughly even.
+                let y = x * gain + 0.3 * self.drive;
+                y.clamp(-0.8, 0.8) * 1.25 / (1.0 + 1.5 * self.drive).sqrt()
+            }
+            DistortionType::Bitcrush => {
+                // Drive → hold length 1..48 samples and bit depth 12..3 bits.
+                let hold_len = 1 + (self.drive * 47.0) as u32;
+                let bits = (12.0 - self.drive * 9.0).clamp(3.0, 12.0);
+                if self.bc_count[ch] >= hold_len {
+                    let levels = 2.0f32.powi(bits as i32);
+                    self.bc_held[ch] = (x * levels).round() / levels;
+                    self.bc_count[ch] = 0;
+                }
+                self.bc_count[ch] += 1;
+                self.bc_held[ch]
+            }
+            DistortionType::Fold => {
+                let gain = 1.0 + 29.0 * self.drive;
+                // Sine fold: bounded, no DC offset, turns saws into clusters.
+                (x * gain * 0.5).sin() * 0.9
+            }
+        }
     }
 
     pub fn process_stereo(&mut self, input: StereoSample) -> StereoSample {
-        let l = self.shape(input.left);
-        let r = self.shape(input.right);
+        let l = self.shape(input.left, 0);
+        let r = self.shape(input.right, 1);
         StereoSample::new(
             input.left * (1.0 - self.mix) + l * self.mix,
             input.right * (1.0 - self.mix) + r * self.mix,
@@ -549,11 +640,21 @@ impl Distortion {
     pub fn set_mix(&mut self, mix: f32) {
         self.mix = mix.clamp(0.0, 1.0);
     }
+    pub fn set_type(&mut self, dtype: DistortionType) {
+        if dtype != self.dtype {
+            self.dtype = dtype;
+            self.bc_count = [0; 2];
+            self.bc_held = [0.0; 2];
+        }
+    }
     pub fn drive(&self) -> f32 {
         self.drive
     }
     pub fn mix(&self) -> f32 {
         self.mix
+    }
+    pub fn dtype(&self) -> DistortionType {
+        self.dtype
     }
 }
 
@@ -640,6 +741,10 @@ impl EffectsChain {
         self.distortion.set_mix(mix);
     }
 
+    pub fn set_distortion_type(&mut self, dtype: DistortionType) {
+        self.distortion.set_type(dtype);
+    }
+
     // ── Delay wrappers ───────────────────────────────────────────────────────
 
     pub fn set_delay_enabled(&mut self, enabled: bool) {
@@ -709,6 +814,7 @@ impl EffectsChain {
     pub fn distortion_enabled(&self) -> bool { self.distortion_enabled }
     pub fn distortion_drive(&self) -> f32 { self.distortion.drive() }
     pub fn distortion_mix(&self) -> f32 { self.distortion.mix() }
+    pub fn distortion_type(&self) -> DistortionType { self.distortion.dtype() }
 
     pub fn delay_enabled(&self) -> bool { self.delay_enabled }
     pub fn delay_time(&self) -> f32 { self.delay.delay_time() }
@@ -726,4 +832,85 @@ impl EffectsChain {
     pub fn chorus_rate(&self) -> f32 { self.chorus.rate() }
     pub fn chorus_depth(&self) -> f32 { self.chorus.depth() }
     pub fn chorus_mix(&self) -> f32 { self.chorus.mix() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Render a 440 Hz sine through the chain with only the distortion stage
+    /// enabled at the given type.
+    fn render(dtype: DistortionType) -> Vec<f32> {
+        let mut fx = EffectsChain::new(44100);
+        fx.set_distortion_enabled(true);
+        fx.set_distortion_type(dtype);
+        fx.set_distortion_drive(0.7);
+        fx.set_distortion_mix(1.0);
+        let mut out = Vec::with_capacity(2048);
+        let mut phase = 0.0f32;
+        for _ in 0..2048 {
+            phase += 440.0 / 44100.0;
+            let s = (phase * std::f32::consts::TAU).sin() * 0.6;
+            out.push(fx.process_stereo(StereoSample::from_mono(s)).left);
+        }
+        out
+    }
+
+    /// Regression: each waveshaper topology must produce a distinct output.
+    #[test]
+    fn test_distortion_types_differ() {
+        let outs: Vec<Vec<f32>> = DistortionType::ALL.iter().map(|t| render(*t)).collect();
+        for i in 0..outs.len() {
+            for j in (i + 1)..outs.len() {
+                let diff: f32 = outs[i]
+                    .iter()
+                    .zip(outs[j].iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .sum();
+                assert!(
+                    diff > 0.5,
+                    "{:?} and {:?} produce identical output",
+                    DistortionType::ALL[i],
+                    DistortionType::ALL[j]
+                );
+            }
+        }
+    }
+
+    /// Regression: every type round-trips through its integer index (used by
+    /// the SynthParam, preset and host-parameter plumbing).
+    #[test]
+    fn test_distortion_type_index_roundtrip() {
+        for t in DistortionType::ALL {
+            assert_eq!(DistortionType::from_index(t.index()), t);
+        }
+        // Out-of-range indices fall back to Tube.
+        assert_eq!(DistortionType::from_index(99), DistortionType::Tube);
+    }
+
+    /// Regression: the wet output must actually be shaped — full mix and
+    /// drive must differ from the dry signal.
+    #[test]
+    fn test_distortion_shapes_signal() {
+        let dry = render_to_mix(0.0);
+        let wet = render_to_mix(1.0);
+        let diff: f32 = dry.iter().zip(wet.iter()).map(|(a, b)| (a - b).abs()).sum();
+        assert!(diff > 1.0, "wet distortion should differ from dry signal");
+    }
+
+    fn render_to_mix(mix: f32) -> Vec<f32> {
+        let mut fx = EffectsChain::new(44100);
+        fx.set_distortion_enabled(true);
+        fx.set_distortion_type(DistortionType::Fuzz);
+        fx.set_distortion_drive(0.9);
+        fx.set_distortion_mix(mix);
+        let mut phase = 0.0f32;
+        (0..1024)
+            .map(|_| {
+                phase += 440.0 / 44100.0;
+                let s = (phase * std::f32::consts::TAU).sin() * 0.6;
+                fx.process_stereo(StereoSample::from_mono(s)).left
+            })
+            .collect()
+    }
 }

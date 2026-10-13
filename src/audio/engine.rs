@@ -242,29 +242,42 @@ impl AudioEngine {
         let waveform1 = WaveformType::from_index(params.get(SynthParam::Osc1Waveform) as u8);
         let waveform2 = WaveformType::from_index(params.get(SynthParam::Osc2Waveform) as u8);
         let waveform3 = WaveformType::from_index(params.get(SynthParam::Osc3Waveform) as u8);
+        let waveform4 = WaveformType::from_index(params.get(SynthParam::Osc4Waveform) as u8);
         vm.set_osc_waveform(1, waveform1);
         vm.set_osc_waveform(2, waveform2);
         vm.set_osc_waveform(3, waveform3);
+        vm.set_osc_waveform(4, waveform4);
 
         vm.set_osc_level(1, params.get(SynthParam::Osc1Level));
         vm.set_osc_level(2, params.get(SynthParam::Osc2Level));
         vm.set_osc_level(3, params.get(SynthParam::Osc3Level));
+        vm.set_osc_level(4, params.get(SynthParam::Osc4Level));
 
         // Oscillator detune
         vm.set_osc_semitones(2, params.get(SynthParam::Osc2Semitones) as i8);
         vm.set_osc_cents(2, params.get(SynthParam::Osc2Cents) as i8);
         vm.set_osc_semitones(3, params.get(SynthParam::Osc3Semitones) as i8);
         vm.set_osc_cents(3, params.get(SynthParam::Osc3Cents) as i8);
+        vm.set_osc_semitones(4, params.get(SynthParam::Osc4Semitones) as i8);
+        vm.set_osc_cents(4, params.get(SynthParam::Osc4Cents) as i8);
 
         // Oscillator phase
         vm.set_osc_phase(1, params.get(SynthParam::Osc1Phase));
         vm.set_osc_phase(2, params.get(SynthParam::Osc2Phase));
         vm.set_osc_phase(3, params.get(SynthParam::Osc3Phase));
+        vm.set_osc_phase(4, params.get(SynthParam::Osc4Phase));
+
+        // Second serial filter
+        use crate::core::filter::FilterType;
+        vm.set_filter2_type(FilterType::from_index(params.get(SynthParam::Filter2Type) as u8));
+        vm.set_filter2_cutoff(params.get(SynthParam::Filter2Cutoff));
+        vm.set_filter2_resonance(params.get(SynthParam::Filter2Resonance));
 
         // Stereo imaging
         vm.set_osc_pan(1, params.get(SynthParam::Osc1Pan));
         vm.set_osc_pan(2, params.get(SynthParam::Osc2Pan));
         vm.set_osc_pan(3, params.get(SynthParam::Osc3Pan));
+        vm.set_osc_pan(4, params.get(SynthParam::Osc4Pan));
         vm.set_stereo_width(params.get(SynthParam::StereoWidth));
 
         // Pitch bend range
@@ -275,6 +288,12 @@ impl AudioEngine {
 
         // Master volume
         vm.set_master_volume(params.get(SynthParam::MasterVolume));
+
+        // Distortion topology (index param; FX chain lives outside the VM)
+        use crate::core::effects::DistortionType;
+        self.effects_chain.lock().set_distortion_type(
+            DistortionType::from_index(params.get(SynthParam::DistortionType) as u8),
+        );
     }
     
     /// Set polyphony mode (Mono or Poly)

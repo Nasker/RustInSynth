@@ -409,6 +409,8 @@ pub struct OscillatorUnit {
     cents: i8,          // -100 to +100
     phase_offset: f32,  // 0.0 to 1.0
     level: Amplitude,   // 0.0 to 1.0
+    /// Per-sample pitch modulation in semitones (mod matrix / FM).
+    pitch_mod: f32,
     base_frequency: Frequency,
     sample_rate: SampleRate,
 }
@@ -422,6 +424,7 @@ impl OscillatorUnit {
             cents: 0,
             phase_offset: 0.0,
             level: 1.0,
+            pitch_mod: 0.0,
             base_frequency: 440.0,
             sample_rate,
         }
@@ -492,15 +495,34 @@ impl OscillatorUnit {
         self.update_frequency();
     }
 
-    /// Update oscillator frequency based on base + detune
+    /// Set per-oscillator pitch modulation in semitones.
+    ///
+    /// Called once per sample from the voice's modulation stage; cheap when
+    /// unchanged because it early-returns without touching the oscillator.
+    pub fn set_pitch_mod(&mut self, semitones: f32) {
+        if self.pitch_mod == semitones {
+            return;
+        }
+        self.pitch_mod = semitones;
+        self.update_frequency();
+    }
+
+    /// Update oscillator frequency based on base + detune + pitch mod
     fn update_frequency(&mut self) {
-        let ratio = detune_ratio(self.semitones, self.cents);
+        let ratio = detune_ratio(self.semitones, self.cents)
+            * 2.0_f32.powf(self.pitch_mod / 12.0);
         self.oscillator.set_frequency(self.base_frequency * ratio);
     }
 
     /// Generate next sample (with level applied)
     pub fn next_sample(&mut self) -> Sample {
         self.oscillator.next_sample() * self.level
+    }
+
+    /// Generate next sample WITHOUT level applied (for the modulation matrix,
+    /// which feeds osc4's raw output back in as an FM/RM source).
+    pub fn next_sample_unscaled(&mut self) -> Sample {
+        self.oscillator.next_sample()
     }
 
     /// Reset oscillator phase
@@ -515,14 +537,16 @@ impl OscillatorUnit {
     }
 }
 
-/// Minimoog-style oscillator bank with 3 oscillators
+/// Minimoog-style oscillator bank with 4 oscillators
 /// OSC 1: Main oscillator (tuned to note)
 /// OSC 2: Detunable relative to OSC 1
 /// OSC 3: Detunable relative to OSC 1
+/// OSC 4: Detunable; its raw output doubles as an FM/RM mod source
 pub struct OscillatorBank {
     osc1: OscillatorUnit,
     osc2: OscillatorUnit,
     osc3: OscillatorUnit,
+    osc4: OscillatorUnit,
     base_frequency: Frequency,
     pitch_bend: f32,        // -1.0 to +1.0
     pitch_bend_range: u8,   // semitones (default 12 = 1 octave)
@@ -531,10 +555,15 @@ pub struct OscillatorBank {
 
 impl OscillatorBank {
     pub fn new(sample_rate: SampleRate) -> Self {
+        // Osc4 defaults to silent: it exists primarily as an FM/RM modulation
+        // source, audible only when its level is raised.
+        let mut osc4 = OscillatorUnit::new(sample_rate);
+        osc4.set_level(0.0);
         Self {
             osc1: OscillatorUnit::new(sample_rate),
             osc2: OscillatorUnit::new(sample_rate),
             osc3: OscillatorUnit::new(sample_rate),
+            osc4,
             base_frequency: 440.0,
             pitch_bend: 0.0,
             pitch_bend_range: 12, // 1 octave default
@@ -571,6 +600,16 @@ impl OscillatorBank {
         self.osc1.set_base_frequency(bent_freq);
         self.osc2.set_base_frequency(bent_freq);
         self.osc3.set_base_frequency(bent_freq);
+        self.osc4.set_base_frequency(bent_freq);
+    }
+
+    /// Apply per-oscillator pitch modulation (semitones) for this sample.
+    /// Each `OscillatorUnit::set_pitch_mod` is a no-op when unchanged.
+    pub fn set_pitch_mods(&mut self, mods: [f32; 4]) {
+        self.osc1.set_pitch_mod(mods[0]);
+        self.osc2.set_pitch_mod(mods[1]);
+        self.osc3.set_pitch_mod(mods[2]);
+        self.osc4.set_pitch_mod(mods[3]);
     }
 
     /// Get mutable reference to oscillator 1 (main)
@@ -588,6 +627,11 @@ impl OscillatorBank {
         &mut self.osc3
     }
 
+    /// Get mutable reference to oscillator 4
+    pub fn osc4_mut(&mut self) -> &mut OscillatorUnit {
+        &mut self.osc4
+    }
+
     /// Get reference to oscillator 1
     pub fn osc1(&self) -> &OscillatorUnit {
         &self.osc1
@@ -603,12 +647,18 @@ impl OscillatorBank {
         &self.osc3
     }
 
-    /// Set waveform for a specific oscillator (1, 2, or 3)
+    /// Get reference to oscillator 4
+    pub fn osc4(&self) -> &OscillatorUnit {
+        &self.osc4
+    }
+
+    /// Set waveform for a specific oscillator (1-4)
     pub fn set_waveform(&mut self, osc_num: u8, waveform: WaveformType) {
         match osc_num {
             1 => self.osc1.set_waveform(waveform),
             2 => self.osc2.set_waveform(waveform),
             3 => self.osc3.set_waveform(waveform),
+            4 => self.osc4.set_waveform(waveform),
             _ => {}
         }
     }
@@ -628,6 +678,10 @@ impl OscillatorBank {
                 self.osc3.set_semitones(semitones);
                 self.osc3.set_cents(cents);
             }
+            4 => {
+                self.osc4.set_semitones(semitones);
+                self.osc4.set_cents(cents);
+            }
             _ => {}
         }
     }
@@ -638,6 +692,7 @@ impl OscillatorBank {
             1 => self.osc1.set_level(level),
             2 => self.osc2.set_level(level),
             3 => self.osc3.set_level(level),
+            4 => self.osc4.set_level(level),
             _ => {}
         }
     }
@@ -648,31 +703,41 @@ impl OscillatorBank {
             1 => self.osc1.set_phase_offset(phase),
             2 => self.osc2.set_phase_offset(phase),
             3 => self.osc3.set_phase_offset(phase),
+            4 => self.osc4.set_phase_offset(phase),
             _ => {}
         }
     }
 }
 
 impl OscillatorBank {
-    /// Get individual oscillator samples (for stereo panning)
-    /// Returns (osc1, osc2, osc3) samples normalized
-    pub fn next_samples_individual(&mut self) -> (Sample, Sample, Sample) {
-        let s1 = self.osc1.next_sample() / 3.0;
-        let s2 = self.osc2.next_sample() / 3.0;
-        let s3 = self.osc3.next_sample() / 3.0;
-        (s1, s2, s3)
+    /// Get individual oscillator samples (for stereo panning), normalized
+    /// by the 4-oscillator count.
+    ///
+    /// Returns `(samples, osc4_raw)` where `samples` are the level-scaled
+    /// per-oscillator outputs and `osc4_raw` is oscillator 4's unscaled
+    /// output — the modulation matrix feeds it back as an FM/RM source.
+    pub fn next_samples_individual(&mut self) -> ([Sample; 4], Sample) {
+        // Advance osc4 first so its raw output can be reused for both the
+        // audio mix and the modulation source without double-stepping.
+        let osc4_raw = self.osc4.next_sample_unscaled();
+        let s1 = self.osc1.next_sample() / 4.0;
+        let s2 = self.osc2.next_sample() / 4.0;
+        let s3 = self.osc3.next_sample() / 4.0;
+        let s4 = osc4_raw * self.osc4.level() / 4.0;
+        ([s1, s2, s3, s4], osc4_raw)
     }
 }
 
 impl Oscillator for OscillatorBank {
     fn next_sample(&mut self) -> Sample {
-        // Mix all three oscillators
+        // Mix all four oscillators
         let sample = self.osc1.next_sample()
             + self.osc2.next_sample()
-            + self.osc3.next_sample();
-        
-        // Normalize to prevent clipping (divide by 3)
-        sample / 3.0
+            + self.osc3.next_sample()
+            + self.osc4.next_sample();
+
+        // Normalize to prevent clipping (divide by 4)
+        sample / 4.0
     }
 
     fn set_frequency(&mut self, frequency: Frequency) {
@@ -688,6 +753,7 @@ impl Oscillator for OscillatorBank {
         self.osc1.reset();
         self.osc2.reset();
         self.osc3.reset();
+        self.osc4.reset();
     }
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
@@ -695,6 +761,7 @@ impl Oscillator for OscillatorBank {
         self.osc1.set_sample_rate(sample_rate);
         self.osc2.set_sample_rate(sample_rate);
         self.osc3.set_sample_rate(sample_rate);
+        self.osc4.set_sample_rate(sample_rate);
     }
 
     fn set_phase_offset(&mut self, offset: f32) {
@@ -702,6 +769,7 @@ impl Oscillator for OscillatorBank {
         self.osc1.set_phase_offset(offset);
         self.osc2.set_phase_offset(offset);
         self.osc3.set_phase_offset(offset);
+        self.osc4.set_phase_offset(offset);
     }
 
     fn phase_offset(&self) -> f32 {

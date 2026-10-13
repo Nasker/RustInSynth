@@ -13,7 +13,12 @@ pub enum SynthParam {
     // Filter
     FilterCutoff,
     FilterResonance,
-    
+
+    // Filter 2 (second serial filter)
+    Filter2Cutoff,
+    Filter2Resonance,
+    Filter2Type,
+
     // Filter Envelope (ADSR)
     FilterAttack,
     FilterDecay,
@@ -50,6 +55,14 @@ pub enum SynthParam {
     Osc3Cents,
     Osc3Phase,
 
+    // Oscillator 4 (audio-rate mod source: FM / ring modulation)
+    Osc4Waveform,
+    Osc4Level,
+    Osc4Semitones,
+    Osc4Cents,
+    Osc4Phase,
+    Osc4Pan,
+
     // Stereo
     Osc1Pan,
     Osc2Pan,
@@ -58,6 +71,9 @@ pub enum SynthParam {
 
     // Master
     MasterVolume,
+
+    // Effects
+    DistortionType,
 }
 
 impl SynthParam {
@@ -70,6 +86,9 @@ impl SynthParam {
             SynthParam::Release => "Release",
             SynthParam::FilterCutoff => "Filter Cutoff",
             SynthParam::FilterResonance => "Filter Resonance",
+            SynthParam::Filter2Cutoff => "Filter 2 Cutoff",
+            SynthParam::Filter2Resonance => "Filter 2 Resonance",
+            SynthParam::Filter2Type => "Filter 2 Type",
             SynthParam::FilterAttack => "Filter Attack",
             SynthParam::FilterDecay => "Filter Decay",
             SynthParam::FilterSustain => "Filter Sustain",
@@ -94,11 +113,18 @@ impl SynthParam {
             SynthParam::Osc3Semitones => "OSC3 Semitones",
             SynthParam::Osc3Cents => "OSC3 Cents",
             SynthParam::Osc3Phase => "OSC3 Phase",
+            SynthParam::Osc4Waveform => "OSC4 Waveform",
+            SynthParam::Osc4Level => "OSC4 Level",
+            SynthParam::Osc4Semitones => "OSC4 Semitones",
+            SynthParam::Osc4Cents => "OSC4 Cents",
+            SynthParam::Osc4Phase => "OSC4 Phase",
+            SynthParam::Osc4Pan => "OSC4 Pan",
             SynthParam::Osc1Pan => "OSC1 Pan",
             SynthParam::Osc2Pan => "OSC2 Pan",
             SynthParam::Osc3Pan => "OSC3 Pan",
             SynthParam::StereoWidth => "Stereo Width",
             SynthParam::MasterVolume => "Master Volume",
+            SynthParam::DistortionType => "Distortion Type",
         }
     }
 
@@ -111,6 +137,9 @@ impl SynthParam {
             SynthParam::Release => "REL",
             SynthParam::FilterCutoff => "CUT",
             SynthParam::FilterResonance => "RES",
+            SynthParam::Filter2Cutoff => "CUT2",
+            SynthParam::Filter2Resonance => "RES2",
+            SynthParam::Filter2Type => "FTY2",
             SynthParam::FilterAttack => "FATK",
             SynthParam::FilterDecay => "FDEC",
             SynthParam::FilterSustain => "FSUS",
@@ -135,11 +164,18 @@ impl SynthParam {
             SynthParam::Osc3Semitones => "O3S",
             SynthParam::Osc3Cents => "O3C",
             SynthParam::Osc3Phase => "O3P",
+            SynthParam::Osc4Waveform => "O4W",
+            SynthParam::Osc4Level => "O4L",
+            SynthParam::Osc4Semitones => "O4S",
+            SynthParam::Osc4Cents => "O4C",
+            SynthParam::Osc4Phase => "O4P",
+            SynthParam::Osc4Pan => "O4PN",
             SynthParam::Osc1Pan => "O1PN",
             SynthParam::Osc2Pan => "O2PN",
             SynthParam::Osc3Pan => "O3PN",
             SynthParam::StereoWidth => "WTH",
             SynthParam::MasterVolume => "VOL",
+            SynthParam::DistortionType => "DTYP",
         }
     }
 
@@ -164,6 +200,9 @@ impl SynthParam {
             // Filter + Filter ADSR
             SynthParam::FilterCutoff,
             SynthParam::FilterResonance,
+            SynthParam::Filter2Cutoff,
+            SynthParam::Filter2Resonance,
+            SynthParam::Filter2Type,
             SynthParam::FilterAttack,
             SynthParam::FilterDecay,
             SynthParam::FilterSustain,
@@ -191,6 +230,12 @@ impl SynthParam {
             SynthParam::Osc3Semitones,
             SynthParam::Osc3Cents,
             SynthParam::Osc3Phase,
+            SynthParam::Osc4Waveform,
+            SynthParam::Osc4Level,
+            SynthParam::Osc4Semitones,
+            SynthParam::Osc4Cents,
+            SynthParam::Osc4Phase,
+            SynthParam::Osc4Pan,
             // Stereo
             SynthParam::Osc1Pan,
             SynthParam::Osc2Pan,
@@ -198,6 +243,8 @@ impl SynthParam {
             SynthParam::StereoWidth,
             // Master
             SynthParam::MasterVolume,
+            // Effects
+            SynthParam::DistortionType,
         ]
     }
 }

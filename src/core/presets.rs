@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+use super::effects::DistortionType;
 use super::event::WaveformType;
 use super::filter::FilterType;
 use super::lfo::LfoDestination;
@@ -37,9 +38,29 @@ pub struct Preset {
     pub osc3_cents: i8,
     pub osc3_phase: f32,
 
+    // Oscillator 4 (FM/RM mod source; silent until level is raised)
+    #[serde(default = "default_osc4_waveform")]
+    pub osc4_waveform: WaveformType,
+    #[serde(default)]
+    pub osc4_level: f32,
+    #[serde(default)]
+    pub osc4_semitones: i8,
+    #[serde(default)]
+    pub osc4_cents: i8,
+    #[serde(default)]
+    pub osc4_phase: f32,
+
     // Filter settings
     pub filter_cutoff: f32,
     pub filter_resonance: f32,
+
+    // Second serial filter (wide-open SVF = transparent for old presets)
+    #[serde(default = "default_filter2_cutoff")]
+    pub filter2_cutoff: f32,
+    #[serde(default)]
+    pub filter2_resonance: f32,
+    #[serde(default)]
+    pub filter2_type: FilterType,
 
     // Amplitude envelope
     pub amp_attack: f32,
@@ -128,6 +149,8 @@ pub struct Preset {
     #[serde(default)]
     pub osc3_pan: f32,
     #[serde(default)]
+    pub osc4_pan: f32,
+    #[serde(default)]
     pub stereo_width: f32,
 
     // Polyphony mode
@@ -141,6 +164,8 @@ pub struct Preset {
     pub distortion_drive: f32,
     #[serde(default)]
     pub distortion_mix: f32,
+    #[serde(default)]
+    pub distortion_type: DistortionType,
 
     // Effects - Delay
     #[serde(default)]
@@ -200,9 +225,19 @@ impl Default for Preset {
             osc3_cents: 0,
             osc3_phase: 0.0,
 
+            osc4_waveform: WaveformType::Sine,
+            osc4_level: 0.0,
+            osc4_semitones: 0,
+            osc4_cents: 0,
+            osc4_phase: 0.0,
+
             // Filter wide open
             filter_cutoff: 20000.0,
             filter_resonance: 0.0,
+            // Filter 2 transparent (bypassed)
+            filter2_cutoff: 20000.0,
+            filter2_resonance: 0.0,
+            filter2_type: FilterType::Svf,
 
             // Medium envelope
             amp_attack: 0.01,
@@ -255,6 +290,7 @@ impl Default for Preset {
             osc1_pan: 0.0,
             osc2_pan: -0.3,
             osc3_pan: 0.3,
+            osc4_pan: 0.0,
             stereo_width: 1.0,
 
             // Polyphony (default mono)
@@ -264,6 +300,7 @@ impl Default for Preset {
             distortion_enabled: false,
             distortion_drive: 0.0,
             distortion_mix: 0.5,
+            distortion_type: DistortionType::Tube,
             delay_enabled: false,
             delay_time: 0.3,
             delay_feedback: 0.3,
@@ -394,6 +431,14 @@ fn default_beat() -> f32 {
 
 fn default_env4() -> [f32; 4] {
     [0.01, 0.3, 0.0, 0.3]
+}
+
+fn default_osc4_waveform() -> WaveformType {
+    WaveformType::Sine
+}
+
+fn default_filter2_cutoff() -> f32 {
+    20000.0
 }
 
 pub fn default_presets_dir() -> std::path::PathBuf {
@@ -1105,6 +1150,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 0.6,
             chorus_depth: 0.5,
             chorus_mix: 0.35,
+            ..Default::default()
         },
 
         // Polyphonic keys - electric piano style with chorus and delay
@@ -1185,6 +1231,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 1.2,
             chorus_depth: 0.4,
             chorus_mix: 0.45,
+            ..Default::default()
         },
 
         // Space drone - ambient and evolving with heavy reverb
@@ -1265,6 +1312,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 0.3,
             chorus_depth: 0.8,
             chorus_mix: 0.5,
+            ..Default::default()
         },
 
         // Pumping bass - mono with chorus for thickness
@@ -1345,6 +1393,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 2.5,
             chorus_depth: 0.3,
             chorus_mix: 0.25,
+            ..Default::default()
         },
 
         // Ethereal bells - uses delay and stereo width for shimmer
@@ -1425,6 +1474,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 0.5,
             chorus_depth: 0.5,
             chorus_mix: 0.0,
+            ..Default::default()
         },
 
         // Acid line - classic TB-303 style with portamento
@@ -1505,6 +1555,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 0.5,
             chorus_depth: 0.5,
             chorus_mix: 0.0,
+            ..Default::default()
         },
 
         // Dream sequence - arpeggio-friendly with delay and chorus
@@ -1585,6 +1636,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 1.8,
             chorus_depth: 0.35,
             chorus_mix: 0.4,
+            ..Default::default()
         },
 
         // ── Matrix showcase bank ────────────────────────────────────────────
@@ -1674,6 +1726,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 1.0,
             chorus_depth: 0.3,
             chorus_mix: 0.0,
+            ..Default::default()
         },
 
         // Velocity Lead: velocity opens the ladder filter and the mod wheel
@@ -1759,6 +1812,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 1.0,
             chorus_depth: 0.3,
             chorus_mix: 0.0,
+            ..Default::default()
         },
 
         // Pulse Gate Pad: Env3 gates the amplitude while synced LFOs drift the
@@ -1844,6 +1898,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 0.8,
             chorus_depth: 0.4,
             chorus_mix: 0.3,
+            ..Default::default()
         },
 
         // Riser: LFO3 ramps pitch up while mod-on-mod speeds LFO2's cutoff
@@ -1929,6 +1984,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 1.0,
             chorus_depth: 0.3,
             chorus_mix: 0.0,
+            ..Default::default()
         },
 
         // Aftertouch Keys: soft keys that open up with aftertouch — a per-voice
@@ -2014,6 +2070,7 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_rate: 1.2,
             chorus_depth: 0.35,
             chorus_mix: 0.3,
+            ..Default::default()
         },
     ]
 }
@@ -2041,7 +2098,6 @@ pub fn install_factory_presets() -> Result<usize, PresetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -2065,7 +2121,7 @@ mod tests {
         let preset = Preset::new("File Test");
 
         // Create a temp file
-        let mut temp_file = NamedTempFile::new().unwrap();
+        let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path().to_path_buf();
 
         // Save
@@ -2074,6 +2130,36 @@ mod tests {
         // Load
         let loaded = Preset::load_from_file(&path).unwrap();
         assert_eq!(preset, loaded);
+    }
+
+    /// Regression: presets saved before Osc4/Filter2/DistortionType existed
+    /// must load with safe defaults (silent osc4, transparent filter2, Tube).
+    #[test]
+    fn test_old_preset_json_defaults_new_fields() {
+        let mut v = serde_json::to_value(Preset::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        for key in [
+            "osc4_waveform",
+            "osc4_level",
+            "osc4_semitones",
+            "osc4_cents",
+            "osc4_phase",
+            "osc4_pan",
+            "filter2_cutoff",
+            "filter2_resonance",
+            "filter2_type",
+            "distortion_type",
+        ] {
+            obj.remove(key);
+        }
+        let p: Preset = serde_json::from_value(v).unwrap();
+        assert_eq!(p.osc4_waveform, WaveformType::Sine);
+        assert_eq!(p.osc4_level, 0.0);
+        assert_eq!(p.osc4_pan, 0.0);
+        assert_eq!(p.filter2_cutoff, 20000.0);
+        assert_eq!(p.filter2_resonance, 0.0);
+        assert_eq!(p.filter2_type, FilterType::Svf);
+        assert_eq!(p.distortion_type, DistortionType::Tube);
     }
 
     #[test]

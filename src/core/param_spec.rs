@@ -133,7 +133,7 @@ const LOG_ZERO_PORTAMENTO: ParamCurve = ParamCurve::LogarithmicWithZero { log_mi
 
 /// All parameter specs. Index in this array is irrelevant; lookup goes through
 /// [`spec`] / [`index`].
-pub static PARAM_SPECS: [ParamSpec; 35] = [
+pub static PARAM_SPECS: [ParamSpec; 45] = [
     // ── Amp envelope ────────────────────────────────────────────────────
     ParamSpec { param: SynthParam::Attack, min: 0.001, max: 5.0, default: 0.01, curve: LOG, unit: S, stepped: false },
     ParamSpec { param: SynthParam::Decay, min: 0.001, max: 5.0, default: 0.1, curve: LOG, unit: S, stepped: false },
@@ -142,6 +142,10 @@ pub static PARAM_SPECS: [ParamSpec; 35] = [
     // ── Filter ──────────────────────────────────────────────────────────
     ParamSpec { param: SynthParam::FilterCutoff, min: 20.0, max: 20000.0, default: 20000.0, curve: LOG, unit: HZ, stepped: false },
     ParamSpec { param: SynthParam::FilterResonance, min: 0.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
+    // ── Filter 2 (serial after Filter 1; wide open + SVF = bypassed) ────
+    ParamSpec { param: SynthParam::Filter2Cutoff, min: 20.0, max: 20000.0, default: 20000.0, curve: LOG, unit: HZ, stepped: false },
+    ParamSpec { param: SynthParam::Filter2Resonance, min: 0.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
+    ParamSpec { param: SynthParam::Filter2Type, min: 0.0, max: 2.0, default: 0.0, curve: LIN, unit: NONE, stepped: true },
     // ── Filter envelope ─────────────────────────────────────────────────
     ParamSpec { param: SynthParam::FilterAttack, min: 0.001, max: 5.0, default: 0.01, curve: LOG, unit: S, stepped: false },
     ParamSpec { param: SynthParam::FilterDecay, min: 0.001, max: 5.0, default: 0.3, curve: LOG, unit: S, stepped: false },
@@ -172,6 +176,13 @@ pub static PARAM_SPECS: [ParamSpec; 35] = [
     ParamSpec { param: SynthParam::Osc3Semitones, min: -24.0, max: 24.0, default: -12.0, curve: LIN, unit: NONE, stepped: true },
     ParamSpec { param: SynthParam::Osc3Cents, min: -100.0, max: 100.0, default: 0.0, curve: LIN, unit: NONE, stepped: true },
     ParamSpec { param: SynthParam::Osc3Phase, min: 0.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
+    // ── Oscillator 4 (FM/RM source; silent until raised) ────────────────
+    ParamSpec { param: SynthParam::Osc4Waveform, min: 0.0, max: 4.0, default: 0.0, curve: LIN, unit: NONE, stepped: true },
+    ParamSpec { param: SynthParam::Osc4Level, min: 0.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
+    ParamSpec { param: SynthParam::Osc4Semitones, min: -24.0, max: 24.0, default: 0.0, curve: LIN, unit: NONE, stepped: true },
+    ParamSpec { param: SynthParam::Osc4Cents, min: -100.0, max: 100.0, default: 0.0, curve: LIN, unit: NONE, stepped: true },
+    ParamSpec { param: SynthParam::Osc4Phase, min: 0.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
+    ParamSpec { param: SynthParam::Osc4Pan, min: -1.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
     // ── Stereo ──────────────────────────────────────────────────────────
     ParamSpec { param: SynthParam::Osc1Pan, min: -1.0, max: 1.0, default: 0.0, curve: LIN, unit: NONE, stepped: false },
     ParamSpec { param: SynthParam::Osc2Pan, min: -1.0, max: 1.0, default: -0.3, curve: LIN, unit: NONE, stepped: false },
@@ -179,6 +190,8 @@ pub static PARAM_SPECS: [ParamSpec; 35] = [
     ParamSpec { param: SynthParam::StereoWidth, min: 0.0, max: 2.0, default: 1.0, curve: LIN, unit: NONE, stepped: false },
     // ── Master ──────────────────────────────────────────────────────────
     ParamSpec { param: SynthParam::MasterVolume, min: 0.0, max: 1.0, default: 0.5, curve: LIN, unit: NONE, stepped: false },
+    // ── Effects ─────────────────────────────────────────────────────────
+    ParamSpec { param: SynthParam::DistortionType, min: 0.0, max: 3.0, default: 0.0, curve: LIN, unit: NONE, stepped: true },
 ];
 
 /// Stable index of a parameter (ParamBank layout / preset serialization).
@@ -190,6 +203,9 @@ pub fn index(param: SynthParam) -> usize {
         SynthParam::Release => 3,
         SynthParam::FilterCutoff => 4,
         SynthParam::FilterResonance => 5,
+        SynthParam::Filter2Cutoff => 35,
+        SynthParam::Filter2Resonance => 36,
+        SynthParam::Filter2Type => 37,
         SynthParam::FilterAttack => 6,
         SynthParam::FilterDecay => 7,
         SynthParam::FilterSustain => 8,
@@ -213,12 +229,19 @@ pub fn index(param: SynthParam) -> usize {
         SynthParam::Osc3Semitones => 26,
         SynthParam::Osc3Cents => 27,
         SynthParam::Osc3Phase => 28,
+        SynthParam::Osc4Waveform => 38,
+        SynthParam::Osc4Level => 39,
+        SynthParam::Osc4Semitones => 40,
+        SynthParam::Osc4Cents => 41,
+        SynthParam::Osc4Phase => 42,
+        SynthParam::Osc4Pan => 43,
         SynthParam::Osc1Pan => 29,
         SynthParam::Osc2Pan => 30,
         SynthParam::Osc3Pan => 31,
         SynthParam::StereoWidth => 32,
         SynthParam::MasterVolume => 33,
         SynthParam::PortamentoTime => 34,
+        SynthParam::DistortionType => 44,
     }
 }
 

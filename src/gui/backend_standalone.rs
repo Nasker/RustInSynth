@@ -239,6 +239,7 @@ impl SynthBackend for StandaloneBackend {
             1 => self.shared.params.get(SynthParam::Osc1Pan),
             2 => self.shared.params.get(SynthParam::Osc2Pan),
             3 => self.shared.params.get(SynthParam::Osc3Pan),
+            4 => self.shared.params.get(SynthParam::Osc4Pan),
             _ => 0.0,
         }
     }
@@ -247,6 +248,7 @@ impl SynthBackend for StandaloneBackend {
             1 => self.shared.params.set(SynthParam::Osc1Pan, pan),
             2 => self.shared.params.set(SynthParam::Osc2Pan, pan),
             3 => self.shared.params.set(SynthParam::Osc3Pan, pan),
+            4 => self.shared.params.set(SynthParam::Osc4Pan, pan),
             _ => {}
         }
     }

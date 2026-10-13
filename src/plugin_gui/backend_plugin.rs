@@ -53,6 +53,16 @@ macro_rules! with_nih_param {
             SynthParam::Osc3Cents => { let $p = &$self.params.osc3_cents; $int_body }
             SynthParam::Osc3Phase => { let $p = &$self.params.osc3_phase; $float_body }
             SynthParam::Osc3Pan => { let $p = &$self.params.osc3_pan; $float_body }
+            SynthParam::Osc4Waveform => { let $p = &$self.params.osc4_waveform; $int_body }
+            SynthParam::Osc4Level => { let $p = &$self.params.osc4_level; $float_body }
+            SynthParam::Osc4Semitones => { let $p = &$self.params.osc4_semitones; $int_body }
+            SynthParam::Osc4Cents => { let $p = &$self.params.osc4_cents; $int_body }
+            SynthParam::Osc4Phase => { let $p = &$self.params.osc4_phase; $float_body }
+            SynthParam::Osc4Pan => { let $p = &$self.params.osc4_pan; $float_body }
+            SynthParam::Filter2Cutoff => { let $p = &$self.params.filter2_cutoff; $float_body }
+            SynthParam::Filter2Resonance => { let $p = &$self.params.filter2_resonance; $float_body }
+            SynthParam::Filter2Type => { let $p = &$self.params.filter2_type; $int_body }
+            SynthParam::DistortionType => { let $p = &$self.params.distortion_type; $int_body }
             SynthParam::StereoWidth => { let $p = &$self.params.stereo_width; $float_body }
             SynthParam::MasterVolume => { let $p = &$self.params.master_volume; $float_body }
         }
@@ -265,6 +275,7 @@ impl<'a> SynthBackend for PluginBackend<'a> {
             1 => self.params.osc1_pan.value(),
             2 => self.params.osc2_pan.value(),
             3 => self.params.osc3_pan.value(),
+            4 => self.params.osc4_pan.value(),
             _ => 0.0,
         }
     }
@@ -273,6 +284,7 @@ impl<'a> SynthBackend for PluginBackend<'a> {
             1 => self.setter.set_parameter(&self.params.osc1_pan, pan),
             2 => self.setter.set_parameter(&self.params.osc2_pan, pan),
             3 => self.setter.set_parameter(&self.params.osc3_pan, pan),
+            4 => self.setter.set_parameter(&self.params.osc4_pan, pan),
             _ => {}
         }
     }

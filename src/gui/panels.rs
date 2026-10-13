@@ -83,8 +83,8 @@ fn format_slider_value(value: f64, _range: std::ops::RangeInclusive<usize>) -> S
 // ============================================================================
 
 /// Window size shared by the standalone app and the plugin editor, sized so
-/// the SYNTH page fits without scrolling (LFO block is the lowest element).
-pub const WINDOW_SIZE: [f32; 2] = [1050.0, 700.0];
+/// the SYNTH page fits without scrolling (the LFO/FX column is the tallest).
+pub const WINDOW_SIZE: [f32; 2] = [1120.0, 720.0];
 
 /// How the shared shell should differ between the standalone app and the
 /// plugin editor. The layout itself is identical; only these knobs change.
@@ -223,43 +223,56 @@ pub fn shell(
                         // ── SYNTH: the classic three-column layout ───────────
                         RightTab::Synth => {
                             ui.horizontal_top(|ui| {
+                                // Left gutter so the panels don't hug the edge.
+                                ui.add_space(16.0);
                                 ui.vertical(|ui| {
-                                    ui.set_width(175.0);
+                                    ui.set_width(185.0);
                                     oscillators(ui, b);
                                 });
                                 ui.separator();
                                 ui.vertical(|ui| {
-                                    ui.set_width(150.0);
+                                    ui.set_width(160.0);
+                                    filter2(ui, b);
+                                    ui.add_space(8.0);
                                     filter(ui, b);
                                     ui.add_space(8.0);
                                     envelopes(ui, b);
-                                    ui.add_space(8.0);
+                                });
+                                ui.separator();
+                                ui.vertical(|ui| {
+                                    ui.set_width(160.0);
                                     lfo(ui, b);
-                                });
-                                ui.separator();
-                                ui.vertical(|ui| {
-                                    ui.set_width(150.0);
-                                    effects(ui, b);
                                     ui.add_space(8.0);
-                                    pitch_voice(ui, b);
+                                    effects(ui, b);
                                 });
                                 ui.separator();
                                 ui.vertical(|ui| {
-                                    ui.set_width(190.0);
-                                    master(ui, b);
+                                    ui.set_width(200.0);
+                                    pitch_voice(ui, b);
                                     ui.add_space(8.0);
                                     tempo(ui, b, cfg.tempo_follows_host);
+                                    ui.add_space(8.0);
+                                    master(ui, b);
                                     if cfg.show_midi_panel {
                                         ui.add_space(8.0);
                                         midi(ui, b);
                                     }
                                 });
+                                ui.add_space(8.0);
                             });
                         }
 
                         // ── MATRIX: routing matrix fills the same area ───────
                         RightTab::Matrix => {
-                            mod_matrix_panel(ui, b);
+                            // Center the page content horizontally.
+                            let pad = ((ui.available_width() - 980.0) / 2.0).max(12.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(pad);
+                                ui.vertical(|ui| {
+                                    ui.set_width(980.0);
+                                    mod_matrix_panel(ui, b);
+                                });
+                            });
                         }
 
                         // ── PRESETS: library + (standalone) MIDI ─────────────
@@ -368,15 +381,39 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
 
     ui.add_space(4.0);
 
-    // Stereo Width
+    // OSC 4 — also feeds the routing matrix as an FM/RM source
     ui.group(|ui| {
-        ui.label(
-            RichText::new("STEREO")
-                .size(10.0)
-                .strong()
-                .color(Color32::from_rgb(100, 200, 255)),
-        );
-        param_slider(ui, b, SynthParam::StereoWidth, "Width");
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("OSC 4")
+                    .size(10.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 180, 60)),
+            );
+            ui.label(
+                RichText::new("FM/RM")
+                    .size(8.0)
+                    .color(THEME.text_dim),
+            );
+        });
+
+        let wf4 = b.get_param(SynthParam::Osc4Waveform) as usize;
+        egui::ComboBox::from_id_salt("osc4_wf")
+            .width(60.0)
+            .selected_text(wf_labels[wf4.min(4)])
+            .show_ui(ui, |ui| {
+                for (i, label) in wf_labels.iter().enumerate() {
+                    if ui.selectable_label(wf4 == i, *label).clicked() {
+                        b.set_param(SynthParam::Osc4Waveform, i as f32);
+                    }
+                }
+            });
+
+        param_slider(ui, b, SynthParam::Osc4Level, "Level");
+        param_slider(ui, b, SynthParam::Osc4Semitones, "Semi");
+        param_slider(ui, b, SynthParam::Osc4Cents, "Cents");
+        param_slider(ui, b, SynthParam::Osc4Phase, "Phase");
+        param_slider(ui, b, SynthParam::Osc4Pan, "Pan");
     });
 }
 
@@ -384,8 +421,28 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
 // Filter
 // ============================================================================
 
+/// Second serial filter — runs after FILTER 1 in the voice chain and is
+/// modulatable via the routing matrix (Cutoff 2 / Resonance 2).
+pub fn filter2(ui: &mut Ui, b: &mut dyn SynthBackend) {
+    section_header(ui, "FILTER 2");
+
+    let ft = b.get_param(SynthParam::Filter2Type) as usize;
+    egui::ComboBox::from_id_salt("filter2_type")
+        .selected_text(crate::core::filter::FilterType::ALL[ft.min(2)].name())
+        .show_ui(ui, |ui| {
+            for (i, ty) in crate::core::filter::FilterType::ALL.iter().enumerate() {
+                if ui.selectable_label(ft == i, ty.name()).clicked() {
+                    b.set_param(SynthParam::Filter2Type, i as f32);
+                }
+            }
+        });
+
+    param_slider(ui, b, SynthParam::Filter2Cutoff, "Cutoff");
+    param_slider(ui, b, SynthParam::Filter2Resonance, "Res");
+}
+
 pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
-    section_header(ui, "FILTER");
+    section_header(ui, "FILTER 1");
 
     // Filter topology selector (stored in ModState so it reaches the DSP)
     let mut ms = b.mod_state();
@@ -435,6 +492,18 @@ pub fn master(ui: &mut Ui, b: &mut dyn SynthBackend) {
 
     param_slider(ui, b, SynthParam::PortamentoTime, "Portamento");
     param_slider(ui, b, SynthParam::MasterVolume, "Volume");
+
+    ui.add_space(8.0);
+    // Stereo width lives with the master controls.
+    ui.group(|ui| {
+        ui.label(
+            RichText::new("STEREO")
+                .size(10.0)
+                .strong()
+                .color(Color32::from_rgb(100, 200, 255)),
+        );
+        param_slider(ui, b, SynthParam::StereoWidth, "Width");
+    });
 }
 
 /// Tempo block: BPM drives synced LFOs and the synced delay.
@@ -545,6 +614,21 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
         if ui.checkbox(&mut dist_on, RichText::new("DIST").size(10.0).strong()).changed() {
             b.set_distortion_enabled(dist_on);
         }
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Type").size(9.0).color(THEME.text_dim));
+            let dt = b.get_param(SynthParam::DistortionType) as usize;
+            egui::ComboBox::from_id_salt("dist_type")
+                .width(74.0)
+                .selected_text(crate::core::effects::DistortionType::ALL[dt.min(3)].name())
+                .show_ui(ui, |ui| {
+                    for (i, t) in crate::core::effects::DistortionType::ALL.iter().enumerate() {
+                        if ui.selectable_label(dt == i, t.name()).clicked() {
+                            b.set_param(SynthParam::DistortionType, i as f32);
+                        }
+                    }
+                });
+        });
 
         let mut drive = b.distortion_drive();
         if gold_value_slider(ui, egui::Slider::new(&mut drive, 0.0..=1.0).text("Drive").custom_formatter(format_slider_value)).changed() {
@@ -972,8 +1056,17 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_param(SynthParam::Osc3Cents, preset.osc3_cents as f32);
     b.set_param(SynthParam::Osc3Phase, preset.osc3_phase);
 
+    b.set_param(SynthParam::Osc4Waveform, preset.osc4_waveform as u8 as f32);
+    b.set_param(SynthParam::Osc4Level, preset.osc4_level);
+    b.set_param(SynthParam::Osc4Semitones, preset.osc4_semitones as f32);
+    b.set_param(SynthParam::Osc4Cents, preset.osc4_cents as f32);
+    b.set_param(SynthParam::Osc4Phase, preset.osc4_phase);
+
     b.set_param(SynthParam::FilterCutoff, preset.filter_cutoff);
     b.set_param(SynthParam::FilterResonance, preset.filter_resonance);
+    b.set_param(SynthParam::Filter2Type, preset.filter2_type.index() as f32);
+    b.set_param(SynthParam::Filter2Cutoff, preset.filter2_cutoff);
+    b.set_param(SynthParam::Filter2Resonance, preset.filter2_resonance);
 
     b.set_param(SynthParam::Attack, preset.amp_attack);
     b.set_param(SynthParam::Decay, preset.amp_decay);
@@ -999,6 +1092,7 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_osc_pan(1, preset.osc1_pan);
     b.set_osc_pan(2, preset.osc2_pan);
     b.set_osc_pan(3, preset.osc3_pan);
+    b.set_osc_pan(4, preset.osc4_pan);
     b.set_stereo_width(preset.stereo_width);
 
     // Polyphony mode
@@ -1008,6 +1102,7 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_distortion_enabled(preset.distortion_enabled);
     b.set_distortion_drive(preset.distortion_drive);
     b.set_distortion_mix(preset.distortion_mix);
+    b.set_param(SynthParam::DistortionType, preset.distortion_type.index() as f32);
 
     // Effects - Delay
     b.set_delay_enabled(preset.delay_enabled);
@@ -1099,8 +1194,19 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str, category: &str) -> Preset
         osc3_cents: b.get_param(SynthParam::Osc3Cents) as i8,
         osc3_phase: b.get_param(SynthParam::Osc3Phase),
 
+        osc4_waveform: WaveformType::from_index(b.get_param(SynthParam::Osc4Waveform) as u8),
+        osc4_level: b.get_param(SynthParam::Osc4Level),
+        osc4_semitones: b.get_param(SynthParam::Osc4Semitones) as i8,
+        osc4_cents: b.get_param(SynthParam::Osc4Cents) as i8,
+        osc4_phase: b.get_param(SynthParam::Osc4Phase),
+
         filter_cutoff: b.get_param(SynthParam::FilterCutoff),
         filter_resonance: b.get_param(SynthParam::FilterResonance),
+        filter2_cutoff: b.get_param(SynthParam::Filter2Cutoff),
+        filter2_resonance: b.get_param(SynthParam::Filter2Resonance),
+        filter2_type: crate::core::filter::FilterType::from_index(
+            b.get_param(SynthParam::Filter2Type) as u8,
+        ),
 
         amp_attack: b.get_param(SynthParam::Attack),
         amp_decay: b.get_param(SynthParam::Decay),
@@ -1160,15 +1266,19 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str, category: &str) -> Preset
         osc1_pan: b.osc_pan(1),
         osc2_pan: b.osc_pan(2),
         osc3_pan: b.osc_pan(3),
+        osc4_pan: b.osc_pan(4),
         stereo_width: b.stereo_width(),
 
         // Polyphony mode
         polyphony_mode: b.polyphony_mode(),
 
-        // Effects - Delay
+        // Effects - Distortion
         distortion_enabled: b.distortion_enabled(),
         distortion_drive: b.distortion_drive(),
         distortion_mix: b.distortion_mix(),
+        distortion_type: crate::core::effects::DistortionType::from_index(
+            b.get_param(SynthParam::DistortionType) as u8,
+        ),
 
         delay_enabled: b.delay_enabled(),
         delay_time: b.delay_time(),
@@ -1326,26 +1436,27 @@ fn division_combo(ui: &mut Ui, id_salt: String, beats: &mut f32) {
         });
 }
 
-/// Routing grid cell size, row-label width and rotated column-header height.
+/// Routing grid cell size, row-label width and rotated column-footer height.
 const GRID_CELL: f32 = 24.0;
 const GRID_LABEL_W: f32 = 78.0;
-const GRID_HEADER_H: f32 = 84.0;
+const GRID_FOOTER_H: f32 = 84.0;
 
-/// Thicker separator after these rows (LFOs | envelopes | performance).
+/// Thicker separator after these rows (LFOs | envelopes | performance |
+/// audio-rate sources).
 fn src_group_break(s: ModSource) -> bool {
-    matches!(s, ModSource::Lfo3 | ModSource::Env4)
+    matches!(s, ModSource::Lfo3 | ModSource::Env4 | ModSource::PitchBend)
 }
 
-/// Thicker separator after these columns (pitch | filter | amp | osc levels |
-/// osc pans | LFO rates | LFO depths).
+/// Thicker separator after these columns (pitch | filters | amp/stereo |
+/// osc levels | osc pans | LFO rates | LFO depths).
 fn dst_group_break(d: ModDest) -> bool {
     matches!(
         d,
-        ModDest::AllPitch
-            | ModDest::FilterResonance
+        ModDest::Osc4Pitch
+            | ModDest::Filter2Resonance
             | ModDest::StereoWidth
-            | ModDest::Osc3Level
-            | ModDest::Osc3Pan
+            | ModDest::Osc4Level
+            | ModDest::Osc4Pan
             | ModDest::Lfo3Rate
     )
 }
@@ -1367,10 +1478,11 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
 
     let size = vec2(
         GRID_LABEL_W + cols as f32 * GRID_CELL,
-        GRID_HEADER_H + rows as f32 * GRID_CELL,
+        GRID_FOOTER_H + rows as f32 * GRID_CELL,
     );
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let origin = rect.min + vec2(GRID_LABEL_W, GRID_HEADER_H);
+    // Destinations are labelled below the grid now.
+    let origin = rect.min + vec2(GRID_LABEL_W, 0.0);
     let cell_rect = |r: usize, c: usize| {
         Rect::from_min_size(
             origin + vec2(c as f32 * GRID_CELL, r as f32 * GRID_CELL),
@@ -1459,7 +1571,7 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
                 tint,
             );
             painter.rect_filled(
-                Rect::from_min_max(pos2(col.min.x, rect.min.y), pos2(col.max.x, grid_rect.max.y)),
+                Rect::from_min_max(pos2(col.min.x, grid_rect.min.y), pos2(col.max.x, grid_rect.max.y)),
                 0.0,
                 tint,
             );
@@ -1491,14 +1603,19 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
             );
         }
 
-        // Rotated column labels (destinations), reading bottom-to-top
+        // Rotated column labels (destinations) below the grid, reading
+        // bottom-to-top so they anchor at the column's bottom edge.
         for (c, d) in dsts.iter().enumerate() {
             let color = if focus.map(|f| f.1) == Some(c) { THEME.gold_light } else { THEME.text_secondary };
             let galley = painter.layout_no_wrap(d.name().to_string(), FontId::proportional(10.0), color);
             let x = cell_rect(0, c).center().x - galley.size().y / 2.0;
             painter.add(
-                epaint::TextShape::new(pos2(x, origin.y - 6.0), galley, color)
-                    .with_angle(-std::f32::consts::FRAC_PI_2),
+                epaint::TextShape::new(
+                    pos2(x, grid_rect.max.y + 6.0 + galley.size().x),
+                    galley,
+                    color,
+                )
+                .with_angle(-std::f32::consts::FRAC_PI_2),
             );
         }
 

@@ -25,6 +25,15 @@ pub struct Voice {
     filter_left: Box<dyn Filter>,
     filter_right: Box<dyn Filter>,
     filter_type: FilterType,           // Current filter topology
+    // Second serial filter (after filter 1). Bypassed while it is a
+    // wide-open SVF with no resonance and no matrix routes, so existing
+    // presets pay nothing for it.
+    filter2_left: Box<dyn Filter>,
+    filter2_right: Box<dyn Filter>,
+    filter2_type: FilterType,
+    filter2_active: bool,
+    base_cutoff2: Frequency,
+    base_resonance2: f32,
     envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
     filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
     env3: Box<dyn Envelope>,           // Free modulation envelope
@@ -36,7 +45,8 @@ pub struct Voice {
     aftertouch: f32,                   // 0.0 to 1.0, channel pressure
     lfo_base: [(f32, f32); 3],         // Unmodulated (rate Hz, depth) per LFO
     last_values: ModSourceValues,      // Previous sample's sources (mod-on-mod)
-    used_dests: u32,                   // Bitmask of ModDest targeted by the matrix
+    osc4_prev: f32,                    // Previous sample's raw osc4 output (FM/RM source)
+    used_dests: u64,                   // Bitmask of ModDest targeted by the matrix
     current_note: Option<MidiNote>,
     velocity: Amplitude,
     sample_rate: SampleRate,
@@ -59,6 +69,12 @@ impl Voice {
             filter_left: make_filter(FilterType::Svf, 20000.0, 0.0, sample_rate),
             filter_right: make_filter(FilterType::Svf, 20000.0, 0.0, sample_rate),
             filter_type: FilterType::Svf,
+            filter2_left: make_filter(FilterType::Svf, 20000.0, 0.0, sample_rate),
+            filter2_right: make_filter(FilterType::Svf, 20000.0, 0.0, sample_rate),
+            filter2_type: FilterType::Svf,
+            filter2_active: false,
+            base_cutoff2: 20000.0,
+            base_resonance2: 0.0,
             envelope: Box::new(ADSREnvelope::default_adsr(sample_rate)),
             filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
             env3: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)),
@@ -70,6 +86,7 @@ impl Voice {
             aftertouch: 0.0,
             lfo_base: [(1.0, 0.0); 3],
             last_values: ModSourceValues::default(),
+            osc4_prev: 0.0,
             used_dests: 0,
             current_note: None,
             velocity: 1.0,
@@ -119,23 +136,51 @@ impl Voice {
         let mods = self.compute_modulation();
         self.apply_resonance_offset(mods.resonance_offset);
 
+        self.osc_bank.set_pitch_mods(mods.osc_pitch);
         self.osc_bank.set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
 
         let modulated_cutoff = self.modulated_cutoff(mods.filter_env_amp, mods.cutoff_semitones);
         // For mono output, use left filter (both filters have same parameters)
         self.filter_left.set_cutoff(modulated_cutoff);
         self.filter_right.set_cutoff(modulated_cutoff);
+        self.update_filter2_params(&mods);
 
-        let (s1, s2, s3) = self.osc_bank.next_samples_individual();
-        let osc_sample = s1 * mods.osc_gain[0] + s2 * mods.osc_gain[1] + s3 * mods.osc_gain[2];
-        let filtered_sample = self.filter_left.process(osc_sample);
+        let (s, osc4_raw) = self.osc_bank.next_samples_individual();
+        self.osc4_prev = osc4_raw;
+        let carrier = |i: usize| s[i] * self.carrier_gain(&mods, i, osc4_raw);
+        let osc_sample = carrier(0) + carrier(1) + carrier(2) + carrier(3);
+        let mut filtered_sample = self.filter_left.process(osc_sample);
+        if self.filter2_active {
+            filtered_sample = self.filter2_left.process(filtered_sample);
+        }
 
         filtered_sample * mods.amp_env * self.velocity * mods.amplitude_gain
     }
+
+    /// Effective carrier multiplier for oscillator `i`: linear level
+    /// modulation blended into ring modulation by the Osc4→level amount.
+    fn carrier_gain(&self, mods: &VoiceMods, i: usize, osc4_raw: f32) -> f32 {
+        let rm = mods.ring_mod[i].clamp(-1.0, 1.0);
+        mods.osc_gain[i] * (1.0 - rm.abs()) + rm * osc4_raw
+    }
+
+    /// Push modulated Filter2 parameters into both channels.
+    fn update_filter2_params(&mut self, mods: &VoiceMods) {
+        if !self.filter2_active {
+            return;
+        }
+        let c2 = (self.base_cutoff2 * 2.0f32.powf(mods.filter2_cutoff_semitones / 12.0))
+            .clamp(20.0, 20000.0);
+        let r2 = (self.base_resonance2 + mods.filter2_resonance_offset).clamp(0.0, 1.0);
+        self.filter2_left.set_cutoff(c2);
+        self.filter2_right.set_cutoff(c2);
+        self.filter2_left.set_resonance(r2);
+        self.filter2_right.set_resonance(r2);
+    }
     
     /// Generate the next stereo sample from this voice with per-oscillator panning
-    /// pans: (osc1_pan, osc2_pan, osc3_pan) where -1.0 = left, 0.0 = center, 1.0 = right
-    pub fn next_sample_stereo(&mut self, pans: (f32, f32, f32)) -> StereoSample {
+    /// pans: [osc1..osc4] where -1.0 = left, 0.0 = center, 1.0 = right
+    pub fn next_sample_stereo(&mut self, pans: [f32; 4]) -> StereoSample {
         if self.envelope.is_finished() {
             return StereoSample::ZERO;
         }
@@ -154,24 +199,37 @@ impl Voice {
         let mods = self.compute_modulation();
         self.apply_resonance_offset(mods.resonance_offset);
 
+        self.osc_bank.set_pitch_mods(mods.osc_pitch);
         self.osc_bank.set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
 
         let modulated_cutoff = self.modulated_cutoff(mods.filter_env_amp, mods.cutoff_semitones);
         // Set cutoff on both filters for stereo processing
         self.filter_left.set_cutoff(modulated_cutoff);
         self.filter_right.set_cutoff(modulated_cutoff);
+        self.update_filter2_params(&mods);
 
         // Get individual oscillator samples and pan them
-        let (s1, s2, s3) = self.osc_bank.next_samples_individual();
+        let (s, osc4_raw) = self.osc_bank.next_samples_individual();
+        self.osc4_prev = osc4_raw;
 
         let pan = |base: f32, off: f32| (base + off).clamp(-1.0, 1.0);
-        let stereo_osc = StereoSample::from_mono_panned(s1 * mods.osc_gain[0], pan(pans.0, mods.pan_offset[0]))
-            + StereoSample::from_mono_panned(s2 * mods.osc_gain[1], pan(pans.1, mods.pan_offset[1]))
-            + StereoSample::from_mono_panned(s3 * mods.osc_gain[2], pan(pans.2, mods.pan_offset[2]));
-        
-        // Filter the stereo signal (process L and R separately with independent filters)
-        let filtered_left = self.filter_left.process(stereo_osc.left);
-        let filtered_right = self.filter_right.process(stereo_osc.right);
+        let mut stereo_osc = StereoSample::ZERO;
+        for i in 0..4 {
+            stereo_osc = stereo_osc
+                + StereoSample::from_mono_panned(
+                    s[i] * self.carrier_gain(&mods, i, osc4_raw),
+                    pan(pans[i], mods.pan_offset[i]),
+                );
+        }
+
+        // Filter the stereo signal (process L and R separately with
+        // independent filters); filter 2 runs serially after filter 1.
+        let mut filtered_left = self.filter_left.process(stereo_osc.left);
+        let mut filtered_right = self.filter_right.process(stereo_osc.right);
+        if self.filter2_active {
+            filtered_left = self.filter2_left.process(filtered_left);
+            filtered_right = self.filter2_right.process(filtered_right);
+        }
         let mut filtered_stereo = StereoSample::new(filtered_left, filtered_right);
         if mods.width != 1.0 {
             filtered_stereo = filtered_stereo.with_width(mods.width);
@@ -183,7 +241,7 @@ impl Voice {
     /// Resolved modulation offsets for the current sample (destination units).
     fn compute_modulation(&mut self) -> VoiceMods {
         let used = self.used_dests;
-        let has = |d: ModDest| used & (1u32 << d as u32) != 0;
+        let has = |d: ModDest| used & (1u64 << d as u64) != 0;
 
         // Mod-on-mod: LFO rate/depth follow the previous sample's sources
         // (one-sample lag, inaudible) so LFOs can modulate each other.
@@ -234,27 +292,70 @@ impl Voice {
             mod_wheel: self.mod_wheel,
             pitch_bend: self.pitch_bend_mod,
             aftertouch: self.aftertouch,
+            osc4: self.osc4_prev,
             ..Default::default()
         };
         self.last_values = values;
         let get = |s: ModSource| values.get(s);
         let off = |d: ModDest| if has(d) { self.mod_matrix.offset_for(d, get) } else { 0.0 };
+        // Level destinations treat Osc4 as a ring modulator, not an additive
+        // offset, so its linear contribution is excluded from `gain` and the
+        // amount alone drives `carrier_gain`'s multiplication by the raw wave.
+        let get_no_osc4 =
+            |s: ModSource| if s == ModSource::Osc4 { 0.0 } else { values.get(s) };
+        let gain = |d: ModDest| {
+            if has(d) {
+                (1.0 + self.mod_matrix.offset_for(d, get_no_osc4)).clamp(0.0, 2.0)
+            } else {
+                1.0
+            }
+        };
+        let rm = |d: ModDest| {
+            if has(d) {
+                self.mod_matrix.source_amount(d, ModSource::Osc4)
+            } else {
+                0.0
+            }
+        };
 
         let pitch_semitones = off(ModDest::AllPitch);
         let cutoff_semitones = off(ModDest::FilterCutoff);
         let resonance_offset = off(ModDest::FilterResonance);
         let amplitude_offset = off(ModDest::Amplitude);
-        let gain = |d: ModDest| (1.0 + off(d)).clamp(0.0, 2.0);
 
         VoiceMods {
             pitch_semitones,
+            osc_pitch: [
+                off(ModDest::Osc1Pitch),
+                off(ModDest::Osc2Pitch),
+                off(ModDest::Osc3Pitch),
+                off(ModDest::Osc4Pitch),
+            ],
             cutoff_semitones,
             resonance_offset,
+            filter2_cutoff_semitones: off(ModDest::Filter2Cutoff),
+            filter2_resonance_offset: off(ModDest::Filter2Resonance),
             amplitude_gain: (1.0 + amplitude_offset).max(0.0),
             amp_env,
             filter_env_amp,
-            osc_gain: [gain(ModDest::Osc1Level), gain(ModDest::Osc2Level), gain(ModDest::Osc3Level)],
-            pan_offset: [off(ModDest::Osc1Pan), off(ModDest::Osc2Pan), off(ModDest::Osc3Pan)],
+            osc_gain: [
+                gain(ModDest::Osc1Level),
+                gain(ModDest::Osc2Level),
+                gain(ModDest::Osc3Level),
+                gain(ModDest::Osc4Level),
+            ],
+            ring_mod: [
+                rm(ModDest::Osc1Level),
+                rm(ModDest::Osc2Level),
+                rm(ModDest::Osc3Level),
+                rm(ModDest::Osc4Level),
+            ],
+            pan_offset: [
+                off(ModDest::Osc1Pan),
+                off(ModDest::Osc2Pan),
+                off(ModDest::Osc3Pan),
+                off(ModDest::Osc4Pan),
+            ],
             width: (1.0 + off(ModDest::StereoWidth)).clamp(0.0, 2.0),
         }
     }
@@ -290,6 +391,55 @@ impl Voice {
         self.filter_type
     }
 
+    /// Recompute whether the second filter runs. It is bypassed while it
+    /// would be transparent anyway: SVF topology (flat at full cutoff),
+    /// cutoff wide open, no resonance, and no matrix routes feeding it.
+    fn update_filter2_active(&mut self) {
+        let routed = self.used_dests
+            & ((1u64 << ModDest::Filter2Cutoff as u64)
+                | (1u64 << ModDest::Filter2Resonance as u64))
+            != 0;
+        let was = self.filter2_active;
+        self.filter2_active = !(self.filter2_type == FilterType::Svf
+            && self.base_cutoff2 >= 19999.0
+            && self.base_resonance2 <= 0.001
+            && !routed);
+        // Flush stale filter state on the bypass → active transition.
+        if self.filter2_active && !was {
+            self.filter2_left.reset();
+            self.filter2_right.reset();
+        }
+    }
+
+    /// Swap the second filter's topology for both channels.
+    pub fn set_filter2_type(&mut self, ty: FilterType) {
+        if ty == self.filter2_type {
+            return;
+        }
+        self.filter2_type = ty;
+        let cutoff = self.filter2_left.cutoff();
+        let res = self.filter2_left.resonance();
+        self.filter2_left = make_filter(ty, cutoff, res, self.sample_rate);
+        self.filter2_right = make_filter(ty, cutoff, res, self.sample_rate);
+        self.update_filter2_active();
+    }
+
+    /// Set the second filter's base cutoff.
+    pub fn set_filter2_cutoff(&mut self, cutoff: Frequency) {
+        self.base_cutoff2 = cutoff;
+        self.filter2_left.set_cutoff(cutoff);
+        self.filter2_right.set_cutoff(cutoff);
+        self.update_filter2_active();
+    }
+
+    /// Set the second filter's base resonance.
+    pub fn set_filter2_resonance(&mut self, resonance: f32) {
+        self.base_resonance2 = resonance;
+        self.filter2_left.set_resonance(resonance);
+        self.filter2_right.set_resonance(resonance);
+        self.update_filter2_active();
+    }
+
     /// Apply a matrix resonance offset on top of the base resonance.
     fn apply_resonance_offset(&mut self, offset: f32) {
         if offset != 0.0 {
@@ -320,6 +470,9 @@ impl Voice {
 
         self.filter_left.reset();
         self.filter_right.reset();
+        self.filter2_left.reset();
+        self.filter2_right.reset();
+        self.osc4_prev = 0.0;
         self.filter_envelope.reset();
         self.envelope.trigger();
         self.filter_envelope.trigger();
@@ -365,6 +518,9 @@ impl Voice {
         self.osc_bank.reset();
         self.filter_left.reset();
         self.filter_right.reset();
+        self.filter2_left.reset();
+        self.filter2_right.reset();
+        self.osc4_prev = 0.0;
         self.envelope.reset();
         self.filter_envelope.reset();
         self.env3.reset();
@@ -381,6 +537,8 @@ impl Voice {
         self.osc_bank.set_sample_rate(sample_rate);
         self.filter_left.set_sample_rate(sample_rate);
         self.filter_right.set_sample_rate(sample_rate);
+        self.filter2_left.set_sample_rate(sample_rate);
+        self.filter2_right.set_sample_rate(sample_rate);
         self.envelope.set_sample_rate(sample_rate);
         self.filter_envelope.set_sample_rate(sample_rate);
         self.env3.set_sample_rate(sample_rate);
@@ -514,7 +672,7 @@ impl Voice {
             .slots
             .iter()
             .filter(|s| s.enabled && s.source != ModSource::Off)
-            .fold(0u32, |m, s| m | (1u32 << s.dest as u32));
+            .fold(0u64, |m, s| m | (1u64 << s.dest as u64));
         // Restore unmodulated LFO settings when mod-on-mod routes go away.
         if had_lfo_mods && self.used_dests & LFO_MOD_MASK == 0 {
             for i in 0..3 {
@@ -523,6 +681,7 @@ impl Voice {
                 self.lfos[i].set_depth(depth);
             }
         }
+        self.update_filter2_active();
     }
 
     /// Set the pitch-wheel position (-1.0 to 1.0) used as a modulation source
@@ -576,15 +735,22 @@ impl Voice {
 /// Per-sample resolved modulation for a voice (destination units).
 struct VoiceMods {
     pitch_semitones: f32,
+    /// Per-oscillator pitch offsets in semitones (FM-capable via Osc4).
+    osc_pitch: [f32; 4],
     cutoff_semitones: f32,
     resonance_offset: f32,
+    /// Second filter: cutoff offset in semitones + additive resonance.
+    filter2_cutoff_semitones: f32,
+    filter2_resonance_offset: f32,
     amplitude_gain: f32,
     amp_env: f32,
     filter_env_amp: f32,
     /// Per-oscillator level multipliers (1.0 = unmodulated).
-    osc_gain: [f32; 3],
+    osc_gain: [f32; 4],
+    /// Ring-mod depth per oscillator (Osc4 routed to OscNLevel dests).
+    ring_mod: [f32; 4],
     /// Per-oscillator pan offsets added to the base pans.
-    pan_offset: [f32; 3],
+    pan_offset: [f32; 4],
     /// Per-voice stereo width factor (1.0 = unmodulated).
     width: f32,
 }
@@ -593,12 +759,12 @@ struct VoiceMods {
 const LFO_RATE_DESTS: [ModDest; 3] = [ModDest::Lfo1Rate, ModDest::Lfo2Rate, ModDest::Lfo3Rate];
 const LFO_DEPTH_DESTS: [ModDest; 3] = [ModDest::Lfo1Depth, ModDest::Lfo2Depth, ModDest::Lfo3Depth];
 /// Bitmask of all mod-on-mod destinations.
-const LFO_MOD_MASK: u32 = (1 << ModDest::Lfo1Rate as u32)
-    | (1 << ModDest::Lfo2Rate as u32)
-    | (1 << ModDest::Lfo3Rate as u32)
-    | (1 << ModDest::Lfo1Depth as u32)
-    | (1 << ModDest::Lfo2Depth as u32)
-    | (1 << ModDest::Lfo3Depth as u32);
+const LFO_MOD_MASK: u64 = (1 << ModDest::Lfo1Rate as u64)
+    | (1 << ModDest::Lfo2Rate as u64)
+    | (1 << ModDest::Lfo3Rate as u64)
+    | (1 << ModDest::Lfo1Depth as u64)
+    | (1 << ModDest::Lfo2Depth as u64)
+    | (1 << ModDest::Lfo3Depth as u64);
 
 /// Settings for one of the 3 LFOs
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -692,6 +858,11 @@ pub struct OscBankState {
     pub osc3_semitones: i8,
     pub osc3_cents: i8,
     pub osc3_phase: f32,
+    pub osc4_waveform: WaveformType,
+    pub osc4_level: f32,
+    pub osc4_semitones: i8,
+    pub osc4_cents: i8,
+    pub osc4_phase: f32,
 }
 
 impl Default for OscBankState {
@@ -710,6 +881,11 @@ impl Default for OscBankState {
             osc3_semitones: -12,  // Sub oscillator
             osc3_cents: 0,
             osc3_phase: 0.0,
+            osc4_waveform: WaveformType::Sine,
+            osc4_level: 0.0,    // Silent by default; raise to mix or modulate
+            osc4_semitones: 0,
+            osc4_cents: 0,
+            osc4_phase: 0.0,
         }
     }
 }
@@ -742,6 +918,7 @@ pub struct VoiceManager {
     osc1_pan: f32,
     osc2_pan: f32,
     osc3_pan: f32,
+    osc4_pan: f32,
     stereo_width: f32,  // 0.0 = mono, 1.0 = normal, 2.0 = extra wide
     // Amplitude ADSR envelope state
     attack_time: f32,
@@ -757,6 +934,10 @@ pub struct VoiceManager {
     // Filter state
     filter_cutoff: Frequency,
     filter_resonance: f32,
+    // Second serial filter state
+    filter2_cutoff: Frequency,
+    filter2_resonance: f32,
+    filter2_type: FilterType,
     // LFO state
     lfo_rate: f32,
     lfo_depth: f32,
@@ -814,6 +995,7 @@ impl VoiceManager {
             osc1_pan: 0.0,    // Center
             osc2_pan: -0.3,   // Slightly left
             osc3_pan: 0.3,    // Slightly right
+            osc4_pan: 0.0,    // Center
             stereo_width: 1.0,
             // Amp envelope defaults
             attack_time: 0.01,
@@ -829,6 +1011,10 @@ impl VoiceManager {
             // Filter state
             filter_cutoff: 20000.0,
             filter_resonance: 0.0,
+            // Second filter: wide open SVF = transparent (bypassed)
+            filter2_cutoff: 20000.0,
+            filter2_resonance: 0.0,
+            filter2_type: FilterType::Svf,
             // LFO defaults (off by default)
             lfo_rate: 6.0,
             lfo_depth: 0.0,
@@ -871,6 +1057,10 @@ impl VoiceManager {
         bank.set_level(3, state.osc3_level);
         bank.set_detune(3, state.osc3_semitones, state.osc3_cents);
         bank.set_phase(3, state.osc3_phase);
+        bank.set_waveform(4, state.osc4_waveform);
+        bank.set_level(4, state.osc4_level);
+        bank.set_detune(4, state.osc4_semitones, state.osc4_cents);
+        bank.set_phase(4, state.osc4_phase);
     }
 
     /// Create a monophonic voice manager (8 voices but mono mode)
@@ -970,7 +1160,7 @@ impl VoiceManager {
     /// Generate the next stereo sample from all active voices
     pub fn next_sample_stereo(&mut self) -> StereoSample {
         let mut mixed = StereoSample::ZERO;
-        let pans = (self.osc1_pan, self.osc2_pan, self.osc3_pan);
+        let pans = [self.osc1_pan, self.osc2_pan, self.osc3_pan, self.osc4_pan];
 
         for voice in &mut self.voices {
             if voice.is_active() {
@@ -991,6 +1181,7 @@ impl VoiceManager {
             1 => self.osc1_pan = pan,
             2 => self.osc2_pan = pan,
             3 => self.osc3_pan = pan,
+            4 => self.osc4_pan = pan,
             _ => {}
         }
     }
@@ -1001,6 +1192,7 @@ impl VoiceManager {
             1 => self.osc1_pan,
             2 => self.osc2_pan,
             3 => self.osc3_pan,
+            4 => self.osc4_pan,
             _ => 0.0,
         }
     }
@@ -1243,6 +1435,38 @@ impl VoiceManager {
         self.filter_type
     }
 
+    /// Set the second filter's cutoff on all voices.
+    pub fn set_filter2_cutoff(&mut self, cutoff: Frequency) {
+        self.filter2_cutoff = cutoff;
+        for voice in &mut self.voices {
+            voice.set_filter2_cutoff(cutoff);
+        }
+    }
+
+    /// Set the second filter's resonance on all voices.
+    pub fn set_filter2_resonance(&mut self, resonance: f32) {
+        self.filter2_resonance = resonance;
+        for voice in &mut self.voices {
+            voice.set_filter2_resonance(resonance);
+        }
+    }
+
+    /// Set the second filter's topology on all voices.
+    pub fn set_filter2_type(&mut self, ty: FilterType) {
+        if ty == self.filter2_type {
+            return;
+        }
+        self.filter2_type = ty;
+        for voice in &mut self.voices {
+            voice.set_filter2_type(ty);
+        }
+    }
+
+    /// Current second-filter topology.
+    pub fn filter2_type(&self) -> FilterType {
+        self.filter2_type
+    }
+
     /// Set the tempo in BPM; recomputes rates of synced LFOs.
     pub fn set_bpm(&mut self, bpm: f32) {
         self.bpm = bpm.clamp(20.0, 300.0);
@@ -1476,6 +1700,7 @@ impl VoiceManager {
             1 => self.osc_state.osc1_waveform = waveform,
             2 => self.osc_state.osc2_waveform = waveform,
             3 => self.osc_state.osc3_waveform = waveform,
+            4 => self.osc_state.osc4_waveform = waveform,
             _ => return,
         }
         for voice in &mut self.voices {
@@ -1489,6 +1714,7 @@ impl VoiceManager {
             1 => self.osc_state.osc1_level = level,
             2 => self.osc_state.osc2_level = level,
             3 => self.osc_state.osc3_level = level,
+            4 => self.osc_state.osc4_level = level,
             _ => return,
         }
         for voice in &mut self.voices {
@@ -1507,6 +1733,10 @@ impl VoiceManager {
                 self.osc_state.osc3_semitones = semitones;
                 self.osc_state.osc3_cents = cents;
             }
+            4 => {
+                self.osc_state.osc4_semitones = semitones;
+                self.osc_state.osc4_cents = cents;
+            }
             _ => return,
         }
         for voice in &mut self.voices {
@@ -1519,6 +1749,7 @@ impl VoiceManager {
         let cents = match osc_num {
             2 => self.osc_state.osc2_cents,
             3 => self.osc_state.osc3_cents,
+            4 => self.osc_state.osc4_cents,
             _ => return,
         };
         self.set_osc_detune(osc_num, semitones, cents);
@@ -1529,6 +1760,7 @@ impl VoiceManager {
         let semitones = match osc_num {
             2 => self.osc_state.osc2_semitones,
             3 => self.osc_state.osc3_semitones,
+            4 => self.osc_state.osc4_semitones,
             _ => return,
         };
         self.set_osc_detune(osc_num, semitones, cents);
@@ -1540,6 +1772,7 @@ impl VoiceManager {
             1 => self.osc_state.osc1_phase = phase,
             2 => self.osc_state.osc2_phase = phase,
             3 => self.osc_state.osc3_phase = phase,
+            4 => self.osc_state.osc4_phase = phase,
             _ => return,
         }
         for voice in &mut self.voices {
@@ -1583,6 +1816,9 @@ impl VoiceManager {
             // Filter
             SynthParam::FilterCutoff => self.set_filter_cutoff(plain),
             SynthParam::FilterResonance => self.set_filter_resonance(plain),
+            SynthParam::Filter2Cutoff => self.set_filter2_cutoff(plain),
+            SynthParam::Filter2Resonance => self.set_filter2_resonance(plain),
+            SynthParam::Filter2Type => self.set_filter2_type(FilterType::from_index(plain as u8)),
 
             // Filter Envelope
             SynthParam::FilterAttack => self.set_filter_attack(plain),
@@ -1638,6 +1874,14 @@ impl VoiceManager {
             SynthParam::Osc3Semitones => self.set_osc_semitones(3, plain as i8),
             SynthParam::Osc3Cents => self.set_osc_cents(3, plain as i8),
             SynthParam::Osc3Phase => self.set_osc_phase(3, plain),
+            SynthParam::Osc4Waveform => {
+                self.set_osc_waveform(4, WaveformType::from_index(plain as u8))
+            }
+            SynthParam::Osc4Level => self.set_osc_level(4, plain),
+            SynthParam::Osc4Semitones => self.set_osc_semitones(4, plain as i8),
+            SynthParam::Osc4Cents => self.set_osc_cents(4, plain as i8),
+            SynthParam::Osc4Phase => self.set_osc_phase(4, plain),
+            SynthParam::Osc4Pan => self.set_osc_pan(4, plain),
 
             // Stereo
             SynthParam::Osc1Pan => self.set_osc_pan(1, plain),
@@ -1647,6 +1891,10 @@ impl VoiceManager {
 
             // Master
             SynthParam::MasterVolume => self.set_master_volume(plain),
+
+            // Effects live on the audio engine's chain, not in the voice
+            // manager — applied engine-side in sync_params / process().
+            SynthParam::DistortionType => {}
         }
     }
 }
@@ -1753,6 +2001,9 @@ impl VoiceManager {
             voice.set_release(self.release_time);
             voice.set_filter_cutoff(self.filter_cutoff);
             voice.set_filter_resonance(self.filter_resonance);
+            voice.set_filter2_type(self.filter2_type);
+            voice.set_filter2_cutoff(self.filter2_cutoff);
+            voice.set_filter2_resonance(self.filter2_resonance);
             voice.set_filter_attack(self.filter_attack_time);
             voice.set_filter_decay(self.filter_decay_time);
             voice.set_filter_sustain(self.filter_sustain_level);
@@ -1845,9 +2096,17 @@ impl VoiceManager {
         self.set_osc_detune(3, preset.osc3_semitones, preset.osc3_cents);
         self.set_osc_phase(3, preset.osc3_phase);
 
+        self.set_osc_waveform(4, preset.osc4_waveform);
+        self.set_osc_level(4, preset.osc4_level);
+        self.set_osc_detune(4, preset.osc4_semitones, preset.osc4_cents);
+        self.set_osc_phase(4, preset.osc4_phase);
+
         // Filter settings
         self.set_filter_cutoff(preset.filter_cutoff);
         self.set_filter_resonance(preset.filter_resonance);
+        self.set_filter2_type(preset.filter2_type);
+        self.set_filter2_cutoff(preset.filter2_cutoff);
+        self.set_filter2_resonance(preset.filter2_resonance);
 
         // Amplitude envelope
         self.set_attack(preset.amp_attack);
@@ -1915,6 +2174,7 @@ impl VoiceManager {
         self.set_osc_pan(1, preset.osc1_pan);
         self.set_osc_pan(2, preset.osc2_pan);
         self.set_osc_pan(3, preset.osc3_pan);
+        self.set_osc_pan(4, preset.osc4_pan);
         self.set_stereo_width(preset.stereo_width);
 
         // Polyphony mode
@@ -1945,8 +2205,17 @@ impl VoiceManager {
             osc3_cents: self.osc_state.osc3_cents,
             osc3_phase: self.osc_state.osc3_phase,
 
+            osc4_waveform: self.osc_state.osc4_waveform,
+            osc4_level: self.osc_state.osc4_level,
+            osc4_semitones: self.osc_state.osc4_semitones,
+            osc4_cents: self.osc_state.osc4_cents,
+            osc4_phase: self.osc_state.osc4_phase,
+
             filter_cutoff: self.filter_cutoff,
             filter_resonance: self.filter_resonance,
+            filter2_cutoff: self.filter2_cutoff,
+            filter2_resonance: self.filter2_resonance,
+            filter2_type: self.filter2_type,
 
             amp_attack: self.attack_time,
             amp_decay: self.decay_time,
@@ -2003,6 +2272,7 @@ impl VoiceManager {
             osc1_pan: self.osc1_pan,
             osc2_pan: self.osc2_pan,
             osc3_pan: self.osc3_pan,
+            osc4_pan: self.osc4_pan,
             stereo_width: self.stereo_width,
 
             // Polyphony mode
@@ -2308,7 +2578,7 @@ mod tests {
         voice.note_on(69, 1.0);
         let mut audible = false;
         for _ in 0..2000 {
-            let s = voice.next_sample_stereo((-0.8, 0.0, 0.8));
+            let s = voice.next_sample_stereo([-0.8, 0.0, 0.8, 0.0]);
             assert_eq!(s.left, s.right, "width 0 must collapse to mono");
             if s.left != 0.0 {
                 audible = true;
@@ -2326,7 +2596,7 @@ mod tests {
             v.note_on(69, 1.0);
             let mut d = 0.0f32;
             for _ in 0..2000 {
-                let s = v.next_sample_stereo((0.0, 0.0, 0.0));
+                let s = v.next_sample_stereo([0.0; 4]);
                 d = d.max((s.left - s.right).abs());
             }
             d
@@ -2400,6 +2670,134 @@ mod tests {
         }
         let later = (0..200).map(|_| voice.next_sample().abs()).fold(0.0f32, f32::max);
         assert!(later <= first || first == 0.0, "env4 should attenuate over time");
+    }
+
+    /// Regression: Osc4 is an audio-rate mod source — routing it to a pitch
+    /// destination produces FM-style deviation even with its level at 0.
+    #[test]
+    fn test_osc4_fm_pitch_route() {
+        let render = |m: ModMatrix| {
+            let mut v = Voice::new(44100);
+            v.set_mod_matrix(m);
+            v.note_on(69, 1.0);
+            let mut buf = [0.0f32; 4000];
+            for s in &mut buf {
+                *s = v.next_sample();
+            }
+            buf
+        };
+        let plain = render(ModMatrix::default());
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Osc4,
+            dest: ModDest::Osc1Pitch,
+            amount: 1.0,
+            enabled: true,
+        };
+        let fm = render(m);
+        let diff: f32 = plain
+            .iter()
+            .zip(fm.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(diff > 1.0, "Osc4->Osc1Pitch should produce audible FM (diff {diff})");
+    }
+
+    /// Regression: Osc4 routed to an osc level acts as ring modulation —
+    /// the carrier is multiplied by the raw modulator wave.
+    #[test]
+    fn test_osc4_ring_mod_route() {
+        let render = |m: ModMatrix| {
+            let mut v = Voice::new(44100);
+            v.set_mod_matrix(m);
+            v.note_on(69, 1.0);
+            let mut buf = [0.0f32; 4000];
+            for s in &mut buf {
+                *s = v.next_sample();
+            }
+            buf
+        };
+        let plain = render(ModMatrix::default());
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Osc4,
+            dest: ModDest::Osc1Level,
+            amount: 1.0,
+            enabled: true,
+        };
+        let rm = render(m);
+        let diff: f32 = plain
+            .iter()
+            .zip(rm.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(diff > 1.0, "Osc4->Osc1Level should ring-modulate (diff {diff})");
+    }
+
+    /// Regression: a routed Filter2Cutoff engages the second filter, and
+    /// closing it removes energy from a harmonically rich source.
+    #[test]
+    fn test_filter2_route_engages_and_darkens() {
+        let mut routed = Voice::new(44100);
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Constant,
+            dest: ModDest::Filter2Cutoff,
+            amount: -1.0,
+            enabled: true,
+        };
+        routed.set_mod_matrix(m);
+        assert!(
+            routed.filter2_active,
+            "a Filter2 matrix route must engage the second filter"
+        );
+
+        // Osc2 only, +2 octaves (1760 Hz saw): filter2 LP at 400 Hz sits far
+        // below the fundamental. Measure settled high-frequency content via
+        // consecutive-sample differences — filter1's saturation leaves a DC
+        // offset in the output that |x| alone can't separate from the signal,
+        // and the filters smooth coefficients for ~ms after the change.
+        let render_hf = |cutoff: f32| {
+            let mut v = Voice::new(44100);
+            let bank = v.osc_bank_mut();
+            bank.set_level(1, 0.0);
+            bank.set_level(3, 0.0);
+            bank.set_waveform(2, WaveformType::Saw);
+            bank.set_level(2, 1.0);
+            bank.set_detune(2, 24, 0);
+            if cutoff < 20000.0 {
+                v.set_filter2_cutoff(cutoff);
+            }
+            v.note_on(69, 1.0);
+            let mut prev = v.next_sample();
+            for _ in 0..4000 {
+                prev = v.next_sample();
+            }
+            let mut hf = 0.0;
+            for _ in 0..4000 {
+                let s = v.next_sample();
+                hf += (s - prev).abs();
+                prev = s;
+            }
+            hf
+        };
+        let open = render_hf(20000.0);
+        let dark = render_hf(400.0);
+        assert!(
+            dark < open * 0.6,
+            "closing filter2 should remove HF energy (open {open}, dark {dark})"
+        );
+    }
+
+    /// Regression: filter2 stays bypassed while transparent and engages when
+    /// its cutoff is pulled down.
+    #[test]
+    fn test_filter2_bypass_flag() {
+        let mut v = Voice::new(44100);
+        v.set_mod_matrix(ModMatrix::default());
+        assert!(!v.filter2_active, "transparent SVF must stay bypassed");
+        v.set_filter2_cutoff(600.0);
+        assert!(v.filter2_active, "closed cutoff must engage filter2");
     }
 
     #[test]

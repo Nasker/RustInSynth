@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
-use crate::core::effects::EffectsChain;
+use crate::core::effects::{DistortionType, EffectsChain};
 use crate::core::filter::FilterType;
 use crate::core::event::{SynthEvent, WaveformType, SynthEventReceiver};
 use crate::core::lfo::{LfoDestination, LfoWaveform};
@@ -120,6 +120,28 @@ pub struct RustInSynthParams {
     #[id = "osc3_pan"]
     pub osc3_pan: FloatParam,
 
+    // Osc 4 (FM/RM source)
+    #[id = "osc4_waveform"]
+    pub osc4_waveform: IntParam,
+    #[id = "osc4_level"]
+    pub osc4_level: FloatParam,
+    #[id = "osc4_semitones"]
+    pub osc4_semitones: IntParam,
+    #[id = "osc4_cents"]
+    pub osc4_cents: IntParam,
+    #[id = "osc4_phase"]
+    pub osc4_phase: FloatParam,
+    #[id = "osc4_pan"]
+    pub osc4_pan: FloatParam,
+
+    // Filter 2 (serial, after filter 1)
+    #[id = "filter2_cutoff"]
+    pub filter2_cutoff: FloatParam,
+    #[id = "filter2_resonance"]
+    pub filter2_resonance: FloatParam,
+    #[id = "filter2_type"]
+    pub filter2_type: IntParam,
+
     // Master
     #[id = "portamento"]
     pub portamento: FloatParam,
@@ -145,6 +167,9 @@ pub struct RustInSynthParams {
     pub distortion_drive: FloatParam,
     #[id = "distortion_mix"]
     pub distortion_mix: FloatParam,
+    // 0 = Tube, 1 = Fuzz, 2 = Bitcrush, 3 = Fold
+    #[id = "distortion_type"]
+    pub distortion_type: IntParam,
 
     // Delay
     #[id = "delay_enabled"]
@@ -255,6 +280,17 @@ impl Default for RustInSynthParams {
             osc3_phase: float_param(param_spec::spec(SynthParam::Osc3Phase)),
             osc3_pan: float_param(param_spec::spec(SynthParam::Osc3Pan)),
 
+            osc4_waveform: int_param(param_spec::spec(SynthParam::Osc4Waveform)),
+            osc4_level: float_param(param_spec::spec(SynthParam::Osc4Level)),
+            osc4_semitones: int_param(param_spec::spec(SynthParam::Osc4Semitones)),
+            osc4_cents: int_param(param_spec::spec(SynthParam::Osc4Cents)),
+            osc4_phase: float_param(param_spec::spec(SynthParam::Osc4Phase)),
+            osc4_pan: float_param(param_spec::spec(SynthParam::Osc4Pan)),
+
+            filter2_cutoff: float_param(param_spec::spec(SynthParam::Filter2Cutoff)),
+            filter2_resonance: float_param(param_spec::spec(SynthParam::Filter2Resonance)),
+            filter2_type: int_param(param_spec::spec(SynthParam::Filter2Type)),
+
             portamento: float_param(param_spec::spec(SynthParam::PortamentoTime)),
             pitch_bend_range: int_param(param_spec::spec(SynthParam::PitchBendRange)),
             stereo_width: float_param(param_spec::spec(SynthParam::StereoWidth)),
@@ -283,6 +319,7 @@ impl Default for RustInSynthParams {
                 0.5,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
+            distortion_type: int_param(param_spec::spec(SynthParam::DistortionType)),
 
             delay_enabled: BoolParam::new("Delay Enabled", false),
             delay_time: FloatParam::new(
@@ -415,9 +452,11 @@ impl Plugin for RustInSynthPlugin {
         let w1 = WaveformType::from_index(self.params.osc1_waveform.value() as u8);
         let w2 = WaveformType::from_index(self.params.osc2_waveform.value() as u8);
         let w3 = WaveformType::from_index(self.params.osc3_waveform.value() as u8);
+        let w4 = WaveformType::from_index(self.params.osc4_waveform.value() as u8);
         self.voice_manager.set_osc_waveform(1, w1);
         self.voice_manager.set_osc_waveform(2, w2);
         self.voice_manager.set_osc_waveform(3, w3);
+        self.voice_manager.set_osc_waveform(4, w4);
 
         // Track current waveforms
         self.last_osc1_waveform = self.params.osc1_waveform.value();
@@ -644,23 +683,35 @@ impl RustInSynthPlugin {
         sync_int!(SynthParam::Osc3Waveform, osc3_waveform, |vm, v| {
             vm.set_osc_waveform(3, WaveformType::from_index(v as u8))
         });
+        sync_int!(SynthParam::Osc4Waveform, osc4_waveform, |vm, v| {
+            vm.set_osc_waveform(4, WaveformType::from_index(v as u8))
+        });
 
         sync_f32!(SynthParam::Osc1Level, osc1_level, |vm, v| vm.set_osc_level(1, v));
         sync_f32!(SynthParam::Osc2Level, osc2_level, |vm, v| vm.set_osc_level(2, v));
         sync_f32!(SynthParam::Osc3Level, osc3_level, |vm, v| vm.set_osc_level(3, v));
+        sync_f32!(SynthParam::Osc4Level, osc4_level, |vm, v| vm.set_osc_level(4, v));
 
         sync_int!(SynthParam::Osc2Semitones, osc2_semitones, |vm, v| vm.set_osc_semitones(2, v as i8));
         sync_int!(SynthParam::Osc2Cents, osc2_cents, |vm, v| vm.set_osc_cents(2, v as i8));
         sync_int!(SynthParam::Osc3Semitones, osc3_semitones, |vm, v| vm.set_osc_semitones(3, v as i8));
         sync_int!(SynthParam::Osc3Cents, osc3_cents, |vm, v| vm.set_osc_cents(3, v as i8));
+        sync_int!(SynthParam::Osc4Semitones, osc4_semitones, |vm, v| vm.set_osc_semitones(4, v as i8));
+        sync_int!(SynthParam::Osc4Cents, osc4_cents, |vm, v| vm.set_osc_cents(4, v as i8));
 
         sync_f32!(SynthParam::Osc1Phase, osc1_phase, |vm, v| vm.set_osc_phase(1, v));
         sync_f32!(SynthParam::Osc2Phase, osc2_phase, |vm, v| vm.set_osc_phase(2, v));
         sync_f32!(SynthParam::Osc3Phase, osc3_phase, |vm, v| vm.set_osc_phase(3, v));
+        sync_f32!(SynthParam::Osc4Phase, osc4_phase, |vm, v| vm.set_osc_phase(4, v));
 
         sync_f32!(SynthParam::Osc1Pan, osc1_pan, |vm, v| vm.set_osc_pan(1, v));
         sync_f32!(SynthParam::Osc2Pan, osc2_pan, |vm, v| vm.set_osc_pan(2, v));
         sync_f32!(SynthParam::Osc3Pan, osc3_pan, |vm, v| vm.set_osc_pan(3, v));
+        sync_f32!(SynthParam::Osc4Pan, osc4_pan, |vm, v| vm.set_osc_pan(4, v));
+
+        // Filter 2 (serial)
+        sync_f32!(SynthParam::Filter2Cutoff, filter2_cutoff, |vm, v| vm.set_filter2_cutoff(v));
+        sync_f32!(SynthParam::Filter2Resonance, filter2_resonance, |vm, v| vm.set_filter2_resonance(v));
 
         // Master controls
         sync_f32!(SynthParam::PortamentoTime, portamento, |vm, v| vm.set_portamento_time(v));
@@ -678,6 +729,8 @@ impl RustInSynthPlugin {
         self.voice_manager.set_polyphony_mode(mode);
         self.voice_manager
             .set_filter_type(FilterType::from_index(self.params.filter_type.value() as u8));
+        self.voice_manager
+            .set_filter2_type(FilterType::from_index(self.params.filter2_type.value() as u8));
 
         // Effects (not CC-mapped; always applied)
         self.effects_chain
@@ -686,6 +739,8 @@ impl RustInSynthPlugin {
             .set_distortion_drive(self.params.distortion_drive.value());
         self.effects_chain
             .set_distortion_mix(self.params.distortion_mix.value());
+        self.effects_chain
+            .set_distortion_type(DistortionType::from_index(self.params.distortion_type.value() as u8));
 
         self.effects_chain.set_delay_enabled(self.params.delay_enabled.value());
         self.effects_chain.set_delay_time(self.params.delay_time.value());
@@ -776,6 +831,16 @@ mod parity_tests {
         (SynthParam::Osc3Cents, "osc3_cents"),
         (SynthParam::Osc3Phase, "osc3_phase"),
         (SynthParam::Osc3Pan, "osc3_pan"),
+        (SynthParam::Osc4Waveform, "osc4_waveform"),
+        (SynthParam::Osc4Level, "osc4_level"),
+        (SynthParam::Osc4Semitones, "osc4_semitones"),
+        (SynthParam::Osc4Cents, "osc4_cents"),
+        (SynthParam::Osc4Phase, "osc4_phase"),
+        (SynthParam::Osc4Pan, "osc4_pan"),
+        (SynthParam::Filter2Cutoff, "filter2_cutoff"),
+        (SynthParam::Filter2Resonance, "filter2_resonance"),
+        (SynthParam::Filter2Type, "filter2_type"),
+        (SynthParam::DistortionType, "distortion_type"),
         (SynthParam::StereoWidth, "stereo_width"),
         (SynthParam::MasterVolume, "master_volume"),
     ];
