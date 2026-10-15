@@ -1,48 +1,58 @@
 # RustInSynth
 
-A Minimoog-style synthesizer written in pure Rust with a real-time GUI, **true stereo output**, and both **standalone and plugin (VST3/CLAP)** operation.
+<p align="center">
+  <img src="RustInSynth.png" alt="Rust In Synth" width="480">
+</p>
 
-![RustInSynth GUI](docs/screenshot.png)
+A Minimoog-style synthesizer written in pure Rust with a real-time GUI, **true stereo output**, a **16-slot modulation matrix**, and both **standalone and plugin (VST3/CLAP)** operation.
 
 ## Features
 
-- **3-oscillator bank** with 5 waveforms (Sine, Triangle, Saw, Square, Noise) + PolyBLEP anti-aliasing
-- **True stereo output** with per-oscillator panning, stereo width, and independent L/R filters
-- **Resonant low-pass filter** (State Variable Filter with analog-style saturation)
-- **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF) with 6-octave filter envelope range
-- **LFO modulation** - vibrato, filter wah, or tremolo (5 waveforms)
-- **Stereo effects chain** - Ping-pong Delay, Stereo Reverb, Wide Chorus
-- **Portamento (glide)** with exponential curve (0.005-2.0 seconds)
+**Sound engine**
+- **4-oscillator bank** with 5 waveforms (Sine, Triangle, Saw, Square, Noise) + PolyBLEP anti-aliasing. OSC 4 is silent by default and doubles as an audio-rate modulator (FM / ring mod)
+- **Three filter topologies** - SVF (LP/HP/BP/Notch taps), 4-pole Ladder and Comb - plus a serial **Filter 2** stage with its own type, cutoff and resonance
+- **Dual ADSR envelopes** - amplitude (VCA) and filter (VCF) with 6-octave filter envelope range, plus two auxiliary ADSRs (**Env 3** and **Env 4**) used as matrix sources
+- **3 LFOs** - 5 waveforms each, free-running or **tempo-synced**
 - **Mono/Poly modes** - monophonic with key stacking OR 8-voice polyphony with voice stealing
+- **Portamento (glide)** with exponential curve (0.005-2.0 seconds)
+
+**Modulation**
+- **Routing matrix** - 16 slots, each `source -> destination` with a bipolar amount. Sources: LFO 1-3, Amp/Filter Env, Env 3/4, Velocity, Key Track, Mod Wheel, Aftertouch, Pitch Bend, Osc 4 (audio rate), Constant. Destinations include per-oscillator pitch/level/pan, both filters' cutoff/resonance, amplitude, stereo width and LFO rate/depth (mod-on-mod)
+- **Tempo sync** - LFOs and the delay lock to a BPM (user-set in standalone, host transport in the plugin)
+
+**Effects & stereo**
+- **True stereo output** with per-oscillator panning, stereo width, and independent L/R filters
+- **Stereo effects chain** (Distortion -> Chorus -> Delay -> Reverb): multi-type Distortion (Tube, Fuzz, Bitcrush, Fold), Wide Chorus, Ping-pong Delay (tempo-syncable), Stereo Reverb
+
+**Workflow**
 - **Dual operation modes** - Standalone app AND VST3/CLAP plugin via NIH-plug
-- **Unified GUI** - single codebase drives both standalone and plugin via `SynthBackend` trait
-- **Real-time GUI** built with `egui` - single-window Minimoog-style layout
-- **Real-time audio synthesis** using `cpal` (standalone)
-- **USB MIDI controller support** via `midir` with live CC feedback and runtime CC learn
-- **Full MIDI CC control** for all 35+ parameters with customizable mappings
-- **Preset system** - JSON-based save/load with 15+ factory presets
+- **Unified GUI** - single codebase drives both standalone and plugin via the `SynthBackend` trait
+- **Tabbed `egui` GUI** - SYNTH | ROUTING MATRIX | PRESETS pages
+- **Preset browser** - themed banks (Bass, Lead, Pad, Keys, Pluck, Seq, FX, User), save/load, ~75 factory presets that showcase the matrix and tempo sync
+- **USB MIDI controller support** via `midir` with live CC feedback, runtime CC learn, channel selection and aftertouch
+- **MIDI CC control** for the 45 spec-driven parameters with customizable mappings
+- **Single parameter spec** (`param_spec.rs`) drives GUI sliders, CC scaling and plugin automation, so standalone and plugin behave identically
 - **Lock-free parameter sharing** between GUI and audio threads
 - **Real-time CPU meter** - actual DSP load measurement
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│          OSCILLATOR BANK            │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐│
-│  │  OSC 1  │ │  OSC 2  │ │  OSC 3  ││
-│  │ (main)  │ │(detune) │ │ (sub)   ││
-│  └────┬────┘ └────┬────┘ └────┬────┘│
-│       └──────┬────┴───────────┘     │
-└──────────────┼──────────────────────┘
-               ▼
-        ┌─────────────┐    ┌─────────────┐
-        │   Filter    │───▶│  Envelope   │───▶ Output
-        │ (SVF + sat) │    │   (ADSR)    │
-        └─────────────┘    └─────────────┘
+ OSC 1 ─┐
+ OSC 2 ─┼─ pan/level ─▶ Filter 1 ─▶ Filter 2 ─▶ Amp (VCA) ─▶ Effects ─▶ Output
+ OSC 3 ─┤            (SVF/Ladder/Comb) (optional)    ▲     Dist→Chorus→Delay→Reverb
+ OSC 4 ─┘                                            │
+   │ (audio-rate FM/RM source)                       │
+   ▼                                                 │
+ ┌──────────────── Modulation Matrix (16 slots) ─────┴──────────────┐
+ │ LFO 1-3 · Amp/Filter Env · Env 3/4 · Velocity · KeyTrack ·        │
+ │ ModWheel · Aftertouch · PitchBend · Osc 4 · Constant              │
+ └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Default patch**: OSC1=Saw, OSC2=Saw+7¢ (slight detune), OSC3=Square-12st (sub bass)
+See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+
+**Default patch**: OSC1=Saw, OSC2=Saw+7¢ (slight detune), OSC3=Square-12st (sub bass), OSC4 silent
 
 ## MIDI CC Mappings
 
@@ -107,28 +117,28 @@ All parameters follow MIDI Sound Controller conventions:
 |-----|------------------|----------------------------|
 | 5   | Portamento Time  | 0.0 → 3.0s (exponential)  |
 
+The tables above cover the original default mappings. Newer parameters (OSC 4, Filter 2, filter type, distortion, effects, stereo) live in the parameter spec and can be bound with runtime **CC learn**. Matrix routes, LFO 2/3 and Env 3/4 settings, and tempo are preset/GUI state only: not CC-mapped and not host-automatable.
+
 CC mappings are fully configurable at runtime via the `CCMapping` API. Custom mappings are persisted to `~/.rustinsynth/cc_mappings.json`.
 
 ## Presets
 
-Presets are saved as JSON files in `~/.rustsynth/presets/`. Each preset contains all synth parameters including oscillators, filter, envelopes, LFO, and master volume.
+Presets are JSON files in `~/.rustsynth/presets/`, written in the **v2 format** (`{"format_version": 2, "preset": {...}}`). Legacy v1 bare-preset files still load, and missing fields fall back to defaults. A preset captures all oscillators (incl. OSC 4), both filters, all envelopes, 3 LFOs with sync settings, the full modulation matrix, tempo, effects, stereo and polyphony settings.
+
+Factory presets are built into the binary (they always resolve to the current built-in version) and are organised into themed banks: **Bass, Lead, Pad, Keys, Pluck, Seq, FX**, plus **User** for your own saves. Use the PRESETS tab to browse, load and save.
 
 **Programmatic usage:**
 ```rust
-use rustsynth::core::{VoiceManager, save_preset, load_preset};
+use rust_in_synth::core::{VoiceManager, save_preset, load_preset};
 
-// Create and save a preset
 let mut vm = VoiceManager::monophonic(44100);
 // ... configure the sound ...
 let preset = vm.create_preset("My Bass");
 save_preset(&preset).expect("Failed to save preset");
 
-// Load and apply a preset
 let loaded = load_preset("My Bass").expect("Failed to load preset");
 vm.apply_preset(&loaded);
 ```
-
-**CLI preset management** (future enhancement): Load presets by name from command line arguments.
 
 ## Keyboard Layout
 
@@ -159,7 +169,7 @@ cargo build --release
 cargo build --release --features plugin
 ```
 
-The plugin binaries will be in `target/release/` with `.so` (Linux), `.dll` (Windows), or `.dylib` (macOS) extensions. Use a plugin scanner or copy to your DAW's plugin folder.
+The plugin binaries will be in `target/release/` with `.so` (Linux), `.dll` (Windows), or `.dylib` (macOS) extensions. Use a plugin scanner or copy to your DAW's plugin folder. `bundle_vst3.sh` creates a VST3 bundle on macOS only.
 
 ## Running
 
@@ -169,17 +179,24 @@ The plugin binaries will be in `target/release/` with `.so` (Linux), `.dll` (Win
 cargo run
 ```
 
-Connect a USB MIDI controller or use the keyboard shortcuts (see below).
+Connect a USB MIDI controller or use the keyboard shortcuts (see above).
+
+### Tests
+
+```bash
+cargo test
+```
 
 ## Dependencies
 
 - `cpal` - Cross-platform audio I/O
-- `midir` - MIDI input handling  
+- `midir` - MIDI input handling
 - `egui` / `eframe` - Immediate-mode GUI
 - `parking_lot` - Fast synchronization primitives
 - `dashmap` - Lock-free concurrent hashmap
 - `serde` / `serde_json` - Preset serialization
-- `nih_plug` / `nih_plug_egui` - VST3/CLAP plugin framework
+- `dirs` - Home directory lookup for presets and CC mappings
+- `nih_plug` / `nih_plug_egui` - VST3/CLAP plugin framework (BillyDM fork)
 
 ## Project Structure
 
@@ -188,26 +205,29 @@ src/
 ├── main.rs                       # Entry point (standalone GUI mode)
 ├── lib.rs                        # Library exports
 ├── audio/
-│   └── engine.rs                 # Audio stream + param sync (standalone)
+│   └── engine.rs                 # Audio stream + param/mod-state sync (standalone)
 ├── core/
-│   ├── effects.rs                # Delay, Reverb, Chorus + EffectsChain
+│   ├── effects.rs                # Distortion, Chorus, Delay, Reverb + EffectsChain
 │   ├── envelope.rs               # AR/ADSR envelopes
-│   ├── event.rs                  # Note/CC event system
-│   ├── filter.rs                 # State Variable Filter (L/R for stereo)
+│   ├── event.rs                  # Note/CC/aftertouch event system
+│   ├── factory_bank.rs           # Themed factory presets (matrix/sync showcases)
+│   ├── filter.rs                 # SVF, Ladder, Comb filters + FilterType
 │   ├── lfo.rs                    # Low Frequency Oscillator
-│   ├── oscillator.rs             # Waveform generators + bank (PolyBLEP)
+│   ├── mod_matrix.rs             # ModSource / ModDest / ModSlot routing matrix
+│   ├── oscillator.rs             # Waveform generators + 4-osc bank (PolyBLEP)
+│   ├── param_spec.rs             # Single source of truth for all parameters
 │   ├── params.rs                 # CC mapping system + SynthParam enum
-│   ├── presets.rs                # JSON preset save/load + factory presets
+│   ├── presets.rs                # v2 JSON presets, library, original factory presets
 │   ├── types.rs                  # Core type definitions (StereoSample)
-│   └── voice.rs                  # Voice manager (mono/poly, 8 voices)
+│   └── voice.rs                  # Voice manager (mono/poly, 8 voices), ModState
 ├── gui/
 │   ├── mod.rs                    # SharedState, ParamBank, exports
 │   ├── app.rs                    # SynthApp — single GUI, backend-agnostic
 │   ├── backend.rs                # SynthBackend trait (unified abstraction)
 │   ├── backend_standalone.rs     # StandaloneBackend (AudioEngine + MIDI)
-│   ├── panels.rs                 # Shared UI panels (standalone + plugin)
+│   ├── panels.rs                 # Shared panels: tabs, matrix grid, preset browser
 │   ├── theme.rs                  # Rust In Peace color theme
-│   └── widgets.rs                # Custom knobs, toggles, VU meters
+│   └── widgets.rs                # Custom knobs, toggles, curve-aware sliders, meters
 ├── input/
 │   ├── midi.rs                   # MIDI input handler (standalone)
 │   └── keyboard.rs               # QWERTY keyboard input
@@ -216,8 +236,10 @@ src/
     ├── mod.rs                    # Module exports
     ├── backend_plugin.rs         # PluginBackend (NIH-plug integration)
     ├── editor.rs                 # Plugin editor (shared panels)
-    ├── shared_state.rs           # PluginSharedState (CPU load)
+    ├── shared_state.rs           # PluginSharedState (CPU load, mod state)
     └── widgets.rs                # Plugin widget helpers
+docs/
+└── feature-roadmap.md            # Design notes for matrix / sync / filters / distortion
 ```
 
 ## Unified GUI Architecture
@@ -241,15 +263,31 @@ Both the **standalone application** and the **NIH-plug plugin** share a single G
 
 ### Key design decisions
 
-- **`SynthBackend` trait** (`src/gui/backend.rs`) — defines `get_param()`, `set_param()`, effects, voice management, stereo, MIDI, and CPU load. No `'static` bound on the trait itself.
-- **`StandaloneBackend`** — owns `AudioEngine` + `SharedState`. Implements MIDI polling and CC-learn. `'static` because all owned types are `'static`.
+- **`SynthBackend` trait** (`src/gui/backend.rs`) — defines `get_param()`, `set_param()`, effects, voice management, stereo, MIDI, modulation state (`mod_state()` / `set_mod_state()`), and CPU load.
+- **`StandaloneBackend`** — owns `AudioEngine` + `SharedState`. Implements MIDI polling and CC-learn.
 - **`PluginBackend<'a>`** — holds `Arc<RustInSynthParams>` + `&'a ParamSetter`. Recreated cheaply each frame. MIDI methods are no-ops (host handles routing).
 - **`SynthApp`** stores `Box<dyn SynthBackend + 'static>`, satisfying `eframe::App`'s `'static` requirement for standalone. For the plugin, `PluginBackend` is used as `&mut dyn SynthBackend` without boxing.
-- **Adding a new feature**: implement it in `SynthBackend`, add to `StandaloneBackend` and `PluginBackend`, add UI in `app.rs` — one change covers both modes.
+- **Adding a new feature**: add it to `param_spec.rs` (if it is a plain parameter), implement it in `SynthBackend`, `StandaloneBackend` and `PluginBackend`, add UI in `panels.rs` — one change covers both modes.
 
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementation history.
+See [PLAN.md](PLAN.md) for the development plan.
 
 ## Current Status
+
+**Unreleased (post-1.2.0; `Cargo.toml` still says 1.2.0)** - Modulation, filters & presets overhaul:
+- [x] 16-slot modulation matrix with ROUTING MATRIX tab (source / destination / amount / enable per slot)
+- [x] 3 LFOs and 2 auxiliary envelopes (Env 3, Env 4) as matrix sources
+- [x] OSC 4 with audio-rate FM / ring-mod routing
+- [x] Tempo sync for LFOs and delay (standalone BPM, plugin follows host transport)
+- [x] Ladder and Comb filters, SVF Notch tap, serial Filter 2
+- [x] Distortion unit (Tube, Fuzz, Bitcrush, Fold) first in the FX chain
+- [x] Preset format v2 (versioned envelope, v1 still loads), categories and banks
+- [x] Preset browser tab and ~75 themed factory presets
+- [x] Tabbed GUI shared by standalone and plugin
+- [x] Aftertouch input
+- [x] Standalone/plugin parity work: single param spec, one curve per parameter, shared CC scaling, host automation gestures
+- [ ] Manual DAW verification of the new features is still pending
+
+**Known gaps:** global-effect matrix destinations (delay / reverb / chorus targets) are selectable but not yet applied by the DSP; matrix amounts, extra LFO/Env settings and tempo are not exposed as host-automatable plugin parameters.
 
 **v1.2.0** - Stereo Fix & Unified GUI Architecture:
 - [x] Fixed stereo separation with independent left/right filters per voice
@@ -278,14 +316,14 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementati
 - [x] Chorus (LFO-modulated delay)
 - [x] GUI with enable toggles + parameter sliders
 - [x] 8-voice polyphony with voice stealing
-- [x] 15+ factory presets (bass, lead, pad, FX, keys)
+- [x] Factory presets (bass, lead, pad, FX, keys)
 
 **v0.6.0** - Portamento + Key Stacking:
-- [x] Portamento (glide) with linear interpolation (0-3s)
+- [x] Portamento (glide) with exponential interpolation (0-3s)
 - [x] Monophonic key stacking with proper note priority
 - [x] Portamento works between stacked notes
 - [x] MIDI CC 5 control for portamento time
-- [x] GUI controls for portamento in both panels
+- [x] GUI controls for portamento
 - [x] Preset support for portamento settings
 
 **v0.5.0** - Full GUI:
@@ -299,17 +337,20 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the phased implementati
 - [x] JSON-based preset save/load
 - [x] MIDI input with live CC feedback display and CC learn
 - [x] Lock-free GUI ↔ Audio parameter sync
-- [x] Full CC mapping (35+ parameters)
 
 ## Roadmap
 
-- [x] ~~Polyphonic voice allocation~~ ✅ Done (8 voices)
-- [x] ~~Effects chain~~ ✅ Done (Delay, Reverb, Chorus)
-- [x] ~~Stereo output~~ ✅ Done (per-osc pan, width, stereo FX)
-- [x] ~~VST3/CLAP plugin export~~ ✅ Done (via nih-plug)
+- [x] ~~Polyphonic voice allocation~~
+- [x] ~~Effects chain~~ (Distortion, Chorus, Delay, Reverb)
+- [x] ~~Stereo output~~
+- [x] ~~VST3/CLAP plugin export~~
+- [x] ~~Modulation matrix, extra LFOs/envelopes, tempo sync~~
+- [x] ~~Additional filter types~~ (Ladder, Comb, HP/BP/Notch SVF taps)
+- [x] ~~Preset browser~~
+- [ ] Wire global-effect matrix destinations
 - [ ] Arpeggiator
-- [ ] Additional filter types (HP, BP, ladder)
-- [ ] Oscilloscope / waveform display
+- [ ] Oscilloscope / envelope visualizers
+- [ ] Standalone installers
 
 ## License
 

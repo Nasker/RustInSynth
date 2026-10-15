@@ -1,10 +1,10 @@
 # RustInSynth Development Plan
 
-## Current Version: v1.2.0
+## Current Version: v1.2.0 released; next release in progress (modulation matrix, new filters, distortion, tempo sync, preset browser)
 
 ## Roadmap (Ordered by Priority)
 
-### Phase 0: Standalone ↔ Plugin Parity (1:1) ⬅️ ACTIVE
+### Phase 0: Standalone ↔ Plugin Parity (1:1) ✅ DONE (manual DAW checklist pending)
 
 > Goal: the VST3/CLAP version must behave identically to the standalone.
 > Root causes found in audit (2026-08-03): divergent MIDI CC paths, three
@@ -124,10 +124,10 @@
   - Tempo sync
   - Octave range
 
-- [ ] **2.5 Additional Filter Types**
-  - Highpass, Bandpass modes
-  - 24dB/oct Ladder filter option
-  - Filter drive/saturation control
+- [x] **2.5 Additional Filter Types** ✅ DONE (see Phase 5)
+  - Highpass, Bandpass, Notch SVF modes
+  - 24dB/oct Ladder filter, Comb filter
+  - (Dedicated filter drive control not added; Ladder saturates internally)
 
 ### Phase 3: Visual Feedback (Nice to Have)
 - [ ] **3.1 Oscilloscope / Waveform Display**
@@ -167,6 +167,32 @@
   - Mouse + computer keyboard input
   - Visual feedback on note press
 
+### Phase 5: Modulation & Sound Engine Overhaul ✅ DONE (design in `docs/feature-roadmap.md`)
+
+Landed between 2026-10-12 and 2026-10-13. DAW testing of these features is still pending.
+
+- [x] **5.1 Modulation matrix** — `core/mod_matrix.rs`, 16 slots, per-voice offset accumulation, `dest_range()` table; ROUTING MATRIX tab (`panels::routing_grid`)
+- [x] **5.2 Extra modulators** — LFO 1-3 (per-LFO waveform/rate/depth/sync), Env 3 and Env 4 as matrix sources; legacy single-LFO destination mapped into a matrix slot
+- [x] **5.3 OSC 4 + audio-rate modulation** — 4th oscillator (silent by default) whose output is the `Osc4` source for FM / ring mod
+- [x] **5.4 Tempo sync** — BPM in `ModState`; standalone slider, plugin follows host transport; synced LFOs and delay
+- [x] **5.5 Filter types** — `FilterType { Svf, Ladder, Comb }`, SVF Notch tap, serial Filter 2 with its own modulation destinations
+- [x] **5.6 Distortion unit** — Tube / Fuzz / Bitcrush / Fold, first in the chain (Dist → Chorus → Delay → Reverb)
+- [x] **5.7 Preset format v2** — versioned envelope, v1 migration by `serde(default)`, `category` field, `ModState` fields
+- [x] **5.8 Preset browser + factory bank** — PRESETS tab with banks (Bass, Lead, Pad, Keys, Pluck, Seq, FX, User); ~75 factory presets via `factory_bank.rs`
+- [x] **5.9 Aftertouch** input as a matrix source
+- [x] **5.10 Plugin exposure** — new spec params (Filter 2, OSC 4, distortion, etc.) automatable; `ModState` shared via `PluginSharedState`
+
+### Next Up (open items from Phase 5)
+
+- [ ] **Wire global-effect matrix destinations** — Delay/Reverb/Chorus targets are selectable in the matrix but not applied by the DSP (`ModDest::is_wired` is false for them)
+- [ ] **Remaining destinations from the roadmap** — Osc phase/PM, DistortionDrive/Mix and Env3 attack/decay are not in `ModDest`
+- [ ] **Unbuilt modulator options** — Per-LFO phase offset, retrigger mode, unipolar switch, and Env 3 loop mode from the roadmap are not implemented
+- [ ] **Matrix automation** — amounts/routes are preset-only; consider exposing a few as host params or CC-learn targets
+- [ ] **Tap tempo** in the standalone top bar
+- [ ] **Preset browser extras** — rename/delete, tags/search, A/B compare, CLAP/VST3 program list
+- [ ] **Manual DAW pass** — verify new features in a host (parity checklist in Phase 0.7 + matrix, sync, filter 2, distortion)
+- [ ] **Release housekeeping** — bump `Cargo.toml` version, add a release entry, add a GUI screenshot to the README
+
 ---
 
 ## Implementation Notes
@@ -200,6 +226,9 @@ struct SynthApp {
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-10-13 | — | Factory bank expanded and refreshed (`factory_bank.rs`, ~75 presets); distortion unit, Filter 2, OSC 4, LFO/Env extensions, matrix destinations and preset format v2 polished; panels reorganised |
+| 2026-10-12 | — | Modulation matrix (16 slots, ROUTING MATRIX tab), LFO 1-3 and Env 3/4, tempo sync, Ladder/Comb filters, preset browser tab; `docs/feature-roadmap.md` written as the design doc. DAW test pending |
+| 2026-08-06 | v1.2.0 | Release: unified standalone/plugin GUI, docs updated |
 | 2026-08-03 | — | Audited standalone↔plugin parity; identified broken plugin envelope CC path, triple curve mismatch, duplicated defaults/scaling; wrote Phase 0 parity plan + GUI aesthetics backlog |
 | 2026-08-03 | — | Implemented Phase 0: `core/param_spec.rs` single spec table driving `ParamBank` + `RustInSynthParams`; shared curve-aware `param_slider` widget used by both GUIs; plugin CC path mirrors standalone (editor-open → CC queue → `ParamSetter`; editor-closed → direct apply + change-detecting `sync_plugin_params_safe`); CC scaling deduped into `param_spec::cc_to_plain` (used by DSP, standalone GUI feedback, and plugin editor); CC mapping persistence shared via `core::params`; automation gestures (`begin/end_param_change`) wired through the shared slider; dead `sync_plugin_params` deleted; editor 1500×550 + CPU meter + voice counts; parity tests in `plugin.rs` — 65 tests pass, standalone and plugin both compile |
 | 2026-06-04 | v1.0.1 | Fixed stereo separation with independent L/R filters, added comprehensive panning tests, fixed plugin sustain initialization, unified stereo parameters across standalone/plugin |
