@@ -9,8 +9,8 @@ use crate::core::params::{
     load_custom_cc_mappings, save_custom_cc_mappings, CCMapping, SynthParam,
 };
 use crate::core::voice::{ModState, PolyphonyMode};
-use crate::gui::SharedState;
 use crate::gui::backend::{CcMapping, MidiLearnState, SynthBackend};
+use crate::gui::SharedState;
 use crate::input::midi::MidiInputHandler;
 
 // ============================================================================
@@ -52,7 +52,11 @@ impl StandaloneBackend {
         };
 
         let midi_ports = MidiInputHandler::list_ports().unwrap_or_default();
-        let selected_midi_port = if !midi_ports.is_empty() { Some(0) } else { None };
+        let selected_midi_port = if !midi_ports.is_empty() {
+            Some(0)
+        } else {
+            None
+        };
         let midi_handler = MidiInputHandler::connect_auto().ok();
         if midi_handler.is_some() {
             println!("MIDI connected!");

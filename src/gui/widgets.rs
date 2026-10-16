@@ -3,11 +3,11 @@
 //! Provides skeuomorphic knobs, switches, and displays that match
 //! the vintage synthesizer aesthetic with Rust In Peace theming.
 
-use egui::*;
 use super::backend::SynthBackend;
 use super::theme::THEME;
 use crate::core::param_spec::{self, ParamSpec};
 use crate::core::params::SynthParam;
+use egui::*;
 
 /// Add a slider whose value numbers read in the artwork's gold, leaving the
 /// rest of the visuals alone: rails keep the deep radioactive interior and
@@ -75,7 +75,7 @@ pub fn param_slider(
 }
 
 /// A Minimoog-style rotary knob
-/// 
+///
 /// - Draggable vertically to change value
 /// - Visual arc shows current value
 /// - Tick marks at key positions
@@ -98,7 +98,7 @@ pub fn knob(
         *value = value.clamp(*range.start(), *range.end());
         response.mark_changed();
     }
-    
+
     // Handle click to start drag
     if response.is_pointer_button_down_on() {
         response = response.on_hover_cursor(CursorIcon::Grabbing);
@@ -124,7 +124,11 @@ pub fn knob(
     painter.circle_filled(center, radius * 0.22, THEME.toxic_green_light);
 
     // Outer ring (highlight when active)
-    painter.circle_stroke(center, radius, THEME.knob_stroke(response.hovered(), response.dragged()));
+    painter.circle_stroke(
+        center,
+        radius,
+        THEME.knob_stroke(response.hovered(), response.dragged()),
+    );
 
     // Arc indicator (value visualization)
     let start_angle = -150_f32.to_radians();
@@ -132,7 +136,14 @@ pub fn knob(
     let current_angle = start_angle + t * (end_angle - start_angle);
 
     // Draw arc using line segments (egui doesn't have native arc)
-    fn draw_arc(painter: &Painter, center: Pos2, radius: f32, start: f32, end: f32, stroke: Stroke) {
+    fn draw_arc(
+        painter: &Painter,
+        center: Pos2,
+        radius: f32,
+        start: f32,
+        end: f32,
+        stroke: Stroke,
+    ) {
         let segments = 20;
         let step = (end - start) / segments as f32;
         for i in 0..segments {
@@ -166,23 +177,26 @@ pub fn knob(
 
     // Indicator dot
     let dot_radius = radius * 0.6;
-    let dot_pos = center + vec2(
-        current_angle.cos() * dot_radius,
-        current_angle.sin() * dot_radius,
-    );
+    let dot_pos = center
+        + vec2(
+            current_angle.cos() * dot_radius,
+            current_angle.sin() * dot_radius,
+        );
     painter.circle_filled(dot_pos, 4.0, THEME.toxic_green_light);
 
     // Tick marks at 0%, 50%, 100%
     for tick_t in [0.0, 0.5, 1.0] {
         let tick_angle = start_angle + tick_t * (end_angle - start_angle);
-        let tick_start = center + vec2(
-            tick_angle.cos() * (radius + 3.0),
-            tick_angle.sin() * (radius + 3.0),
-        );
-        let tick_end = center + vec2(
-            tick_angle.cos() * (radius + 8.0),
-            tick_angle.sin() * (radius + 8.0),
-        );
+        let tick_start = center
+            + vec2(
+                tick_angle.cos() * (radius + 3.0),
+                tick_angle.sin() * (radius + 3.0),
+            );
+        let tick_end = center
+            + vec2(
+                tick_angle.cos() * (radius + 8.0),
+                tick_angle.sin() * (radius + 8.0),
+            );
         painter.line_segment([tick_start, tick_end], Stroke::new(2.0, THEME.steel_medium));
     }
 
@@ -242,7 +256,12 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
     // Background (switch track)
     let bg_color = THEME.toggle_switch(*value);
     painter.rect_filled(rect, egui::CornerRadius::same(4), bg_color);
-    painter.rect_stroke(rect, egui::CornerRadius::same(4), Stroke::new(2.0, THEME.steel_medium), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(4),
+        Stroke::new(2.0, THEME.steel_medium),
+        egui::StrokeKind::Inside,
+    );
 
     // Switch position
     let thumb_radius = 8.0;
@@ -259,7 +278,11 @@ pub fn toggle_switch(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
         THEME.steel_medium
     };
     painter.circle_filled(thumb_center, thumb_radius, thumb_color);
-    painter.circle_stroke(thumb_center, thumb_radius, Stroke::new(1.0, THEME.steel_dark));
+    painter.circle_stroke(
+        thumb_center,
+        thumb_radius,
+        Stroke::new(1.0, THEME.steel_dark),
+    );
 
     // Label
     painter.text(
@@ -286,16 +309,11 @@ pub fn selector_switch(
     let total_width = n as f32 * (button_width + spacing) - spacing;
     let height = 24.0;
 
-    let (rect, mut response) = ui.allocate_exact_size(
-        vec2(total_width, height + 20.0),
-        Sense::click(),
-    );
+    let (rect, mut response) =
+        ui.allocate_exact_size(vec2(total_width, height + 20.0), Sense::click());
 
     // Label
-    let label_rect = Rect::from_min_size(
-        rect.left_top(),
-        vec2(rect.width(), 20.0),
-    );
+    let label_rect = Rect::from_min_size(rect.left_top(), vec2(rect.width(), 20.0));
     ui.painter_at(label_rect).text(
         label_rect.center(),
         Align2::CENTER_CENTER,
@@ -312,7 +330,7 @@ pub fn selector_switch(
 
     ui.horizontal(|ui| {
         ui.set_clip_rect(button_rect);
-        
+
         let mut changed = false;
         let mut any_response: Option<Response> = None;
 
@@ -322,13 +340,11 @@ pub fn selector_switch(
             let button_pos = button_rect.left_top() + vec2(x_offset, 0.0);
             let button_area = Rect::from_min_size(button_pos, vec2(button_width, height));
 
-            let _text = RichText::new(*option)
-                .size(10.0)
-                .color(if is_selected {
-                    THEME.text_primary
-                } else {
-                    THEME.text_secondary
-                });
+            let _text = RichText::new(*option).size(10.0).color(if is_selected {
+                THEME.text_primary
+            } else {
+                THEME.text_secondary
+            });
 
             let button = ui.allocate_rect(button_area, Sense::click());
             let was_clicked = button.clicked();
@@ -395,7 +411,12 @@ pub fn vu_meter(ui: &mut Ui, level: f32, label: &str) {
 
     // Background
     painter.rect_filled(rect, egui::CornerRadius::same(2), THEME.steel_dark);
-    painter.rect_stroke(rect, egui::CornerRadius::same(2), Stroke::new(2.0, THEME.steel_medium), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(2),
+        Stroke::new(2.0, THEME.steel_medium),
+        egui::StrokeKind::Inside,
+    );
 
     // Level bar (from bottom up)
     let level = level.clamp(0.0, 1.0);
@@ -448,7 +469,7 @@ pub fn midi_indicator(ui: &mut Ui, _cc: u8, value: Option<u8>, name: &str) {
             RichText::new(value_text)
                 .size(10.0)
                 .monospace()
-                .color(THEME.text_secondary)
+                .color(THEME.text_secondary),
         );
     });
 }

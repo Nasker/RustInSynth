@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 
 use super::event::WaveformType;
-use super::types::{Frequency, Sample, SampleRate, Amplitude};
+use super::types::{Amplitude, Frequency, Sample, SampleRate};
 
 /// Trait for all oscillator types.
 /// Oscillators generate audio samples at a given frequency.
@@ -26,13 +26,16 @@ pub trait Oscillator: Send + Sync {
 
     /// Get current phase offset
     fn phase_offset(&self) -> f32;
+
+    /// Set pulse duty cycle (0.0 to 1.0). No-op for non-pulse waveforms.
+    fn set_duty_cycle(&mut self, _duty: f32) {}
 }
 
 /// Sine wave oscillator - the purest waveform
 pub struct SineOscillator {
     frequency: Frequency,
     phase: f32,
-    phase_offset: f32,  // 0.0 to 2π
+    phase_offset: f32, // 0.0 to 2π
     phase_increment: f32,
     sample_rate: SampleRate,
 }
@@ -96,7 +99,7 @@ impl Oscillator for SineOscillator {
 pub struct SquareOscillator {
     frequency: Frequency,
     phase: f32,
-    phase_offset: f32,  // 0.0 to 1.0
+    phase_offset: f32, // 0.0 to 1.0
     phase_increment: f32,
     sample_rate: SampleRate,
     duty_cycle: f32,
@@ -128,7 +131,11 @@ impl SquareOscillator {
 impl Oscillator for SquareOscillator {
     fn next_sample(&mut self) -> Sample {
         let effective_phase = (self.phase + self.phase_offset) % 1.0;
-        let sample = if effective_phase < self.duty_cycle { 1.0 } else { -1.0 };
+        let sample = if effective_phase < self.duty_cycle {
+            1.0
+        } else {
+            -1.0
+        };
         self.phase += self.phase_increment;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
@@ -161,13 +168,17 @@ impl Oscillator for SquareOscillator {
     fn phase_offset(&self) -> f32 {
         self.phase_offset
     }
+
+    fn set_duty_cycle(&mut self, duty: f32) {
+        SquareOscillator::set_duty_cycle(self, duty);
+    }
 }
 
 /// Sawtooth wave oscillator - all harmonics
 pub struct SawOscillator {
     frequency: Frequency,
     phase: f32,
-    phase_offset: f32,  // 0.0 to 1.0
+    phase_offset: f32, // 0.0 to 1.0
     phase_increment: f32,
     sample_rate: SampleRate,
 }
@@ -232,7 +243,7 @@ impl Oscillator for SawOscillator {
 pub struct TriangleOscillator {
     frequency: Frequency,
     phase: f32,
-    phase_offset: f32,  // 0.0 to 1.0
+    phase_offset: f32, // 0.0 to 1.0
     phase_increment: f32,
     sample_rate: SampleRate,
 }
@@ -300,7 +311,7 @@ impl Oscillator for TriangleOscillator {
 /// Noise oscillator - generates white noise
 /// Unlike other oscillators, frequency controls the "color" of noise (filter cutoff)
 pub struct NoiseOscillator {
-    frequency: Frequency,  // Used as filter cutoff for noise color
+    frequency: Frequency, // Used as filter cutoff for noise color
     sample_rate: SampleRate,
     phase_offset: f32,
     // Simple state for filtering (one-pole lowpass for pink noise option)
@@ -382,13 +393,18 @@ impl Oscillator for NoiseOscillator {
 }
 
 /// Factory function to create an oscillator from WaveformType
-pub fn create_oscillator(waveform: WaveformType, frequency: Frequency, sample_rate: SampleRate) -> Box<dyn Oscillator> {
+pub fn create_oscillator(
+    waveform: WaveformType,
+    frequency: Frequency,
+    sample_rate: SampleRate,
+) -> Box<dyn Oscillator> {
     match waveform {
         WaveformType::Sine => Box::new(SineOscillator::new(frequency, sample_rate)),
         WaveformType::Square => Box::new(SquareOscillator::new(frequency, sample_rate)),
         WaveformType::Saw => Box::new(SawOscillator::new(frequency, sample_rate)),
         WaveformType::Triangle => Box::new(TriangleOscillator::new(frequency, sample_rate)),
         WaveformType::Noise => Box::new(NoiseOscillator::new(frequency, sample_rate)),
+        WaveformType::Pulse => Box::new(SquareOscillator::new(frequency, sample_rate)),
     }
 }
 
@@ -405,14 +421,16 @@ pub fn detune_ratio(semitones: i8, cents: i8) -> f32 {
 pub struct OscillatorUnit {
     oscillator: Box<dyn Oscillator>,
     waveform: WaveformType,
-    semitones: i8,      // -24 to +24
-    cents: i8,          // -100 to +100
-    phase_offset: f32,  // 0.0 to 1.0
-    level: Amplitude,   // 0.0 to 1.0
+    semitones: i8,     // -24 to +24
+    cents: i8,         // -100 to +100
+    phase_offset: f32, // 0.0 to 1.0
+    level: Amplitude,  // 0.0 to 1.0
     /// Per-sample pitch modulation in semitones (mod matrix / FM).
     pitch_mod: f32,
     base_frequency: Frequency,
     sample_rate: SampleRate,
+    /// Pulse width base + modulation (0.0..=1.0, clamped by oscillator).
+    pulse_width: f32,
 }
 
 impl OscillatorUnit {
@@ -427,6 +445,7 @@ impl OscillatorUnit {
             pitch_mod: 0.0,
             base_frequency: 440.0,
             sample_rate,
+            pulse_width: 0.5,
         }
     }
 
@@ -509,13 +528,18 @@ impl OscillatorUnit {
 
     /// Update oscillator frequency based on base + detune + pitch mod
     fn update_frequency(&mut self) {
-        let ratio = detune_ratio(self.semitones, self.cents)
-            * 2.0_f32.powf(self.pitch_mod / 12.0);
+        let ratio = detune_ratio(self.semitones, self.cents) * 2.0_f32.powf(self.pitch_mod / 12.0);
         self.oscillator.set_frequency(self.base_frequency * ratio);
+    }
+
+    /// Set pulse width (0.0 to 1.0). Only affects pulse/square oscillators.
+    pub fn set_pulse_width(&mut self, width: f32) {
+        self.pulse_width = width.clamp(0.0, 1.0);
     }
 
     /// Generate next sample (with level applied)
     pub fn next_sample(&mut self) -> Sample {
+        self.oscillator.set_duty_cycle(self.pulse_width);
         self.oscillator.next_sample() * self.level
     }
 
@@ -548,8 +572,8 @@ pub struct OscillatorBank {
     osc3: OscillatorUnit,
     osc4: OscillatorUnit,
     base_frequency: Frequency,
-    pitch_bend: f32,        // -1.0 to +1.0
-    pitch_bend_range: u8,   // semitones (default 12 = 1 octave)
+    pitch_bend: f32,      // -1.0 to +1.0
+    pitch_bend_range: u8, // semitones (default 12 = 1 octave)
     sample_rate: SampleRate,
 }
 
@@ -707,6 +731,14 @@ impl OscillatorBank {
             _ => {}
         }
     }
+
+    /// Set pulse widths for all oscillators at once (per-sample modulation).
+    pub fn set_pulse_widths(&mut self, widths: [f32; 4]) {
+        self.osc1.set_pulse_width(widths[0]);
+        self.osc2.set_pulse_width(widths[1]);
+        self.osc3.set_pulse_width(widths[2]);
+        self.osc4.set_pulse_width(widths[3]);
+    }
 }
 
 impl OscillatorBank {
@@ -805,7 +837,11 @@ mod synth_plot_tests {
                 let event_sample = (events[event_index].0 * sample_rate as f32) as usize;
                 if event_sample == sample {
                     let is_on = events[event_index].1;
-                    if is_on { env.trigger(); } else { env.release(); }
+                    if is_on {
+                        env.trigger();
+                    } else {
+                        env.release();
+                    }
                     event_markers.push((sample, is_on));
                     event_index += 1;
                 } else {
@@ -849,46 +885,72 @@ mod synth_plot_tests {
                 .build_cartesian_2d(0.0f32..duration, -1.1f32..1.1f32)
                 .unwrap();
 
-            chart.configure_mesh().x_desc("Time (s)").y_desc("Amplitude").draw().unwrap();
+            chart
+                .configure_mesh()
+                .x_desc("Time (s)")
+                .y_desc("Amplitude")
+                .draw()
+                .unwrap();
 
             // Audio waveform
-            chart.draw_series(LineSeries::new(
-                audio.iter().enumerate().step_by(subsample)
-                    .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
-                BLUE.mix(0.5),
-            )).unwrap()
+            chart
+                .draw_series(LineSeries::new(
+                    audio
+                        .iter()
+                        .enumerate()
+                        .step_by(subsample)
+                        .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
+                    BLUE.mix(0.5),
+                ))
+                .unwrap()
                 .label("Sine * Envelope")
                 .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
 
             // Envelope upper bound
-            chart.draw_series(LineSeries::new(
-                envelope.iter().enumerate().step_by(subsample)
-                    .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
-                RED.stroke_width(2),
-            )).unwrap()
+            chart
+                .draw_series(LineSeries::new(
+                    envelope
+                        .iter()
+                        .enumerate()
+                        .step_by(subsample)
+                        .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
+                    RED.stroke_width(2),
+                ))
+                .unwrap()
                 .label("Envelope")
                 .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
 
             // Envelope lower bound (mirror)
-            chart.draw_series(LineSeries::new(
-                envelope.iter().enumerate().step_by(subsample)
-                    .map(|(i, &e)| (i as f32 / sample_rate as f32, -e)),
-                RED.stroke_width(2),
-            )).unwrap();
+            chart
+                .draw_series(LineSeries::new(
+                    envelope
+                        .iter()
+                        .enumerate()
+                        .step_by(subsample)
+                        .map(|(i, &e)| (i as f32 / sample_rate as f32, -e)),
+                    RED.stroke_width(2),
+                ))
+                .unwrap();
 
             // Note on/off markers
             for (idx, is_on) in events {
                 let x = *idx as f32 / sample_rate as f32;
                 let color = if *is_on { GREEN } else { RED };
-                chart.draw_series(std::iter::once(
-                    TriangleMarker::new((x, 1.05), 10, color.filled())
-                )).unwrap();
+                chart
+                    .draw_series(std::iter::once(TriangleMarker::new(
+                        (x, 1.05),
+                        10,
+                        color.filled(),
+                    )))
+                    .unwrap();
             }
 
-            chart.configure_series_labels()
+            chart
+                .configure_series_labels()
                 .background_style(WHITE.mix(0.8))
                 .border_style(BLACK)
-                .draw().unwrap();
+                .draw()
+                .unwrap();
 
             // --- BOTTOM PANEL: zoomed attack (first 200ms) ---
             let zoom_samples = ((sample_rate as f32 * 0.2) as usize).min(audio.len());
@@ -902,39 +964,59 @@ mod synth_plot_tests {
                 .build_cartesian_2d(0.0f32..zoom_dur, -1.1f32..1.1f32)
                 .unwrap();
 
-            chart2.configure_mesh().x_desc("Time (s)").y_desc("Amplitude").draw().unwrap();
+            chart2
+                .configure_mesh()
+                .x_desc("Time (s)")
+                .y_desc("Amplitude")
+                .draw()
+                .unwrap();
 
-            chart2.draw_series(LineSeries::new(
-                audio[..zoom_samples].iter().enumerate()
-                    .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
-                BLUE.mix(0.6),
-            )).unwrap();
+            chart2
+                .draw_series(LineSeries::new(
+                    audio[..zoom_samples]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
+                    BLUE.mix(0.6),
+                ))
+                .unwrap();
 
-            chart2.draw_series(LineSeries::new(
-                envelope[..zoom_samples].iter().enumerate()
-                    .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
-                &RED,
-            )).unwrap();
+            chart2
+                .draw_series(LineSeries::new(
+                    envelope[..zoom_samples]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
+                    &RED,
+                ))
+                .unwrap();
 
-            chart2.draw_series(LineSeries::new(
-                envelope[..zoom_samples].iter().enumerate()
-                    .map(|(i, &e)| (i as f32 / sample_rate as f32, -e)),
-                &RED,
-            )).unwrap();
+            chart2
+                .draw_series(LineSeries::new(
+                    envelope[..zoom_samples]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &e)| (i as f32 / sample_rate as f32, -e)),
+                    &RED,
+                ))
+                .unwrap();
 
             root.present().unwrap();
         }
         println!("Saved: {}", path.display());
     }
 
-    fn check_waveform_continuity(audio: &[f32], events: &[(usize, bool)]) -> Vec<(usize, f32, f32)> {
+    fn check_waveform_continuity(
+        audio: &[f32],
+        events: &[(usize, bool)],
+    ) -> Vec<(usize, f32, f32)> {
         let mut jumps = Vec::new();
         for i in 1..audio.len() {
             let delta = (audio[i] - audio[i - 1]).abs();
             // Flag only at event boundaries — these are the most likely click sources
-            let near_event = events.iter().any(|(idx, _)| {
-                (*idx as isize - i as isize).abs() <= 5
-            });
+            let near_event = events
+                .iter()
+                .any(|(idx, _)| (*idx as isize - i as isize).abs() <= 5);
             if near_event && delta > 0.1 {
                 jumps.push((i, audio[i - 1], audio[i]));
             }
@@ -950,16 +1032,24 @@ mod synth_plot_tests {
         let mut env = ADSREnvelope::new(0.1, 0.2, 0.7, 0.3, sample_rate);
 
         let events = vec![(0.0, true), (1.0, false)];
-        let (audio, envelope, markers) =
-            synthesize(&mut osc, &mut env, &events, 1.8, sample_rate);
+        let (audio, envelope, markers) = synthesize(&mut osc, &mut env, &events, 1.8, sample_rate);
 
-        plot_synth_output(&audio, &envelope, &markers, sample_rate,
-            "test_synth_sine_adsr_simple.png", "Sine + ADSR Envelope (440 Hz)");
+        plot_synth_output(
+            &audio,
+            &envelope,
+            &markers,
+            sample_rate,
+            "test_synth_sine_adsr_simple.png",
+            "Sine + ADSR Envelope (440 Hz)",
+        );
 
         let jumps = check_waveform_continuity(&audio, &markers);
-        assert!(jumps.is_empty(),
+        assert!(
+            jumps.is_empty(),
             "Detected {} amplitude jumps near note events (potential clicks):\n{:?}",
-            jumps.len(), jumps);
+            jumps.len(),
+            jumps
+        );
     }
 
     /// Fast attack (1 ms) — checks for onset click
@@ -970,15 +1060,24 @@ mod synth_plot_tests {
         let mut env = ADSREnvelope::new(0.001, 0.1, 0.6, 0.2, sample_rate);
 
         let events = vec![(0.0, true), (0.5, false)];
-        let (audio, envelope, markers) =
-            synthesize(&mut osc, &mut env, &events, 0.9, sample_rate);
+        let (audio, envelope, markers) = synthesize(&mut osc, &mut env, &events, 0.9, sample_rate);
 
-        plot_synth_output(&audio, &envelope, &markers, sample_rate,
-            "test_synth_sine_fast_attack.png", "Sine + ADSR — Fast Attack (1 ms)");
+        plot_synth_output(
+            &audio,
+            &envelope,
+            &markers,
+            sample_rate,
+            "test_synth_sine_fast_attack.png",
+            "Sine + ADSR — Fast Attack (1 ms)",
+        );
 
         let jumps = check_waveform_continuity(&audio, &markers);
-        assert!(jumps.is_empty(),
-            "Fast attack caused {} click-like jumps:\n{:?}", jumps.len(), jumps);
+        assert!(
+            jumps.is_empty(),
+            "Fast attack caused {} click-like jumps:\n{:?}",
+            jumps.len(),
+            jumps
+        );
     }
 
     /// Re-trigger during release — the most common source of clicks
@@ -992,14 +1091,19 @@ mod synth_plot_tests {
         let events = vec![
             (0.0, true),
             (0.3, false),
-            (0.45, true),  // re-trigger mid-release
+            (0.45, true), // re-trigger mid-release
             (0.9, false),
         ];
-        let (audio, envelope, markers) =
-            synthesize(&mut osc, &mut env, &events, 1.4, sample_rate);
+        let (audio, envelope, markers) = synthesize(&mut osc, &mut env, &events, 1.4, sample_rate);
 
-        plot_synth_output(&audio, &envelope, &markers, sample_rate,
-            "test_synth_sine_retrigger.png", "Sine + ADSR — Re-trigger During Release");
+        plot_synth_output(
+            &audio,
+            &envelope,
+            &markers,
+            sample_rate,
+            "test_synth_sine_retrigger.png",
+            "Sine + ADSR — Re-trigger During Release",
+        );
 
         println!("\n=== RETRIGGER CLICK ANALYSIS ===");
         let jumps = check_waveform_continuity(&audio, &markers);
@@ -1008,12 +1112,22 @@ mod synth_plot_tests {
         } else {
             for (idx, prev, curr) in &jumps {
                 let t = *idx as f32 / sample_rate as f32;
-                println!("  ⚠ Click at {:.4}s: {:.4} -> {:.4} (Δ={:.4})", t, prev, curr, (curr - prev).abs());
+                println!(
+                    "  ⚠ Click at {:.4}s: {:.4} -> {:.4} (Δ={:.4})",
+                    t,
+                    prev,
+                    curr,
+                    (curr - prev).abs()
+                );
             }
         }
 
-        assert!(jumps.is_empty(),
-            "Re-trigger caused {} click-like jumps:\n{:?}", jumps.len(), jumps);
+        assert!(
+            jumps.is_empty(),
+            "Re-trigger caused {} click-like jumps:\n{:?}",
+            jumps.len(),
+            jumps
+        );
     }
 
     /// AR envelope on a sine — compare with ADSR
@@ -1027,16 +1141,28 @@ mod synth_plot_tests {
         let mut ar = AREnvelope::new(0.1, 0.3, sample_rate);
         let (ar_audio, ar_env, ar_markers) =
             synthesize(&mut osc_ar, &mut ar, &events, 1.2, sample_rate);
-        plot_synth_output(&ar_audio, &ar_env, &ar_markers, sample_rate,
-            "test_synth_sine_ar.png", "Sine + AR Envelope (440 Hz)");
+        plot_synth_output(
+            &ar_audio,
+            &ar_env,
+            &ar_markers,
+            sample_rate,
+            "test_synth_sine_ar.png",
+            "Sine + AR Envelope (440 Hz)",
+        );
 
         // ADSR
         let mut osc_adsr = SineOscillator::new(440.0, sample_rate);
         let mut adsr = ADSREnvelope::new(0.1, 0.15, 0.7, 0.3, sample_rate);
         let (adsr_audio, adsr_env, adsr_markers) =
             synthesize(&mut osc_adsr, &mut adsr, &events, 1.2, sample_rate);
-        plot_synth_output(&adsr_audio, &adsr_env, &adsr_markers, sample_rate,
-            "test_synth_sine_adsr.png", "Sine + ADSR Envelope (440 Hz)");
+        plot_synth_output(
+            &adsr_audio,
+            &adsr_env,
+            &adsr_markers,
+            sample_rate,
+            "test_synth_sine_adsr.png",
+            "Sine + ADSR Envelope (440 Hz)",
+        );
 
         println!("AR plot and ADSR plot both saved.");
     }
@@ -1077,18 +1203,18 @@ mod tests {
     #[test]
     fn test_oscillator_bank() {
         let mut bank = OscillatorBank::new(44100);
-        
+
         // Set different waveforms
         bank.set_waveform(1, WaveformType::Saw);
         bank.set_waveform(2, WaveformType::Square);
         bank.set_waveform(3, WaveformType::Sine);
-        
+
         // Detune osc 2 and 3
-        bank.set_detune(2, 0, 10);   // +10 cents
-        bank.set_detune(3, -12, 0);  // -1 octave
-        
+        bank.set_detune(2, 0, 10); // +10 cents
+        bank.set_detune(3, -12, 0); // -1 octave
+
         bank.set_frequency(440.0);
-        
+
         // Generate samples - should be in valid range
         for _ in 0..1000 {
             let sample = bank.next_sample();

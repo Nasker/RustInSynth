@@ -73,8 +73,7 @@ pub fn create_editor(
         |_ctx, _queue, _state| {},
         move |ui, setter, _queue, state| {
             // Build a fresh backend for this frame (just Arc clones + a ref)
-            let mut backend =
-                PluginBackend::new(Arc::clone(&params), setter, state.shared.clone());
+            let mut backend = PluginBackend::new(Arc::clone(&params), setter, state.shared.clone());
 
             // Drain queued MIDI CCs: apply each through the backend (ParamSetter)
             // exactly like a GUI edit — host automation, GUI feedback and DSP

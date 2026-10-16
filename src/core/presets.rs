@@ -50,6 +50,16 @@ pub struct Preset {
     #[serde(default)]
     pub osc4_phase: f32,
 
+    // Pulse widths (Pulse waveform only; 0.5 keeps old presets unchanged)
+    #[serde(default = "default_pw")]
+    pub osc1_pw: f32,
+    #[serde(default = "default_pw")]
+    pub osc2_pw: f32,
+    #[serde(default = "default_pw")]
+    pub osc3_pw: f32,
+    #[serde(default = "default_pw")]
+    pub osc4_pw: f32,
+
     // Filter settings
     pub filter_cutoff: f32,
     pub filter_resonance: f32,
@@ -231,6 +241,12 @@ impl Default for Preset {
             osc4_cents: 0,
             osc4_phase: 0.0,
 
+            // Pulse widths (50% = plain square)
+            osc1_pw: 0.5,
+            osc2_pw: 0.5,
+            osc3_pw: 0.5,
+            osc4_pw: 0.5,
+
             // Filter wide open
             filter_cutoff: 20000.0,
             filter_resonance: 0.0,
@@ -349,16 +365,15 @@ impl PresetFile {
 /// v2 envelope (`{"format_version": 2, "preset": {...}}`) or v1 bare Preset.
 fn parse_preset_json(json: &str) -> Result<Preset, PresetError> {
     // Peek at whether the document has a "preset" field (v2 envelope).
-    let value: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| PresetError::Deserialization(e.to_string()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| PresetError::Deserialization(e.to_string()))?;
     if value.get("preset").is_some() {
         let file: PresetFile = serde_json::from_value(value)
             .map_err(|e| PresetError::Deserialization(e.to_string()))?;
         Ok(file.preset)
     } else {
         // v1: bare Preset document — serde(default) fills fields added later.
-        serde_json::from_value(value)
-            .map_err(|e| PresetError::Deserialization(e.to_string()))
+        serde_json::from_value(value).map_err(|e| PresetError::Deserialization(e.to_string()))
     }
 }
 
@@ -376,15 +391,13 @@ impl Preset {
         let file = PresetFile::new(self.clone());
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| PresetError::Serialization(e.to_string()))?;
-        fs::write(path, json)
-            .map_err(|e| PresetError::Io(e.to_string()))?;
+        fs::write(path, json).map_err(|e| PresetError::Io(e.to_string()))?;
         Ok(())
     }
 
     /// Load preset from a JSON file (accepts v1 bare and v2 envelope files)
     pub fn load_from_file(path: &Path) -> Result<Self, PresetError> {
-        let json = fs::read_to_string(path)
-            .map_err(|e| PresetError::Io(e.to_string()))?;
+        let json = fs::read_to_string(path).map_err(|e| PresetError::Io(e.to_string()))?;
         Self::from_json(&json)
     }
 
@@ -441,6 +454,10 @@ fn default_filter2_cutoff() -> f32 {
     20000.0
 }
 
+fn default_pw() -> f32 {
+    0.5
+}
+
 pub fn default_presets_dir() -> std::path::PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
@@ -464,9 +481,10 @@ pub fn list_presets() -> Result<Vec<String>, PresetError> {
     let mut presets = Vec::new();
 
     for entry in fs::read_dir(&dir)
-        .map_err(|e| PresetError::Io(format!("Failed to read presets dir: {}", e)))? {
-        let entry = entry
-            .map_err(|e| PresetError::Io(format!("Failed to read directory entry: {}", e)))?;
+        .map_err(|e| PresetError::Io(format!("Failed to read presets dir: {}", e)))?
+    {
+        let entry =
+            entry.map_err(|e| PresetError::Io(format!("Failed to read directory entry: {}", e)))?;
         let path = entry.path();
         if path.extension().map_or(false, |ext| ext == "json") {
             if let Some(stem) = path.file_stem() {
@@ -504,7 +522,9 @@ pub fn list_library() -> Vec<PresetEntry> {
             let category = default_presets_dir()
                 .join(format!("{}.json", name))
                 .exists()
-                .then(|| Preset::load_from_file(&default_presets_dir().join(format!("{}.json", name))))
+                .then(|| {
+                    Preset::load_from_file(&default_presets_dir().join(format!("{}.json", name)))
+                })
                 .and_then(|r| r.ok())
                 .map(|p| p.category)
                 .filter(|c| !c.is_empty() && c != "Uncategorized")
@@ -644,7 +664,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.6,
             ..Default::default()
         },
-
         // Bright lead with portamento
         Preset {
             name: "Glide Lead".to_string(),
@@ -705,7 +724,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.5,
             ..Default::default()
         },
-
         // Lush pad with slow attack
         Preset {
             name: "Warm Pad".to_string(),
@@ -766,7 +784,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.45,
             ..Default::default()
         },
-
         // Punchy pluck
         Preset {
             name: "Pluck".to_string(),
@@ -827,7 +844,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.5,
             ..Default::default()
         },
-
         // Noise sweep FX
         Preset {
             name: "Sweep FX".to_string(),
@@ -888,7 +904,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.4,
             ..Default::default()
         },
-
         // Classic Minimoog-style bass
         Preset {
             name: "Moog Bass".to_string(),
@@ -949,7 +964,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.55,
             ..Default::default()
         },
-
         // Wobble bass (dubstep style)
         Preset {
             name: "Wobble".to_string(),
@@ -1010,7 +1024,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.5,
             ..Default::default()
         },
-
         // Soft keys / electric piano style
         Preset {
             name: "Soft Keys".to_string(),
@@ -1071,7 +1084,6 @@ fn original_factory_presets() -> Vec<Preset> {
             master_volume: 0.5,
             ..Default::default()
         },
-
         // Wide stereo pad - lush and spacious with full stereo spread
         Preset {
             name: "Wide Pad".to_string(),
@@ -1152,7 +1164,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.35,
             ..Default::default()
         },
-
         // Polyphonic keys - electric piano style with chorus and delay
         Preset {
             name: "Digital Keys".to_string(),
@@ -1233,7 +1244,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.45,
             ..Default::default()
         },
-
         // Space drone - ambient and evolving with heavy reverb
         Preset {
             name: "Space Drone".to_string(),
@@ -1314,7 +1324,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.5,
             ..Default::default()
         },
-
         // Pumping bass - mono with chorus for thickness
         Preset {
             name: "Pumping Bass".to_string(),
@@ -1395,7 +1404,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.25,
             ..Default::default()
         },
-
         // Ethereal bells - uses delay and stereo width for shimmer
         Preset {
             name: "Shimmer Bells".to_string(),
@@ -1476,7 +1484,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.0,
             ..Default::default()
         },
-
         // Acid line - classic TB-303 style with portamento
         Preset {
             name: "Acid Line".to_string(),
@@ -1557,7 +1564,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.0,
             ..Default::default()
         },
-
         // Dream sequence - arpeggio-friendly with delay and chorus
         Preset {
             name: "Dream Seq".to_string(),
@@ -1638,7 +1644,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.4,
             ..Default::default()
         },
-
         // ── Matrix showcase bank ────────────────────────────────────────────
         // These presets route LFO2/LFO3/Env3/mod-wheel through the modulation
         // matrix, demonstrating tempo sync, mod-on-mod, and the new filters.
@@ -1728,7 +1733,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.0,
             ..Default::default()
         },
-
         // Velocity Lead: velocity opens the ladder filter and the mod wheel
         // adds LFO2 vibrato — expressive, playable matrix routing.
         Preset {
@@ -1814,7 +1818,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.0,
             ..Default::default()
         },
-
         // Pulse Gate Pad: Env3 gates the amplitude while synced LFOs drift the
         // cutoff and widen the stereo field.
         Preset {
@@ -1900,7 +1903,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.3,
             ..Default::default()
         },
-
         // Riser: LFO3 ramps pitch up while mod-on-mod speeds LFO2's cutoff
         // sweep — a classic build-up transition.
         Preset {
@@ -1986,7 +1988,6 @@ fn original_factory_presets() -> Vec<Preset> {
             chorus_mix: 0.0,
             ..Default::default()
         },
-
         // Aftertouch Keys: soft keys that open up with aftertouch — a per-voice
         // destination that only the matrix can express.
         Preset {
@@ -2084,8 +2085,8 @@ pub fn install_factory_presets() -> Result<usize, PresetError> {
 
     for preset in factory_presets() {
         let path = dir.join(format!("{}.json", preset.name));
-        let up_to_date = path.exists()
-            && Preset::load_from_file(&path).map_or(false, |p| p == preset);
+        let up_to_date =
+            path.exists() && Preset::load_from_file(&path).map_or(false, |p| p == preset);
         if !up_to_date {
             preset.save_to_file(&path)?;
             written += 1;

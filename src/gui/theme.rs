@@ -11,94 +11,94 @@ use egui::{Color32, Stroke};
 /// Rust In Peace inspired color palette
 pub struct Theme {
     // Background blue from Rust In Peace artwork
-    pub bg_blue: Color32,          // Deep blue background
-    pub bg_blue_light: Color32,    // Lighter blue for panels
-    
+    pub bg_blue: Color32,       // Deep blue background
+    pub bg_blue_light: Color32, // Lighter blue for panels
+
     // Megadeth logo text color (reddish-orange)
-    pub logo_red: Color32,         // Logo text color
-    pub logo_red_dark: Color32,    // Darker logo text
-    pub logo_red_light: Color32,   // Lighter logo accent
+    pub logo_red: Color32,       // Logo text color
+    pub logo_red_dark: Color32,  // Darker logo text
+    pub logo_red_light: Color32, // Lighter logo accent
 
     // Chrome silver of the Megadeth logo lettering
-    pub chrome: Color32,           // Silver body, cooled by the hangar's blue light
-    pub chrome_light: Color32,     // Top edge highlight
-    pub chrome_shadow: Color32,    // Lower edge shadow
+    pub chrome: Color32,        // Silver body, cooled by the hangar's blue light
+    pub chrome_light: Color32,  // Top edge highlight
+    pub chrome_shadow: Color32, // Lower edge shadow
 
     // Rust from the cryogenic pod's corroded panels (used sparingly)
-    pub rust: Color32,             // Oxidized orange-brown
-    
+    pub rust: Color32, // Oxidized orange-brown
+
     // Goldish color from artwork
-    pub gold: Color32,             // Gold accents
-    pub gold_dark: Color32,        // Darker gold
-    pub gold_light: Color32,       // Lighter gold highlight
-    
+    pub gold: Color32,       // Gold accents
+    pub gold_dark: Color32,  // Darker gold
+    pub gold_light: Color32, // Lighter gold highlight
+
     // Radioactive green for knobs/sliders
-    pub toxic_green: Color32,      // Radioactive green
-    pub toxic_green_dark: Color32, // Darker toxic
-    pub toxic_green_light: Color32,// Lighter toxic
-    pub toxic_green_deep: Color32, // Deep interior behind the glow
-    
+    pub toxic_green: Color32,       // Radioactive green
+    pub toxic_green_dark: Color32,  // Darker toxic
+    pub toxic_green_light: Color32, // Lighter toxic
+    pub toxic_green_deep: Color32,  // Deep interior behind the glow
+
     // Supporting grays (subtle, not dominant)
-    pub steel_dark: Color32,       // Dark steel for borders
-    pub steel_medium: Color32,     // Medium steel
-    pub steel_light: Color32,      // Light steel highlights
-    
+    pub steel_dark: Color32,   // Dark steel for borders
+    pub steel_medium: Color32, // Medium steel
+    pub steel_light: Color32,  // Light steel highlights
+
     // Text colors - using logo red hierarchy
-    pub text_primary: Color32,     // Main text (logo red)
-    pub text_secondary: Color32,   // Secondary text
-    pub text_dim: Color32,         // Dimmed text
-    
+    pub text_primary: Color32,   // Main text (logo red)
+    pub text_secondary: Color32, // Secondary text
+    pub text_dim: Color32,       // Dimmed text
+
     // Panel colors - using blue from artwork
-    pub panel_bg: Color32,         // Panel background
-    pub panel_border: Color32,     // Panel borders
-    pub panel_shadow: Color32,     // Panel shadows
+    pub panel_bg: Color32,     // Panel background
+    pub panel_border: Color32, // Panel borders
+    pub panel_shadow: Color32, // Panel shadows
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self {
             // Background blue from Rust In Peace artwork
-            bg_blue: Color32::from_rgb(15, 25, 45),          // Deep blue background
-            bg_blue_light: Color32::from_rgb(25, 35, 55),    // Lighter blue for panels
-            
+            bg_blue: Color32::from_rgb(15, 25, 45), // Deep blue background
+            bg_blue_light: Color32::from_rgb(25, 35, 55), // Lighter blue for panels
+
             // Megadeth logo text color (reddish-orange)
-            logo_red: Color32::from_rgb(220, 60, 20),        // Logo text color
-            logo_red_dark: Color32::from_rgb(160, 40, 10),   // Darker logo text
+            logo_red: Color32::from_rgb(220, 60, 20), // Logo text color
+            logo_red_dark: Color32::from_rgb(160, 40, 10), // Darker logo text
             logo_red_light: Color32::from_rgb(255, 100, 50), // Lighter logo accent
 
             // Chrome silver of the Megadeth logo lettering
-            chrome: Color32::from_rgb(198, 208, 222),        // Silver body
-            chrome_light: Color32::from_rgb(236, 242, 250),  // Top edge highlight
-            chrome_shadow: Color32::from_rgb(24, 32, 48),    // Lower edge shadow
+            chrome: Color32::from_rgb(198, 208, 222), // Silver body
+            chrome_light: Color32::from_rgb(236, 242, 250), // Top edge highlight
+            chrome_shadow: Color32::from_rgb(24, 32, 48), // Lower edge shadow
 
             // Rust from the cryogenic pod's corroded panels
-            rust: Color32::from_rgb(150, 66, 24),            // Oxidized orange-brown
-            
+            rust: Color32::from_rgb(150, 66, 24), // Oxidized orange-brown
+
             // Goldish color from artwork
-            gold: Color32::from_rgb(255, 180, 40),            // Gold accents
-            gold_dark: Color32::from_rgb(200, 140, 20),      // Darker gold
-            gold_light: Color32::from_rgb(255, 200, 80),     // Lighter gold highlight
-            
+            gold: Color32::from_rgb(255, 180, 40), // Gold accents
+            gold_dark: Color32::from_rgb(200, 140, 20), // Darker gold
+            gold_light: Color32::from_rgb(255, 200, 80), // Lighter gold highlight
+
             // Radioactive green for knobs/sliders
-            toxic_green: Color32::from_rgb(40, 255, 80),     // Radioactive green
+            toxic_green: Color32::from_rgb(40, 255, 80), // Radioactive green
             toxic_green_dark: Color32::from_rgb(20, 180, 50), // Darker toxic
             toxic_green_light: Color32::from_rgb(100, 255, 120), // Lighter toxic
-            toxic_green_deep: Color32::from_rgb(6, 46, 16),  // Deep interior behind the glow
-            
+            toxic_green_deep: Color32::from_rgb(6, 46, 16), // Deep interior behind the glow
+
             // Supporting grays (subtle, not dominant)
-            steel_dark: Color32::from_rgb(35, 35, 40),       // Dark steel for borders
-            steel_medium: Color32::from_rgb(50, 50, 55),     // Medium steel
-            steel_light: Color32::from_rgb(70, 70, 75),      // Light steel highlights
-            
+            steel_dark: Color32::from_rgb(35, 35, 40), // Dark steel for borders
+            steel_medium: Color32::from_rgb(50, 50, 55), // Medium steel
+            steel_light: Color32::from_rgb(70, 70, 75), // Light steel highlights
+
             // Text colors - using logo red hierarchy
-            text_primary: Color32::from_rgb(220, 60, 20),    // Main text (logo red)
-            text_secondary: Color32::from_rgb(160, 40, 10),   // Secondary text
-            text_dim: Color32::from_rgb(100, 30, 5),        // Dimmed text
-            
+            text_primary: Color32::from_rgb(220, 60, 20), // Main text (logo red)
+            text_secondary: Color32::from_rgb(160, 40, 10), // Secondary text
+            text_dim: Color32::from_rgb(100, 30, 5),      // Dimmed text
+
             // Panel colors - using blue from artwork
-            panel_bg: Color32::from_rgb(25, 35, 55),         // Panel background
-            panel_border: Color32::from_rgb(35, 45, 65),     // Panel borders
-            panel_shadow: Color32::from_rgb(10, 20, 35),     // Panel shadows
+            panel_bg: Color32::from_rgb(25, 35, 55), // Panel background
+            panel_border: Color32::from_rgb(35, 45, 65), // Panel borders
+            panel_shadow: Color32::from_rgb(10, 20, 35), // Panel shadows
         }
     }
 }
@@ -115,17 +115,17 @@ impl Theme {
         };
         Stroke::new(2.0, color)
     }
-    
+
     /// Get value indicator color for knobs (radioactive green)
     pub fn knob_value_color(&self) -> Color32 {
         self.toxic_green
     }
-    
+
     /// Get panel background with subtle gradient effect
     pub fn panel_gradient_top(&self) -> Color32 {
         self.panel_bg
     }
-    
+
     pub fn panel_gradient_bottom(&self) -> Color32 {
         Color32::from_rgb(
             self.panel_bg.r() - 10,
@@ -133,12 +133,12 @@ impl Theme {
             self.panel_bg.b() - 10,
         )
     }
-    
+
     /// Get section header color (logo red)
     pub fn section_header(&self) -> Color32 {
         self.logo_red
     }
-    
+
     /// Get MIDI activity color (gold when active)
     pub fn midi_activity(&self, active: bool) -> Color32 {
         if active {
@@ -147,7 +147,7 @@ impl Theme {
             self.steel_dark
         }
     }
-    
+
     /// Get button colors based on state
     pub fn button_colors(&self, hovered: bool, active: bool) -> (Color32, Color32) {
         if active {
@@ -158,7 +158,7 @@ impl Theme {
             (self.steel_dark, self.text_secondary)
         }
     }
-    
+
     /// Get toggle switch colors (toxic green when on)
     pub fn toggle_switch(&self, on: bool) -> Color32 {
         if on {
@@ -167,7 +167,7 @@ impl Theme {
             self.steel_dark
         }
     }
-    
+
     /// Get VU meter colors (toxic green to gold to logo red)
     pub fn vu_meter_color(&self, level: f32) -> Color32 {
         if level < 0.6 {
@@ -201,7 +201,7 @@ pub static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(Theme::d
 /// Helper functions for themed UI elements
 pub fn panel_background(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     let theme = &THEME;
-    
+
     egui::Frame::new()
         .fill(theme.panel_bg)
         .inner_margin(egui::Margin::symmetric(12, 8))
@@ -222,7 +222,7 @@ pub fn section_header(ui: &mut egui::Ui, title: &str) {
         egui::RichText::new(title)
             .color(THEME.section_header())
             .size(12.0)
-            .strong()
+            .strong(),
     );
 }
 
@@ -281,7 +281,11 @@ pub fn paint_chrome_title(
 
     // Gold rule under the logo
     let y = pos.y + dims.y + 2.0;
-    painter.hline(egui::Rangef::new(pos.x, pos.x + dims.x), y, Stroke::new(1.0, THEME.gold_dark));
+    painter.hline(
+        egui::Rangef::new(pos.x, pos.x + dims.x),
+        y,
+        Stroke::new(1.0, THEME.gold_dark),
+    );
 }
 
 /// A label with wide letter tracking, like the spaced capitals under the
@@ -346,8 +350,10 @@ pub fn hangar_background(painter: &egui::Painter, rect: egui::Rect) {
         egui::pos2(rect.left(), rect.bottom() - band_h),
         rect.right_bottom(),
     );
-    let fade_in = Color32::from_rgba_unmultiplied(THEME.rust.r(), THEME.rust.g(), THEME.rust.b(), 0);
-    let rust_low = Color32::from_rgba_unmultiplied(THEME.rust.r(), THEME.rust.g(), THEME.rust.b(), 20);
+    let fade_in =
+        Color32::from_rgba_unmultiplied(THEME.rust.r(), THEME.rust.g(), THEME.rust.b(), 0);
+    let rust_low =
+        Color32::from_rgba_unmultiplied(THEME.rust.r(), THEME.rust.g(), THEME.rust.b(), 20);
     let mut mesh = egui::Mesh::default();
     for (pos, color) in [
         (band.left_top(), fade_in),

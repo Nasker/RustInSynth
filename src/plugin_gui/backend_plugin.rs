@@ -20,51 +20,202 @@ use crate::plugin_gui::shared_state::PluginSharedState;
 macro_rules! with_nih_param {
     ($self:ident, $param:expr, $p:ident, $float_body:expr, $int_body:expr) => {
         match $param {
-            SynthParam::Attack => { let $p = &$self.params.attack; $float_body }
-            SynthParam::Decay => { let $p = &$self.params.decay; $float_body }
-            SynthParam::Sustain => { let $p = &$self.params.sustain; $float_body }
-            SynthParam::Release => { let $p = &$self.params.release; $float_body }
-            SynthParam::FilterCutoff => { let $p = &$self.params.cutoff; $float_body }
-            SynthParam::FilterResonance => { let $p = &$self.params.resonance; $float_body }
-            SynthParam::FilterAttack => { let $p = &$self.params.f_attack; $float_body }
-            SynthParam::FilterDecay => { let $p = &$self.params.f_decay; $float_body }
-            SynthParam::FilterSustain => { let $p = &$self.params.f_sustain; $float_body }
-            SynthParam::FilterRelease => { let $p = &$self.params.f_release; $float_body }
-            SynthParam::FilterEnvAmount => { let $p = &$self.params.f_amount; $float_body }
-            SynthParam::LfoRate => { let $p = &$self.params.lfo_rate; $float_body }
-            SynthParam::LfoDepth => { let $p = &$self.params.lfo_depth; $float_body }
-            SynthParam::LfoWaveform => { let $p = &$self.params.lfo_waveform; $int_body }
-            SynthParam::LfoDestination => { let $p = &$self.params.lfo_destination; $int_body }
-            SynthParam::PitchBendRange => { let $p = &$self.params.pitch_bend_range; $int_body }
-            SynthParam::PortamentoTime => { let $p = &$self.params.portamento; $float_body }
-            SynthParam::Osc1Waveform => { let $p = &$self.params.osc1_waveform; $int_body }
-            SynthParam::Osc1Level => { let $p = &$self.params.osc1_level; $float_body }
-            SynthParam::Osc1Phase => { let $p = &$self.params.osc1_phase; $float_body }
-            SynthParam::Osc1Pan => { let $p = &$self.params.osc1_pan; $float_body }
-            SynthParam::Osc2Waveform => { let $p = &$self.params.osc2_waveform; $int_body }
-            SynthParam::Osc2Level => { let $p = &$self.params.osc2_level; $float_body }
-            SynthParam::Osc2Semitones => { let $p = &$self.params.osc2_semitones; $int_body }
-            SynthParam::Osc2Cents => { let $p = &$self.params.osc2_cents; $int_body }
-            SynthParam::Osc2Phase => { let $p = &$self.params.osc2_phase; $float_body }
-            SynthParam::Osc2Pan => { let $p = &$self.params.osc2_pan; $float_body }
-            SynthParam::Osc3Waveform => { let $p = &$self.params.osc3_waveform; $int_body }
-            SynthParam::Osc3Level => { let $p = &$self.params.osc3_level; $float_body }
-            SynthParam::Osc3Semitones => { let $p = &$self.params.osc3_semitones; $int_body }
-            SynthParam::Osc3Cents => { let $p = &$self.params.osc3_cents; $int_body }
-            SynthParam::Osc3Phase => { let $p = &$self.params.osc3_phase; $float_body }
-            SynthParam::Osc3Pan => { let $p = &$self.params.osc3_pan; $float_body }
-            SynthParam::Osc4Waveform => { let $p = &$self.params.osc4_waveform; $int_body }
-            SynthParam::Osc4Level => { let $p = &$self.params.osc4_level; $float_body }
-            SynthParam::Osc4Semitones => { let $p = &$self.params.osc4_semitones; $int_body }
-            SynthParam::Osc4Cents => { let $p = &$self.params.osc4_cents; $int_body }
-            SynthParam::Osc4Phase => { let $p = &$self.params.osc4_phase; $float_body }
-            SynthParam::Osc4Pan => { let $p = &$self.params.osc4_pan; $float_body }
-            SynthParam::Filter2Cutoff => { let $p = &$self.params.filter2_cutoff; $float_body }
-            SynthParam::Filter2Resonance => { let $p = &$self.params.filter2_resonance; $float_body }
-            SynthParam::Filter2Type => { let $p = &$self.params.filter2_type; $int_body }
-            SynthParam::DistortionType => { let $p = &$self.params.distortion_type; $int_body }
-            SynthParam::StereoWidth => { let $p = &$self.params.stereo_width; $float_body }
-            SynthParam::MasterVolume => { let $p = &$self.params.master_volume; $float_body }
+            SynthParam::Attack => {
+                let $p = &$self.params.attack;
+                $float_body
+            }
+            SynthParam::Decay => {
+                let $p = &$self.params.decay;
+                $float_body
+            }
+            SynthParam::Sustain => {
+                let $p = &$self.params.sustain;
+                $float_body
+            }
+            SynthParam::Release => {
+                let $p = &$self.params.release;
+                $float_body
+            }
+            SynthParam::FilterCutoff => {
+                let $p = &$self.params.cutoff;
+                $float_body
+            }
+            SynthParam::FilterResonance => {
+                let $p = &$self.params.resonance;
+                $float_body
+            }
+            SynthParam::FilterAttack => {
+                let $p = &$self.params.f_attack;
+                $float_body
+            }
+            SynthParam::FilterDecay => {
+                let $p = &$self.params.f_decay;
+                $float_body
+            }
+            SynthParam::FilterSustain => {
+                let $p = &$self.params.f_sustain;
+                $float_body
+            }
+            SynthParam::FilterRelease => {
+                let $p = &$self.params.f_release;
+                $float_body
+            }
+            SynthParam::FilterEnvAmount => {
+                let $p = &$self.params.f_amount;
+                $float_body
+            }
+            SynthParam::LfoRate => {
+                let $p = &$self.params.lfo_rate;
+                $float_body
+            }
+            SynthParam::LfoDepth => {
+                let $p = &$self.params.lfo_depth;
+                $float_body
+            }
+            SynthParam::LfoWaveform => {
+                let $p = &$self.params.lfo_waveform;
+                $int_body
+            }
+            SynthParam::LfoDestination => {
+                let $p = &$self.params.lfo_destination;
+                $int_body
+            }
+            SynthParam::PitchBendRange => {
+                let $p = &$self.params.pitch_bend_range;
+                $int_body
+            }
+            SynthParam::PortamentoTime => {
+                let $p = &$self.params.portamento;
+                $float_body
+            }
+            SynthParam::Osc1Waveform => {
+                let $p = &$self.params.osc1_waveform;
+                $int_body
+            }
+            SynthParam::Osc1Level => {
+                let $p = &$self.params.osc1_level;
+                $float_body
+            }
+            SynthParam::Osc1Phase => {
+                let $p = &$self.params.osc1_phase;
+                $float_body
+            }
+            SynthParam::Osc1Pan => {
+                let $p = &$self.params.osc1_pan;
+                $float_body
+            }
+            SynthParam::Osc1Pw => {
+                let $p = &$self.params.osc1_pw;
+                $float_body
+            }
+            SynthParam::Osc2Waveform => {
+                let $p = &$self.params.osc2_waveform;
+                $int_body
+            }
+            SynthParam::Osc2Level => {
+                let $p = &$self.params.osc2_level;
+                $float_body
+            }
+            SynthParam::Osc2Semitones => {
+                let $p = &$self.params.osc2_semitones;
+                $int_body
+            }
+            SynthParam::Osc2Cents => {
+                let $p = &$self.params.osc2_cents;
+                $int_body
+            }
+            SynthParam::Osc2Phase => {
+                let $p = &$self.params.osc2_phase;
+                $float_body
+            }
+            SynthParam::Osc2Pan => {
+                let $p = &$self.params.osc2_pan;
+                $float_body
+            }
+            SynthParam::Osc2Pw => {
+                let $p = &$self.params.osc2_pw;
+                $float_body
+            }
+            SynthParam::Osc3Waveform => {
+                let $p = &$self.params.osc3_waveform;
+                $int_body
+            }
+            SynthParam::Osc3Level => {
+                let $p = &$self.params.osc3_level;
+                $float_body
+            }
+            SynthParam::Osc3Semitones => {
+                let $p = &$self.params.osc3_semitones;
+                $int_body
+            }
+            SynthParam::Osc3Cents => {
+                let $p = &$self.params.osc3_cents;
+                $int_body
+            }
+            SynthParam::Osc3Phase => {
+                let $p = &$self.params.osc3_phase;
+                $float_body
+            }
+            SynthParam::Osc3Pan => {
+                let $p = &$self.params.osc3_pan;
+                $float_body
+            }
+            SynthParam::Osc3Pw => {
+                let $p = &$self.params.osc3_pw;
+                $float_body
+            }
+            SynthParam::Osc4Waveform => {
+                let $p = &$self.params.osc4_waveform;
+                $int_body
+            }
+            SynthParam::Osc4Level => {
+                let $p = &$self.params.osc4_level;
+                $float_body
+            }
+            SynthParam::Osc4Semitones => {
+                let $p = &$self.params.osc4_semitones;
+                $int_body
+            }
+            SynthParam::Osc4Cents => {
+                let $p = &$self.params.osc4_cents;
+                $int_body
+            }
+            SynthParam::Osc4Phase => {
+                let $p = &$self.params.osc4_phase;
+                $float_body
+            }
+            SynthParam::Osc4Pan => {
+                let $p = &$self.params.osc4_pan;
+                $float_body
+            }
+            SynthParam::Osc4Pw => {
+                let $p = &$self.params.osc4_pw;
+                $float_body
+            }
+            SynthParam::Filter2Cutoff => {
+                let $p = &$self.params.filter2_cutoff;
+                $float_body
+            }
+            SynthParam::Filter2Resonance => {
+                let $p = &$self.params.filter2_resonance;
+                $float_body
+            }
+            SynthParam::Filter2Type => {
+                let $p = &$self.params.filter2_type;
+                $int_body
+            }
+            SynthParam::DistortionType => {
+                let $p = &$self.params.distortion_type;
+                $int_body
+            }
+            SynthParam::StereoWidth => {
+                let $p = &$self.params.stereo_width;
+                $float_body
+            }
+            SynthParam::MasterVolume => {
+                let $p = &$self.params.master_volume;
+                $float_body
+            }
         }
     };
 }
@@ -89,7 +240,11 @@ impl<'a> PluginBackend<'a> {
         setter: &'a ParamSetter<'a>,
         shared: PluginSharedState,
     ) -> Self {
-        Self { params, setter, shared }
+        Self {
+            params,
+            setter,
+            shared,
+        }
     }
 }
 
@@ -154,8 +309,7 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         self.params.distortion_mix.value()
     }
     fn set_distortion_mix(&mut self, mix: f32) {
-        self.setter
-            .set_parameter(&self.params.distortion_mix, mix);
+        self.setter.set_parameter(&self.params.distortion_mix, mix);
     }
 
     // ── Effects: Delay ───────────────────────────────────────────────────────
@@ -164,7 +318,8 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         self.params.delay_enabled.value()
     }
     fn set_delay_enabled(&mut self, enabled: bool) {
-        self.setter.set_parameter(&self.params.delay_enabled, enabled);
+        self.setter
+            .set_parameter(&self.params.delay_enabled, enabled);
     }
     fn delay_time(&self) -> f32 {
         self.params.delay_time.value()
@@ -176,7 +331,8 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         self.params.delay_feedback.value()
     }
     fn set_delay_feedback(&mut self, feedback: f32) {
-        self.setter.set_parameter(&self.params.delay_feedback, feedback);
+        self.setter
+            .set_parameter(&self.params.delay_feedback, feedback);
     }
     fn delay_mix(&self) -> f32 {
         self.params.delay_mix.value()
@@ -191,19 +347,22 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         self.params.reverb_enabled.value()
     }
     fn set_reverb_enabled(&mut self, enabled: bool) {
-        self.setter.set_parameter(&self.params.reverb_enabled, enabled);
+        self.setter
+            .set_parameter(&self.params.reverb_enabled, enabled);
     }
     fn reverb_room_size(&self) -> f32 {
         self.params.reverb_room_size.value()
     }
     fn set_reverb_room_size(&mut self, size: f32) {
-        self.setter.set_parameter(&self.params.reverb_room_size, size);
+        self.setter
+            .set_parameter(&self.params.reverb_room_size, size);
     }
     fn reverb_damping(&self) -> f32 {
         self.params.reverb_damping.value()
     }
     fn set_reverb_damping(&mut self, damping: f32) {
-        self.setter.set_parameter(&self.params.reverb_damping, damping);
+        self.setter
+            .set_parameter(&self.params.reverb_damping, damping);
     }
     fn reverb_mix(&self) -> f32 {
         self.params.reverb_mix.value()
@@ -218,7 +377,8 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         self.params.chorus_enabled.value()
     }
     fn set_chorus_enabled(&mut self, enabled: bool) {
-        self.setter.set_parameter(&self.params.chorus_enabled, enabled);
+        self.setter
+            .set_parameter(&self.params.chorus_enabled, enabled);
     }
     fn chorus_rate(&self) -> f32 {
         self.params.chorus_rate.value()
@@ -303,25 +463,40 @@ impl<'a> SynthBackend for PluginBackend<'a> {
         // GUI combo share a single source of truth.
         let filter_index = state.filter_type.index() as i32;
         if self.params.filter_type.value() != filter_index {
-            self.setter.set_parameter(&self.params.filter_type, filter_index);
+            self.setter
+                .set_parameter(&self.params.filter_type, filter_index);
         }
         self.shared.set_mod_state(state);
     }
 
     // ── MIDI (not applicable in plugin mode) ─────────────────────────────────
 
-    fn midi_connected(&self) -> bool { false }
-    fn midi_ports(&self) -> Vec<String> { Vec::new() }
-    fn selected_midi_port(&self) -> Option<usize> { None }
+    fn midi_connected(&self) -> bool {
+        false
+    }
+    fn midi_ports(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn selected_midi_port(&self) -> Option<usize> {
+        None
+    }
     fn connect_midi_port(&mut self, _port_idx: usize) {}
     fn refresh_midi_ports(&mut self) {}
-    fn midi_channel_display(&self) -> u8 { 0 }
+    fn midi_channel_display(&self) -> u8 {
+        0
+    }
     fn set_midi_channel(&mut self, _display_idx: u8) {}
-    fn midi_cc_activity(&self) -> Vec<(u8, u8)> { Vec::new() }
-    fn midi_learn_state(&self) -> MidiLearnState { MidiLearnState::Idle }
+    fn midi_cc_activity(&self) -> Vec<(u8, u8)> {
+        Vec::new()
+    }
+    fn midi_learn_state(&self) -> MidiLearnState {
+        MidiLearnState::Idle
+    }
     fn start_midi_learn(&mut self, _param: SynthParam) {}
     fn cancel_midi_learn(&mut self) {}
-    fn custom_cc_mappings(&self) -> Vec<CcMapping> { Vec::new() }
+    fn custom_cc_mappings(&self) -> Vec<CcMapping> {
+        Vec::new()
+    }
     fn clear_cc_mappings(&mut self) {}
 
     // ── Status ───────────────────────────────────────────────────────────────

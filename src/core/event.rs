@@ -11,17 +11,19 @@ pub enum WaveformType {
     Saw,
     Triangle,
     Noise,
+    Pulse,
 }
 
 impl WaveformType {
-    /// Get waveform from index (0-4)
+    /// Get waveform from index (0-5)
     pub fn from_index(index: u8) -> Self {
-        match index % 5 {
+        match index % 6 {
             0 => WaveformType::Sine,
             1 => WaveformType::Square,
             2 => WaveformType::Saw,
             3 => WaveformType::Triangle,
             4 => WaveformType::Noise,
+            5 => WaveformType::Pulse,
             _ => WaveformType::Sine,
         }
     }
@@ -34,6 +36,7 @@ impl WaveformType {
             WaveformType::Saw => "Sawtooth",
             WaveformType::Triangle => "Triangle",
             WaveformType::Noise => "Noise",
+            WaveformType::Pulse => "Pulse",
         }
     }
 }
@@ -44,7 +47,10 @@ pub enum SynthEventKind {
     NoteOn,
     NoteOff,
     WaveformChange(WaveformType),
-    ControlChange { cc: u8, value: u8 },
+    ControlChange {
+        cc: u8,
+        value: u8,
+    },
     /// Pitch bend: value is -1.0 to +1.0 (center = 0.0)
     PitchBend(f32),
     /// Channel (or polyphonic) pressure: value is 0.0 to 1.0

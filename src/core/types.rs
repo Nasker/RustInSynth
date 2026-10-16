@@ -9,12 +9,15 @@ pub struct StereoSample {
 }
 
 impl StereoSample {
-    pub const ZERO: StereoSample = StereoSample { left: 0.0, right: 0.0 };
-    
+    pub const ZERO: StereoSample = StereoSample {
+        left: 0.0,
+        right: 0.0,
+    };
+
     pub fn new(left: Sample, right: Sample) -> Self {
         Self { left, right }
     }
-    
+
     /// Create stereo from mono with equal power panning
     /// pan: -1.0 = full left, 0.0 = center, 1.0 = full right
     pub fn from_mono_panned(sample: Sample, pan: f32) -> Self {
@@ -26,12 +29,15 @@ impl StereoSample {
             right: sample * angle.sin(),
         }
     }
-    
+
     /// Create stereo from mono (centered)
     pub fn from_mono(sample: Sample) -> Self {
-        Self { left: sample, right: sample }
+        Self {
+            left: sample,
+            right: sample,
+        }
     }
-    
+
     /// Mix two stereo samples
     pub fn mix(self, other: StereoSample) -> Self {
         Self {
@@ -39,7 +45,7 @@ impl StereoSample {
             right: self.right + other.right,
         }
     }
-    
+
     /// Scale by amplitude
     pub fn scale(self, amp: f32) -> Self {
         Self {
@@ -47,7 +53,7 @@ impl StereoSample {
             right: self.right * amp,
         }
     }
-    
+
     /// Apply stereo width (0.0 = mono, 1.0 = normal, 2.0 = extra wide)
     pub fn with_width(self, width: f32) -> Self {
         let mid = (self.left + self.right) * 0.5;

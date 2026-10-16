@@ -6,11 +6,11 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig};
 use parking_lot::Mutex;
 
+use crate::core::effects::EffectsChain;
 use crate::core::event::{NoteEvent, SynthEventReceiver, WaveformType};
 use crate::core::params::SynthParam;
 use crate::core::types::SampleRate;
-use crate::core::voice::{VoiceManager, PolyphonyMode};
-use crate::core::effects::EffectsChain;
+use crate::core::voice::{PolyphonyMode, VoiceManager};
 use crate::gui::ParamBank;
 
 /// Error type for audio engine operations
@@ -50,9 +50,7 @@ impl AudioEngine {
     pub fn new(cpu_load: Arc<AtomicU32>) -> Result<Self, AudioError> {
         let host = cpal::default_host();
 
-        let device = host
-            .default_output_device()
-            .ok_or(AudioError::NoDevice)?;
+        let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
 
         let config = device
             .default_output_config()
@@ -100,15 +98,17 @@ impl AudioEngine {
                 &self._config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let start = Instant::now();
-                    
+
                     let mut vm = voice_manager.lock();
                     let mut fx = effects_chain.lock();
                     for frame in data.chunks_mut(channels) {
                         // Generate stereo sample from voices
                         let stereo = vm.next_sample_stereo();
+                        // Apply global FX modulation resolved by the matrix
+                        fx.set_fx_mods(&vm.fx_mods());
                         // Process through stereo effects chain
                         let processed = fx.process_stereo(stereo);
-                        
+
                         // Output to channels (stereo or mono)
                         if channels >= 2 {
                             frame[0] = processed.left;
@@ -124,13 +124,13 @@ impl AudioEngine {
                     }
                     drop(vm);
                     drop(fx);
-                    
+
                     // Calculate CPU load: process_time / available_time
                     let elapsed = start.elapsed().as_secs_f64();
                     let buffer_samples = data.len() / channels;
                     let available_time = buffer_samples as f64 / sample_rate;
                     let load = (elapsed / available_time) as f32;
-                    
+
                     // Store as atomic (smoothed with previous value)
                     let prev = f32::from_bits(cpu_load.load(Ordering::Relaxed));
                     let smoothed = prev * 0.9 + load * 0.1; // Simple low-pass filter
@@ -177,7 +177,9 @@ impl AudioEngine {
 
     /// Set the waveform for a specific oscillator (1, 2, or 3)
     pub fn set_osc_waveform(&self, osc_num: u8, waveform: WaveformType) {
-        self.voice_manager.lock().set_osc_waveform(osc_num, waveform);
+        self.voice_manager
+            .lock()
+            .set_osc_waveform(osc_num, waveform);
     }
 
     /// Set waveform for all oscillators (convenience method)
@@ -267,9 +269,17 @@ impl AudioEngine {
         vm.set_osc_phase(3, params.get(SynthParam::Osc3Phase));
         vm.set_osc_phase(4, params.get(SynthParam::Osc4Phase));
 
+        // Pulse widths (audible on the Pulse waveform; harmless elsewhere)
+        vm.set_osc_pw(1, params.get(SynthParam::Osc1Pw));
+        vm.set_osc_pw(2, params.get(SynthParam::Osc2Pw));
+        vm.set_osc_pw(3, params.get(SynthParam::Osc3Pw));
+        vm.set_osc_pw(4, params.get(SynthParam::Osc4Pw));
+
         // Second serial filter
         use crate::core::filter::FilterType;
-        vm.set_filter2_type(FilterType::from_index(params.get(SynthParam::Filter2Type) as u8));
+        vm.set_filter2_type(FilterType::from_index(
+            params.get(SynthParam::Filter2Type) as u8
+        ));
         vm.set_filter2_cutoff(params.get(SynthParam::Filter2Cutoff));
         vm.set_filter2_resonance(params.get(SynthParam::Filter2Resonance));
 
@@ -291,64 +301,66 @@ impl AudioEngine {
 
         // Distortion topology (index param; FX chain lives outside the VM)
         use crate::core::effects::DistortionType;
-        self.effects_chain.lock().set_distortion_type(
-            DistortionType::from_index(params.get(SynthParam::DistortionType) as u8),
-        );
+        self.effects_chain
+            .lock()
+            .set_distortion_type(DistortionType::from_index(
+                params.get(SynthParam::DistortionType) as u8,
+            ));
     }
-    
+
     /// Set polyphony mode (Mono or Poly)
     pub fn set_polyphony_mode(&self, mode: PolyphonyMode) {
         self.voice_manager.lock().set_polyphony_mode(mode);
     }
-    
+
     /// Get current polyphony mode
     pub fn polyphony_mode(&self) -> PolyphonyMode {
         self.voice_manager.lock().polyphony_mode()
     }
-    
+
     /// Get number of active voices
     pub fn active_voice_count(&self) -> usize {
         self.voice_manager.lock().active_voice_count()
     }
-    
+
     /// Get max voices
     pub fn max_voices(&self) -> usize {
         self.voice_manager.lock().max_voices()
     }
-    
+
     // ========================================================================
     // Stereo Control
     // ========================================================================
-    
+
     /// Set oscillator pan (-1.0 = left, 0.0 = center, 1.0 = right)
     pub fn set_osc_pan(&self, osc_num: u8, pan: f32) {
         self.voice_manager.lock().set_osc_pan(osc_num, pan);
     }
-    
+
     /// Get oscillator pan
     pub fn osc_pan(&self, osc_num: u8) -> f32 {
         self.voice_manager.lock().osc_pan(osc_num)
     }
-    
+
     /// Set stereo width (0.0 = mono, 1.0 = normal, 2.0 = extra wide)
     pub fn set_stereo_width(&self, width: f32) {
         self.voice_manager.lock().set_stereo_width(width);
     }
-    
+
     /// Get stereo width
     pub fn stereo_width(&self) -> f32 {
         self.voice_manager.lock().stereo_width()
     }
-    
+
     // ========================================================================
     // Effects Control
     // ========================================================================
-    
+
     /// Get a reference to the effects chain
     pub fn effects_chain(&self) -> Arc<Mutex<EffectsChain>> {
         Arc::clone(&self.effects_chain)
     }
-    
+
     // Distortion
     pub fn set_distortion_enabled(&self, enabled: bool) {
         self.effects_chain.lock().distortion_enabled = enabled;
@@ -394,7 +406,7 @@ impl AudioEngine {
     pub fn delay_mix(&self) -> f32 {
         self.effects_chain.lock().delay.mix()
     }
-    
+
     // Reverb
     pub fn set_reverb_enabled(&self, enabled: bool) {
         self.effects_chain.lock().reverb_enabled = enabled;
@@ -420,7 +432,7 @@ impl AudioEngine {
     pub fn reverb_mix(&self) -> f32 {
         self.effects_chain.lock().reverb.mix()
     }
-    
+
     // Chorus
     pub fn set_chorus_enabled(&self, enabled: bool) {
         self.effects_chain.lock().chorus_enabled = enabled;

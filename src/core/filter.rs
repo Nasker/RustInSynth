@@ -59,8 +59,8 @@ pub struct SVFilter {
     mode: FilterMode,
 
     // Filter coefficients (current)
-    f: f32,  // frequency coefficient
-    q: f32,  // damping (inverse of resonance)
+    f: f32, // frequency coefficient
+    q: f32, // damping (inverse of resonance)
 
     // Filter coefficients (target, for smoothing)
     f_target: f32,
@@ -214,9 +214,9 @@ pub struct LadderFilter {
     // 4 cascaded one-pole stages
     stage: [f32; 4],
     // Smoothed coefficients
-    g: f32,        // frequency coefficient (current)
+    g: f32, // frequency coefficient (current)
     g_target: f32,
-    res: f32,      // resonance feedback amount (current)
+    res: f32, // resonance feedback amount (current)
     res_target: f32,
 }
 
@@ -279,9 +279,15 @@ impl Filter for LadderFilter {
         self.update_coefficients();
     }
 
-    fn cutoff(&self) -> Frequency { self.cutoff }
-    fn resonance(&self) -> f32 { self.resonance }
-    fn reset(&mut self) { self.stage = [0.0; 4]; }
+    fn cutoff(&self) -> Frequency {
+        self.cutoff
+    }
+    fn resonance(&self) -> f32 {
+        self.resonance
+    }
+    fn reset(&mut self) {
+        self.stage = [0.0; 4];
+    }
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
         self.update_coefficients();
@@ -320,8 +326,8 @@ impl CombFilter {
     fn update_coefficients(&mut self) {
         let max_cutoff = (self.sample_rate as f32 * 0.45).min(MAX_CUTOFF);
         let safe = self.cutoff.clamp(20.0, max_cutoff);
-        self.delay_samples = ((self.sample_rate as f32 / safe) as usize)
-            .clamp(1, self.buffer.len() - 1);
+        self.delay_samples =
+            ((self.sample_rate as f32 / safe) as usize).clamp(1, self.buffer.len() - 1);
         self.feedback = self.resonance.clamp(0.0, 0.98);
     }
 }
@@ -347,8 +353,12 @@ impl Filter for CombFilter {
         self.update_coefficients();
     }
 
-    fn cutoff(&self) -> Frequency { self.cutoff }
-    fn resonance(&self) -> f32 { self.resonance }
+    fn cutoff(&self) -> Frequency {
+        self.cutoff
+    }
+    fn resonance(&self) -> f32 {
+        self.resonance
+    }
     fn reset(&mut self) {
         self.buffer.fill(0.0);
         self.index = 0;
@@ -429,8 +439,8 @@ fn soft_clip_filter(x: f32) -> f32 {
 }
 
 /// Filter cutoff range constants
-pub const MIN_CUTOFF: Frequency = 20.0;      // 20 Hz
-pub const MAX_CUTOFF: Frequency = 20000.0;   // 20 kHz
+pub const MIN_CUTOFF: Frequency = 20.0; // 20 Hz
+pub const MAX_CUTOFF: Frequency = 20000.0; // 20 kHz
 
 /// Convert CC value to cutoff frequency (exponential mapping)
 pub fn cc_to_cutoff(value: u8) -> Frequency {
@@ -455,7 +465,7 @@ pub fn cc_to_resonance(value: u8) -> f32 {
 mod filter_envelope_tests {
     use super::*;
     use crate::core::envelope::{ADSREnvelope, Envelope};
-    use crate::core::oscillator::{SineOscillator, Oscillator};
+    use crate::core::oscillator::{Oscillator, SineOscillator};
     use std::path::PathBuf;
 
     /// Simulate what Voice::next_sample does for the filter signal chain,
@@ -478,7 +488,11 @@ mod filter_envelope_tests {
         let mut filter = SVFilter::new(base_cutoff, 0.5, sample_rate);
         let mut amp_env = ADSREnvelope::new(0.01, 0.1, amp_sustain, 0.2, sample_rate);
         let mut filter_env = ADSREnvelope::new(
-            filter_attack, filter_decay, filter_sustain, filter_release, sample_rate
+            filter_attack,
+            filter_decay,
+            filter_sustain,
+            filter_release,
+            sample_rate,
         );
 
         let max_cutoff = 20000.0f32;
@@ -504,7 +518,9 @@ mod filter_envelope_tests {
                         markers.push((sample, false));
                     }
                     event_index += 1;
-                } else { break; }
+                } else {
+                    break;
+                }
             }
 
             let filter_env_amp = filter_env.next_amplitude();
@@ -550,21 +566,41 @@ mod filter_envelope_tests {
             // --- Panel 1: Audio waveform ---
             let mut c1 = ChartBuilder::on(&areas[0])
                 .caption(title, ("sans-serif", 18))
-                .margin(5).x_label_area_size(20).y_label_area_size(50)
-                .build_cartesian_2d(0.0f32..duration, -1.1f32..1.1f32).unwrap();
-            c1.configure_mesh().x_desc("Time (s)").y_desc("Audio").draw().unwrap();
+                .margin(5)
+                .x_label_area_size(20)
+                .y_label_area_size(50)
+                .build_cartesian_2d(0.0f32..duration, -1.1f32..1.1f32)
+                .unwrap();
+            c1.configure_mesh()
+                .x_desc("Time (s)")
+                .y_desc("Audio")
+                .draw()
+                .unwrap();
             c1.draw_series(LineSeries::new(
-                audio.iter().enumerate().step_by(subsample)
+                audio
+                    .iter()
+                    .enumerate()
+                    .step_by(subsample)
                     .map(|(i, &s)| (i as f32 / sample_rate as f32, s)),
                 BLUE.mix(0.6),
-            )).unwrap().label("Audio").legend(|(x,y)| PathElement::new(vec![(x,y),(x+20,y)], BLUE));
+            ))
+            .unwrap()
+            .label("Audio")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
             for (idx, is_on) in events {
                 let x = *idx as f32 / sample_rate as f32;
-                c1.draw_series(std::iter::once(
-                    TriangleMarker::new((x, 1.05), 8, if *is_on { GREEN } else { RED }.filled())
-                )).unwrap();
+                c1.draw_series(std::iter::once(TriangleMarker::new(
+                    (x, 1.05),
+                    8,
+                    if *is_on { GREEN } else { RED }.filled(),
+                )))
+                .unwrap();
             }
-            c1.configure_series_labels().background_style(WHITE.mix(0.8)).border_style(BLACK).draw().unwrap();
+            c1.configure_series_labels()
+                .background_style(WHITE.mix(0.8))
+                .border_style(BLACK)
+                .draw()
+                .unwrap();
 
             // --- Panel 2: Cutoff frequency trajectory ---
             let max_cutoff_val = cutoff.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
@@ -574,49 +610,88 @@ mod filter_envelope_tests {
             let y_hi = max_cutoff_val + cutoff_range_display * 0.1;
 
             let mut c2 = ChartBuilder::on(&areas[1])
-                .caption("Cutoff Frequency (Hz) - look for jumps!", ("sans-serif", 16))
-                .margin(5).x_label_area_size(20).y_label_area_size(60)
-                .build_cartesian_2d(0.0f32..duration, y_lo..y_hi).unwrap();
-            c2.configure_mesh().x_desc("Time (s)").y_desc("Cutoff (Hz)").draw().unwrap();
+                .caption(
+                    "Cutoff Frequency (Hz) - look for jumps!",
+                    ("sans-serif", 16),
+                )
+                .margin(5)
+                .x_label_area_size(20)
+                .y_label_area_size(60)
+                .build_cartesian_2d(0.0f32..duration, y_lo..y_hi)
+                .unwrap();
+            c2.configure_mesh()
+                .x_desc("Time (s)")
+                .y_desc("Cutoff (Hz)")
+                .draw()
+                .unwrap();
             c2.draw_series(LineSeries::new(
-                cutoff.iter().enumerate().step_by(subsample)
+                cutoff
+                    .iter()
+                    .enumerate()
+                    .step_by(subsample)
                     .map(|(i, &f)| (i as f32 / sample_rate as f32, f)),
                 RED.stroke_width(2),
-            )).unwrap().label("Cutoff Hz").legend(|(x,y)| PathElement::new(vec![(x,y),(x+20,y)], RED));
+            ))
+            .unwrap()
+            .label("Cutoff Hz")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
             for (idx, is_on) in events {
                 let x = *idx as f32 / sample_rate as f32;
-                c2.draw_series(std::iter::once(
-                    TriangleMarker::new((x, y_hi * 0.95), 8, if *is_on { GREEN } else { RED }.filled())
-                )).unwrap();
+                c2.draw_series(std::iter::once(TriangleMarker::new(
+                    (x, y_hi * 0.95),
+                    8,
+                    if *is_on { GREEN } else { RED }.filled(),
+                )))
+                .unwrap();
             }
-            c2.configure_series_labels().background_style(WHITE.mix(0.8)).border_style(BLACK).draw().unwrap();
+            c2.configure_series_labels()
+                .background_style(WHITE.mix(0.8))
+                .border_style(BLACK)
+                .draw()
+                .unwrap();
 
             // --- Panel 3: Filter envelope amplitude ---
             let mut c3 = ChartBuilder::on(&areas[2])
                 .caption("Filter Envelope Amplitude", ("sans-serif", 16))
-                .margin(5).x_label_area_size(25).y_label_area_size(50)
-                .build_cartesian_2d(0.0f32..duration, -0.05f32..1.1f32).unwrap();
-            c3.configure_mesh().x_desc("Time (s)").y_desc("Env Amp").draw().unwrap();
+                .margin(5)
+                .x_label_area_size(25)
+                .y_label_area_size(50)
+                .build_cartesian_2d(0.0f32..duration, -0.05f32..1.1f32)
+                .unwrap();
+            c3.configure_mesh()
+                .x_desc("Time (s)")
+                .y_desc("Env Amp")
+                .draw()
+                .unwrap();
             c3.draw_series(LineSeries::new(
-                env_curve.iter().enumerate().step_by(subsample)
+                env_curve
+                    .iter()
+                    .enumerate()
+                    .step_by(subsample)
                     .map(|(i, &e)| (i as f32 / sample_rate as f32, e)),
                 RGBColor(180, 0, 200).stroke_width(2),
-            )).unwrap();
+            ))
+            .unwrap();
 
             root.present().unwrap();
         }
         println!("Saved: {}", path.display());
     }
 
-    fn find_cutoff_jumps(cutoff: &[f32], events: &[(usize, bool)], threshold_hz: f32)
-        -> Vec<(usize, f32, f32, f32)> // (sample, prev, curr, delta)
+    fn find_cutoff_jumps(
+        cutoff: &[f32],
+        events: &[(usize, bool)],
+        threshold_hz: f32,
+    ) -> Vec<(usize, f32, f32, f32)> // (sample, prev, curr, delta)
     {
         let mut jumps = Vec::new();
         for i in 1..cutoff.len() {
-            let delta = (cutoff[i] - cutoff[i-1]).abs();
+            let delta = (cutoff[i] - cutoff[i - 1]).abs();
             if delta > threshold_hz {
-                let near_event = events.iter().any(|(idx,_)| (*idx as isize - i as isize).abs() <= 10);
-                jumps.push((i, cutoff[i-1], cutoff[i], delta));
+                let near_event = events
+                    .iter()
+                    .any(|(idx, _)| (*idx as isize - i as isize).abs() <= 10);
+                jumps.push((i, cutoff[i - 1], cutoff[i], delta));
                 if near_event {
                     // Mark as event-related
                 }
@@ -631,16 +706,37 @@ mod filter_envelope_tests {
         let sample_rate = 44100u32;
         let events = vec![(0.0, true), (1.0, false)];
         let (audio, cutoff, env_curve, markers) = run_filter_envelope_simulation(
-            500.0, 0.8, 1.0, 0.1, 0.2, 0.3, 0.7, &events, 2.0, sample_rate,
+            500.0,
+            0.8,
+            1.0,
+            0.1,
+            0.2,
+            0.3,
+            0.7,
+            &events,
+            2.0,
+            sample_rate,
         );
-        plot_filter_envelope(&audio, &cutoff, &env_curve, &markers, sample_rate,
-            "test_filter_env_sustain_1_0.png", "Filter Env - Sustain=1.0 (base=500Hz, amount=0.8)");
+        plot_filter_envelope(
+            &audio,
+            &cutoff,
+            &env_curve,
+            &markers,
+            sample_rate,
+            "test_filter_env_sustain_1_0.png",
+            "Filter Env - Sustain=1.0 (base=500Hz, amount=0.8)",
+        );
 
         let jumps = find_cutoff_jumps(&cutoff, &markers, 500.0);
         println!("Sustain=1.0: {} jumps >500Hz", jumps.len());
         for (i, prev, curr, d) in &jumps {
-            println!("  At {}ms: {:.0}Hz -> {:.0}Hz (Δ={:.0}Hz)",
-                *i * 1000 / sample_rate as usize, prev, curr, d);
+            println!(
+                "  At {}ms: {:.0}Hz -> {:.0}Hz (Δ={:.0}Hz)",
+                *i * 1000 / sample_rate as usize,
+                prev,
+                curr,
+                d
+            );
         }
         assert!(jumps.is_empty(), "Unexpected cutoff jumps with sustain=1.0");
     }
@@ -651,16 +747,37 @@ mod filter_envelope_tests {
         let sample_rate = 44100u32;
         let events = vec![(0.0, true), (1.0, false)];
         let (audio, cutoff, env_curve, markers) = run_filter_envelope_simulation(
-            500.0, 0.8, 0.5, 0.1, 0.3, 0.3, 0.7, &events, 2.0, sample_rate,
+            500.0,
+            0.8,
+            0.5,
+            0.1,
+            0.3,
+            0.3,
+            0.7,
+            &events,
+            2.0,
+            sample_rate,
         );
-        plot_filter_envelope(&audio, &cutoff, &env_curve, &markers, sample_rate,
-            "test_filter_env_sustain_0_5.png", "Filter Env - Sustain=0.5 (base=500Hz, amount=0.8)");
+        plot_filter_envelope(
+            &audio,
+            &cutoff,
+            &env_curve,
+            &markers,
+            sample_rate,
+            "test_filter_env_sustain_0_5.png",
+            "Filter Env - Sustain=0.5 (base=500Hz, amount=0.8)",
+        );
 
         let jumps = find_cutoff_jumps(&cutoff, &markers, 500.0);
         println!("Sustain=0.5: {} jumps >500Hz", jumps.len());
         for (i, prev, curr, d) in &jumps {
-            println!("  At {}ms: {:.0}Hz -> {:.0}Hz (Δ={:.0}Hz)",
-                *i * 1000 / sample_rate as usize, prev, curr, d);
+            println!(
+                "  At {}ms: {:.0}Hz -> {:.0}Hz (Δ={:.0}Hz)",
+                *i * 1000 / sample_rate as usize,
+                prev,
+                curr,
+                d
+            );
         }
     }
 
@@ -671,20 +788,44 @@ mod filter_envelope_tests {
         // Re-trigger while filter envelope is mid-decay
         let events = vec![(0.0, true), (0.15, false), (0.2, true), (0.8, false)];
         let (audio, cutoff, env_curve, markers) = run_filter_envelope_simulation(
-            500.0, 0.8, 0.0, 0.01, 0.3, 0.1, 0.7, &events, 1.5, sample_rate,
+            500.0,
+            0.8,
+            0.0,
+            0.01,
+            0.3,
+            0.1,
+            0.7,
+            &events,
+            1.5,
+            sample_rate,
         );
-        plot_filter_envelope(&audio, &cutoff, &env_curve, &markers, sample_rate,
-            "test_filter_env_retrigger_pluck.png", "Filter Env - Sustain=0.0 Retrigger (click source?)");
+        plot_filter_envelope(
+            &audio,
+            &cutoff,
+            &env_curve,
+            &markers,
+            sample_rate,
+            "test_filter_env_retrigger_pluck.png",
+            "Filter Env - Sustain=0.0 Retrigger (click source?)",
+        );
 
         println!("\n=== FILTER CUTOFF JUMP ANALYSIS (retrigger, sustain=0) ===");
         let jumps = find_cutoff_jumps(&cutoff, &markers, 200.0);
         if jumps.is_empty() {
             println!("✓ No cutoff jumps detected");
         } else {
-            println!("⚠ {} cutoff jumps detected (potential filter clicks):", jumps.len());
+            println!(
+                "⚠ {} cutoff jumps detected (potential filter clicks):",
+                jumps.len()
+            );
             for (i, prev, curr, d) in &jumps {
-                println!("  At {}ms: {:.0}Hz -> {:.0}Hz (Δ={:.0}Hz)",
-                    *i * 1000 / sample_rate as usize, prev, curr, d);
+                println!(
+                    "  At {}ms: {:.0}Hz -> {:.0}Hz (Δ={:.0}Hz)",
+                    *i * 1000 / sample_rate as usize,
+                    prev,
+                    curr,
+                    d
+                );
             }
         }
     }
@@ -697,14 +838,33 @@ mod filter_envelope_tests {
         let events = vec![(0.0, true), (1.0, false)];
         // base_cutoff=20000 means cutoff_range=0, filter env can't modulate anything
         let (audio, cutoff, env_curve, markers) = run_filter_envelope_simulation(
-            20000.0, 0.8, 0.5, 0.1, 0.3, 0.3, 0.7, &events, 2.0, sample_rate,
+            20000.0,
+            0.8,
+            0.5,
+            0.1,
+            0.3,
+            0.3,
+            0.7,
+            &events,
+            2.0,
+            sample_rate,
         );
-        plot_filter_envelope(&audio, &cutoff, &env_curve, &markers, sample_rate,
-            "test_filter_env_base_20k.png", "Filter Env - base_cutoff=20kHz (envelope has no effect!)");
+        plot_filter_envelope(
+            &audio,
+            &cutoff,
+            &env_curve,
+            &markers,
+            sample_rate,
+            "test_filter_env_base_20k.png",
+            "Filter Env - base_cutoff=20kHz (envelope has no effect!)",
+        );
 
         let range = cutoff.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-                  - cutoff.iter().cloned().fold(f32::INFINITY, f32::min);
-        println!("Cutoff range when base=20kHz: {:.1} Hz (should be 0)", range);
+            - cutoff.iter().cloned().fold(f32::INFINITY, f32::min);
+        println!(
+            "Cutoff range when base=20kHz: {:.1} Hz (should be 0)",
+            range
+        );
         println!("⚠ If range≈0, the filter envelope can NEVER be heard at this base cutoff.");
     }
 
@@ -717,7 +877,9 @@ mod filter_envelope_tests {
         // --- BEFORE FIX: raw trigger() resumes from sustain level ---
         let mut env_raw = ADSREnvelope::new(0.05, 0.3, 0.5, 0.2, sample_rate);
         env_raw.trigger();
-        for _ in 0..(sample_rate as usize / 2) { env_raw.next_amplitude(); }
+        for _ in 0..(sample_rate as usize / 2) {
+            env_raw.next_amplitude();
+        }
         let amp_at_sustain = env_raw.next_amplitude(); // should be ~0.5
         env_raw.trigger(); // raw retrigger — no reset
         let amp_after_raw_retrigger = env_raw.next_amplitude();
@@ -725,27 +887,41 @@ mod filter_envelope_tests {
         // --- AFTER FIX: reset() + trigger() always starts from 0 ---
         let mut env_fixed = ADSREnvelope::new(0.05, 0.3, 0.5, 0.2, sample_rate);
         env_fixed.trigger();
-        for _ in 0..(sample_rate as usize / 2) { env_fixed.next_amplitude(); }
-        env_fixed.reset();   // Voice::note_on() now calls this first
+        for _ in 0..(sample_rate as usize / 2) {
+            env_fixed.next_amplitude();
+        }
+        env_fixed.reset(); // Voice::note_on() now calls this first
         env_fixed.trigger();
         let amp_after_fixed_retrigger = env_fixed.next_amplitude();
 
         println!("\n=== FILTER ENV RETRIGGER ANALYSIS ===");
-        println!("Amplitude at sustain (before retrigger):       {:.4}", amp_at_sustain);
-        println!("After raw trigger()  (buggy — no reset):       {:.4} (≈ sustain level)", amp_after_raw_retrigger);
-        println!("After reset()+trigger() (fixed — Voice path):  {:.4} (≈ 0.0)", amp_after_fixed_retrigger);
+        println!(
+            "Amplitude at sustain (before retrigger):       {:.4}",
+            amp_at_sustain
+        );
+        println!(
+            "After raw trigger()  (buggy — no reset):       {:.4} (≈ sustain level)",
+            amp_after_raw_retrigger
+        );
+        println!(
+            "After reset()+trigger() (fixed — Voice path):  {:.4} (≈ 0.0)",
+            amp_after_fixed_retrigger
+        );
 
         // The fix: reset()+trigger() must start from ~0
         assert!(
             amp_after_fixed_retrigger < 0.01,
-            "Fixed retrigger should start near 0.0, got {:.4}", amp_after_fixed_retrigger
+            "Fixed retrigger should start near 0.0, got {:.4}",
+            amp_after_fixed_retrigger
         );
         // Document the bug: raw trigger() does NOT reset
         assert!(
             (amp_after_raw_retrigger - amp_at_sustain).abs() < 0.01,
             "Raw trigger() should resume from sustain level (known behavior)"
         );
-        println!("✓ Fix confirmed: Voice::note_on() reset()+trigger() starts filter envelope from 0");
+        println!(
+            "✓ Fix confirmed: Voice::note_on() reset()+trigger() starts filter envelope from 0"
+        );
     }
 }
 
@@ -780,7 +956,7 @@ mod tests {
     #[test]
     fn test_resonance_range() {
         let mut filter = SVFilter::new(1000.0, 0.5, 44100);
-        
+
         // Should handle extreme resonance without blowing up
         filter.set_resonance(0.99);
         for _ in 0..1000 {

@@ -1,6 +1,9 @@
 use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 
 use midir::{MidiInput as MidirInput, MidiInputConnection, MidiInputPort};
 
@@ -39,7 +42,7 @@ impl std::error::Error for MidiError {}
 pub struct MidiInputHandler {
     _connection: MidiInputConnection<()>,
     receiver: Receiver<NoteEvent>,
-    channel_filter: Arc<AtomicU8>,  // 255 = all channels, 0-15 = specific channel
+    channel_filter: Arc<AtomicU8>, // 255 = all channels, 0-15 = specific channel
 }
 
 impl MidiInputHandler {
@@ -55,7 +58,11 @@ impl MidiInputHandler {
 
         let port_names: Vec<String> = ports
             .iter()
-            .map(|p| midi_in.port_name(p).unwrap_or_else(|_| "Unknown".to_string()))
+            .map(|p| {
+                midi_in
+                    .port_name(p)
+                    .unwrap_or_else(|_| "Unknown".to_string())
+            })
             .collect();
 
         Ok(port_names)
@@ -115,14 +122,21 @@ impl MidiInputHandler {
     }
 
     /// Connect to a MIDI input port by index
-    pub fn connect(port_index: usize, channel_filter: Option<MidiChannel>) -> Result<Self, MidiError> {
+    pub fn connect(
+        port_index: usize,
+        channel_filter: Option<MidiChannel>,
+    ) -> Result<Self, MidiError> {
         Self::connect_with_debug(port_index, channel_filter, false)
     }
 
     /// Connect to a MIDI input port with optional debug output
-    pub fn connect_with_debug(port_index: usize, channel_filter: Option<MidiChannel>, debug_mode: bool) -> Result<Self, MidiError> {
-        let midi_in = MidirInput::new("RustSynth")
-            .map_err(|e| MidiError::InitFailed(e.to_string()))?;
+    pub fn connect_with_debug(
+        port_index: usize,
+        channel_filter: Option<MidiChannel>,
+        debug_mode: bool,
+    ) -> Result<Self, MidiError> {
+        let midi_in =
+            MidirInput::new("RustSynth").map_err(|e| MidiError::InitFailed(e.to_string()))?;
 
         let ports = midi_in.ports();
         if port_index >= ports.len() {
@@ -130,16 +144,16 @@ impl MidiInputHandler {
         }
 
         let port: &MidiInputPort = &ports[port_index];
-        let port_name = midi_in.port_name(port).unwrap_or_else(|_| "Unknown".to_string());
+        let port_name = midi_in
+            .port_name(port)
+            .unwrap_or_else(|_| "Unknown".to_string());
 
         let (sender, receiver): (Sender<NoteEvent>, Receiver<NoteEvent>) = mpsc::channel();
 
         // Use atomic for runtime channel filter changes
-        let filter_atomic = Arc::new(AtomicU8::new(
-            channel_filter.unwrap_or(MIDI_CHANNEL_ALL)
-        ));
+        let filter_atomic = Arc::new(AtomicU8::new(channel_filter.unwrap_or(MIDI_CHANNEL_ALL)));
         let filter_clone = Arc::clone(&filter_atomic);
-        
+
         let connection = midi_in
             .connect(
                 port,
@@ -188,8 +202,8 @@ impl MidiInputHandler {
 
     /// Automatically connect to the first available MIDI port (for GUI mode)
     pub fn connect_auto() -> Result<Self, MidiError> {
-        let midi_in = MidirInput::new("RustSynth")
-            .map_err(|e| MidiError::InitFailed(e.to_string()))?;
+        let midi_in =
+            MidirInput::new("RustSynth").map_err(|e| MidiError::InitFailed(e.to_string()))?;
 
         let ports = midi_in.ports();
         if ports.is_empty() {
@@ -222,13 +236,13 @@ impl MidiInputHandler {
             Some(val)
         }
     }
-    
+
     /// Set the channel filter at runtime (None = all channels, Some(0-15) = specific channel)
     pub fn set_channel_filter(&self, channel: Option<MidiChannel>) {
         let val = channel.unwrap_or(MIDI_CHANNEL_ALL);
         self.channel_filter.store(val, Ordering::Relaxed);
     }
-    
+
     /// Get channel as display value (0 = All, 1-16 = channel)
     pub fn channel_display(&self) -> u8 {
         match self.channel_filter() {
@@ -236,7 +250,7 @@ impl MidiInputHandler {
             Some(ch) => ch + 1,
         }
     }
-    
+
     /// Set channel from display value (0 = All, 1-16 = channel)
     pub fn set_channel_from_display(&self, display_value: u8) {
         if display_value == 0 {
@@ -339,8 +353,12 @@ fn print_midi_debug(timestamp: u64, message: &[u8]) {
     let description = match message_type {
         0x80 => {
             if message.len() >= 3 {
-                format!("Note Off      | note={:3} vel={:3} | {}", 
-                    message[1], message[2], note_name(message[1]))
+                format!(
+                    "Note Off      | note={:3} vel={:3} | {}",
+                    message[1],
+                    message[2],
+                    note_name(message[1])
+                )
             } else {
                 "Note Off (incomplete)".to_string()
             }
@@ -348,24 +366,40 @@ fn print_midi_debug(timestamp: u64, message: &[u8]) {
         0x90 => {
             if message.len() >= 3 {
                 let vel = message[2];
-                let kind = if vel == 0 { "Note Off (v=0)" } else { "Note On       " };
-                format!("{} | note={:3} vel={:3} | {}", 
-                    kind, message[1], vel, note_name(message[1]))
+                let kind = if vel == 0 {
+                    "Note Off (v=0)"
+                } else {
+                    "Note On       "
+                };
+                format!(
+                    "{} | note={:3} vel={:3} | {}",
+                    kind,
+                    message[1],
+                    vel,
+                    note_name(message[1])
+                )
             } else {
                 "Note On (incomplete)".to_string()
             }
         }
         0xA0 => {
             if message.len() >= 3 {
-                format!("Aftertouch    | note={:3} pressure={:3}", message[1], message[2])
+                format!(
+                    "Aftertouch    | note={:3} pressure={:3}",
+                    message[1], message[2]
+                )
             } else {
                 "Aftertouch (incomplete)".to_string()
             }
         }
         0xB0 => {
             if message.len() >= 3 {
-                format!("Control Change| CC#{:3}={:3} | {}", 
-                    message[1], message[2], cc_name(message[1]))
+                format!(
+                    "Control Change| CC#{:3}={:3} | {}",
+                    message[1],
+                    message[2],
+                    cc_name(message[1])
+                )
             } else {
                 "Control Change (incomplete)".to_string()
             }
@@ -388,31 +422,37 @@ fn print_midi_debug(timestamp: u64, message: &[u8]) {
             if message.len() >= 3 {
                 let bend = ((message[2] as u16) << 7) | (message[1] as u16);
                 let bend_centered = bend as i16 - 8192;
-                format!("Pitch Bend    | value={:6} (raw: {:5})", bend_centered, bend)
+                format!(
+                    "Pitch Bend    | value={:6} (raw: {:5})",
+                    bend_centered, bend
+                )
             } else {
                 "Pitch Bend (incomplete)".to_string()
             }
         }
-        0xF0 => {
-            match status {
-                0xF0 => format!("SysEx Start   | {} bytes", message.len()),
-                0xF7 => "SysEx End".to_string(),
-                0xF8 => "Timing Clock".to_string(),
-                0xFA => "Start".to_string(),
-                0xFB => "Continue".to_string(),
-                0xFC => "Stop".to_string(),
-                0xFE => "Active Sensing".to_string(),
-                0xFF => "System Reset".to_string(),
-                _ => format!("System: 0x{:02X}", status),
-            }
-        }
+        0xF0 => match status {
+            0xF0 => format!("SysEx Start   | {} bytes", message.len()),
+            0xF7 => "SysEx End".to_string(),
+            0xF8 => "Timing Clock".to_string(),
+            0xFA => "Start".to_string(),
+            0xFB => "Continue".to_string(),
+            0xFC => "Stop".to_string(),
+            0xFE => "Active Sensing".to_string(),
+            0xFF => "System Reset".to_string(),
+            _ => format!("System: 0x{:02X}", status),
+        },
         _ => format!("Unknown: 0x{:02X}", status),
     };
 
     // Format: timestamp, channel, description, raw hex
-    let raw_hex: String = message.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-    
-    println!("\r[{:10}] Ch{:2} | {} | [{}]", 
+    let raw_hex: String = message
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    println!(
+        "\r[{:10}] Ch{:2} | {} | [{}]",
         timestamp / 1000, // Convert to ms
         channel,
         description,
@@ -422,7 +462,9 @@ fn print_midi_debug(timestamp: u64, message: &[u8]) {
 
 /// Convert MIDI note number to note name
 fn note_name(note: u8) -> String {
-    let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let names = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
     let octave = (note / 12) as i8 - 1;
     let name = names[(note % 12) as usize];
     format!("{}{}", name, octave)
@@ -479,13 +521,13 @@ mod tests {
     #[test]
     fn test_channel_filter() {
         let message = [0x91, 60, 100]; // Note On, channel 1
-        
+
         // Should pass with no filter
         assert!(parse_midi_message(&message, None).is_some());
-        
+
         // Should pass with matching channel
         assert!(parse_midi_message(&message, Some(1)).is_some());
-        
+
         // Should fail with different channel
         assert!(parse_midi_message(&message, Some(0)).is_none());
     }

@@ -139,6 +139,11 @@ pub enum ModDest {
     Osc2Pitch,
     Osc3Pitch,
     Osc4Pitch,
+    // Per-oscillator pulse width (0.0..=1.0 base; modulation added in voice)
+    Osc1Pw,
+    Osc2Pw,
+    Osc3Pw,
+    Osc4Pw,
     // Second serial filter
     Filter2Cutoff,
     Filter2Resonance,
@@ -165,6 +170,10 @@ impl ModDest {
             ModDest::Osc2Pitch => "Osc 2 Pitch",
             ModDest::Osc3Pitch => "Osc 3 Pitch",
             ModDest::Osc4Pitch => "Osc 4 Pitch",
+            ModDest::Osc1Pw => "Osc 1 PW",
+            ModDest::Osc2Pw => "Osc 2 PW",
+            ModDest::Osc3Pw => "Osc 3 PW",
+            ModDest::Osc4Pw => "Osc 4 PW",
             ModDest::Filter2Cutoff => "Cutoff 2",
             ModDest::Filter2Resonance => "Resonance 2",
             ModDest::DelayTime => "Delay Time",
@@ -206,6 +215,10 @@ impl ModDest {
             ModDest::Osc2Pan,
             ModDest::Osc3Pan,
             ModDest::Osc4Pan,
+            ModDest::Osc1Pw,
+            ModDest::Osc2Pw,
+            ModDest::Osc3Pw,
+            ModDest::Osc4Pw,
             ModDest::DelayTime,
             ModDest::DelayFeedback,
             ModDest::DelayMix,
@@ -223,18 +236,16 @@ impl ModDest {
     }
 
     /// Whether the DSP currently applies this destination. Global effect
-    /// destinations are not yet wired into the effects chain.
+    /// destinations are evaluated at VoiceManager level and applied to the
+    /// effects chain each sample.
     pub fn is_wired(&self) -> bool {
-        self.is_per_voice()
-            || matches!(
-                self,
-                ModDest::Lfo1Rate
-                    | ModDest::Lfo2Rate
-                    | ModDest::Lfo3Rate
-                    | ModDest::Lfo1Depth
-                    | ModDest::Lfo2Depth
-                    | ModDest::Lfo3Depth
-            )
+        !matches!(self, ModDest::Off)
+    }
+
+    /// Whether this destination feeds the global effects chain rather than
+    /// the per-voice or LFO paths.
+    pub fn is_global_fx(&self) -> bool {
+        FX_MOD_MASK & (1u64 << *self as u64) != 0
     }
 
     /// Whether this destination is evaluated per-voice (as opposed to global
@@ -261,6 +272,10 @@ impl ModDest {
                 | ModDest::Osc2Pan
                 | ModDest::Osc3Pan
                 | ModDest::Osc4Pan
+                | ModDest::Osc1Pw
+                | ModDest::Osc2Pw
+                | ModDest::Osc3Pw
+                | ModDest::Osc4Pw
         )
     }
 }
@@ -273,18 +288,16 @@ impl ModDest {
 pub fn dest_range(dest: ModDest) -> f32 {
     match dest {
         ModDest::Off => 0.0,
-        ModDest::AllPitch => 12.0,         // ±12 semitones
-        ModDest::FilterCutoff => 60.0,     // ±5 octaves
+        ModDest::AllPitch => 12.0,     // ±12 semitones
+        ModDest::FilterCutoff => 60.0, // ±5 octaves
         ModDest::FilterResonance => 1.0,
         ModDest::Amplitude => 1.0,
         ModDest::StereoWidth => 1.0,
         ModDest::Osc1Level | ModDest::Osc2Level | ModDest::Osc3Level | ModDest::Osc4Level => 1.0,
         ModDest::Osc1Pan | ModDest::Osc2Pan | ModDest::Osc3Pan | ModDest::Osc4Pan => 1.0,
-        ModDest::Osc1Pitch
-        | ModDest::Osc2Pitch
-        | ModDest::Osc3Pitch
-        | ModDest::Osc4Pitch => 12.0,      // ±12 semitones (FM range)
-        ModDest::Filter2Cutoff => 60.0,    // ±5 octaves
+        ModDest::Osc1Pitch | ModDest::Osc2Pitch | ModDest::Osc3Pitch | ModDest::Osc4Pitch => 12.0, // ±12 semitones (FM range)
+        ModDest::Osc1Pw | ModDest::Osc2Pw | ModDest::Osc3Pw | ModDest::Osc4Pw => 0.5, // ±0.5 around the base width
+        ModDest::Filter2Cutoff => 60.0,                                               // ±5 octaves
         ModDest::Filter2Resonance => 1.0,
         ModDest::DelayTime
         | ModDest::DelayFeedback
@@ -296,6 +309,45 @@ pub fn dest_range(dest: ModDest) -> f32 {
         ModDest::Lfo1Rate | ModDest::Lfo2Rate | ModDest::Lfo3Rate => 1.0,
         ModDest::Lfo1Depth | ModDest::Lfo2Depth | ModDest::Lfo3Depth => 1.0,
     }
+}
+
+/// Global effect destinations, evaluated once per sample at VoiceManager
+/// level (global LFOs + the strongest active voice's values) and applied
+/// to the effects chain by the engine/plugin render loops.
+pub const FX_DESTS: [ModDest; 7] = [
+    ModDest::DelayTime,
+    ModDest::DelayFeedback,
+    ModDest::DelayMix,
+    ModDest::ReverbMix,
+    ModDest::ChorusRate,
+    ModDest::ChorusDepth,
+    ModDest::ChorusMix,
+];
+
+/// Bitmask covering all global FX destinations (for `used_dests` checks).
+pub const FX_MOD_MASK: u64 = (1 << ModDest::DelayTime as u64)
+    | (1 << ModDest::DelayFeedback as u64)
+    | (1 << ModDest::DelayMix as u64)
+    | (1 << ModDest::ReverbMix as u64)
+    | (1 << ModDest::ChorusRate as u64)
+    | (1 << ModDest::ChorusDepth as u64)
+    | (1 << ModDest::ChorusMix as u64);
+
+/// Resolved offsets for the global FX destinations, in destination units.
+///
+/// `delay_time` is additive seconds on top of the base delay time;
+/// `delay_feedback`/`delay_mix`/`reverb_mix`/`chorus_mix` are additive 0..1
+/// amounts; `chorus_rate` is an exponent applied as `rate * 4^v` (±2
+/// octaves); `chorus_depth` is scaled to ±5 ms by the chorus itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FxMods {
+    pub delay_time: f32,
+    pub delay_feedback: f32,
+    pub delay_mix: f32,
+    pub reverb_mix: f32,
+    pub chorus_rate: f32,
+    pub chorus_depth: f32,
+    pub chorus_mix: f32,
 }
 
 /// One routing slot: `dest += source_value * amount * dest_range(dest)`.
@@ -419,10 +471,7 @@ mod tests {
     fn test_empty_matrix_no_offset() {
         let m = ModMatrix::default();
         assert!(m.is_empty());
-        assert_eq!(
-            m.offset_for(ModDest::FilterCutoff, |_| 1.0),
-            0.0
-        );
+        assert_eq!(m.offset_for(ModDest::FilterCutoff, |_| 1.0), 0.0);
     }
 
     #[test]
@@ -439,6 +488,10 @@ mod tests {
             ..Default::default()
         };
         let off = m.offset_for(ModDest::AllPitch, |s| values.get(s));
-        assert!((off - 6.0).abs() < 1e-6, "expected +6 semitones, got {}", off);
+        assert!(
+            (off - 6.0).abs() < 1e-6,
+            "expected +6 semitones, got {}",
+            off
+        );
     }
 }

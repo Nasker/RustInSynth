@@ -47,16 +47,24 @@ pub trait Envelope: Send + Sync {
     fn set_release(&mut self, _release_time: f32) {}
 
     /// Get attack time in seconds
-    fn attack(&self) -> f32 { 0.0 }
+    fn attack(&self) -> f32 {
+        0.0
+    }
 
     /// Get decay time in seconds
-    fn decay(&self) -> f32 { 0.0 }
+    fn decay(&self) -> f32 {
+        0.0
+    }
 
     /// Get sustain level
-    fn sustain(&self) -> f32 { 1.0 }
+    fn sustain(&self) -> f32 {
+        1.0
+    }
 
     /// Get release time in seconds
-    fn release_time(&self) -> f32 { 0.0 }
+    fn release_time(&self) -> f32 {
+        0.0
+    }
 }
 
 /// Simple Attack-Release envelope
@@ -228,11 +236,9 @@ impl ADSREnvelope {
     fn update_increments(&mut self) {
         let samples_per_second = self.sample_rate as f32;
         self.attack_increment = 1.0 / (self.attack_time * samples_per_second);
-        self.decay_decrement =
-            (1.0 - self.sustain_level) / (self.decay_time * samples_per_second);
+        self.decay_decrement = (1.0 - self.sustain_level) / (self.decay_time * samples_per_second);
         // Release decrement is recalculated in release() based on current amplitude
-        self.release_decrement =
-            self.sustain_level / (self.release_time * samples_per_second);
+        self.release_decrement = self.sustain_level / (self.release_time * samples_per_second);
     }
 }
 
@@ -464,94 +470,118 @@ mod tests {
 
         let path = PathBuf::from(filename);
         {
-        let root = BitMapBackend::new(&path, (1200, 600)).into_drawing_area();
-        root.fill(&WHITE).unwrap();
+            let root = BitMapBackend::new(&path, (1200, 600)).into_drawing_area();
+            root.fill(&WHITE).unwrap();
 
-        let duration = recording.duration_seconds();
-        let min_amp = recording.samples.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-        let max_amp = recording.samples.iter().fold(0.0_f32, |a, &b| a.max(b));
+            let duration = recording.duration_seconds();
+            let min_amp = recording
+                .samples
+                .iter()
+                .fold(f32::INFINITY, |a, &b| a.min(b));
+            let max_amp = recording.samples.iter().fold(0.0_f32, |a, &b| a.max(b));
 
-        let mut chart = ChartBuilder::on(&root)
-            .caption(title, ("sans-serif", 30))
-            .margin(10)
-            .x_label_area_size(40)
-            .y_label_area_size(40)
-            .build_cartesian_2d(0.0f32..duration, -0.1f32..1.1f32)
-            .unwrap();
+            let mut chart = ChartBuilder::on(&root)
+                .caption(title, ("sans-serif", 30))
+                .margin(10)
+                .x_label_area_size(40)
+                .y_label_area_size(40)
+                .build_cartesian_2d(0.0f32..duration, -0.1f32..1.1f32)
+                .unwrap();
 
-        chart.configure_mesh()
-            .x_desc("Time (seconds)")
-            .y_desc("Amplitude")
-            .draw()
-            .unwrap();
+            chart
+                .configure_mesh()
+                .x_desc("Time (seconds)")
+                .y_desc("Amplitude")
+                .draw()
+                .unwrap();
 
-        // Plot envelope curve
-        let points: Vec<(f32, f32)> = recording.samples.iter()
-            .enumerate()
-            .map(|(i, &amp)| (i as f32 / recording.sample_rate as f32, amp))
-            .collect();
+            // Plot envelope curve
+            let points: Vec<(f32, f32)> = recording
+                .samples
+                .iter()
+                .enumerate()
+                .map(|(i, &amp)| (i as f32 / recording.sample_rate as f32, amp))
+                .collect();
 
-        chart.draw_series(LineSeries::new(points, &BLUE))
-            .unwrap()
-            .label("Envelope")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+            chart
+                .draw_series(LineSeries::new(points, &BLUE))
+                .unwrap()
+                .label("Envelope")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
 
-        // Draw state transition points
-        let mut last_state = EnvelopeState::Idle;
-        let state_colors = [
-            (EnvelopeState::Idle, RGBColor(200, 200, 200)),
-            (EnvelopeState::Attack, RGBColor(0, 255, 0)),
-            (EnvelopeState::Decay, RGBColor(255, 255, 0)),
-            (EnvelopeState::Sustain, RGBColor(0, 0, 255)),
-            (EnvelopeState::Release, RGBColor(255, 0, 0)),
-        ];
+            // Draw state transition points
+            let mut last_state = EnvelopeState::Idle;
+            let state_colors = [
+                (EnvelopeState::Idle, RGBColor(200, 200, 200)),
+                (EnvelopeState::Attack, RGBColor(0, 255, 0)),
+                (EnvelopeState::Decay, RGBColor(255, 255, 0)),
+                (EnvelopeState::Sustain, RGBColor(0, 0, 255)),
+                (EnvelopeState::Release, RGBColor(255, 0, 0)),
+            ];
 
-        for (i, &state) in recording.states.iter().enumerate() {
-            if state != last_state {
-                let x = i as f32 / recording.sample_rate as f32;
-                let color = state_colors.iter().find(|(s, _)| *s == state).map(|(_, c)| *c).unwrap_or(BLACK);
-                chart.draw_series(
-                    std::iter::once(Circle::new((x, recording.samples[i]), 3, color.filled()))
-                ).unwrap();
-                last_state = state;
+            for (i, &state) in recording.states.iter().enumerate() {
+                if state != last_state {
+                    let x = i as f32 / recording.sample_rate as f32;
+                    let color = state_colors
+                        .iter()
+                        .find(|(s, _)| *s == state)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(BLACK);
+                    chart
+                        .draw_series(std::iter::once(Circle::new(
+                            (x, recording.samples[i]),
+                            3,
+                            color.filled(),
+                        )))
+                        .unwrap();
+                    last_state = state;
+                }
             }
-        }
 
-        // Draw event markers
-        for (sample_idx, event) in &recording.events {
-            let x = *sample_idx as f32 / recording.sample_rate as f32;
-            let color = if event.contains("ON") { GREEN } else { RED };
-            chart.draw_series(
-                std::iter::once(
-                    TriangleMarker::new((x, 1.05), 10, color.filled())
-                )
-            ).unwrap();
-        }
+            // Draw event markers
+            for (sample_idx, event) in &recording.events {
+                let x = *sample_idx as f32 / recording.sample_rate as f32;
+                let color = if event.contains("ON") { GREEN } else { RED };
+                chart
+                    .draw_series(std::iter::once(TriangleMarker::new(
+                        (x, 1.05),
+                        10,
+                        color.filled(),
+                    )))
+                    .unwrap();
+            }
 
-        // Draw legend for events
-        chart.configure_series_labels()
-            .background_style(WHITE.mix(0.8))
-            .border_style(BLACK)
-            .draw()
+            // Draw legend for events
+            chart
+                .configure_series_labels()
+                .background_style(WHITE.mix(0.8))
+                .border_style(BLACK)
+                .draw()
+                .unwrap();
+
+            // Add text annotation
+            let text_style = ("sans-serif", 15).into_font().color(&BLACK);
+            root.draw_text(
+                &format!(
+                    "Min: {:.4}, Max: {:.4}, Samples: {}",
+                    min_amp,
+                    max_amp,
+                    recording.samples.len()
+                ),
+                &text_style,
+                (50, 50),
+            )
             .unwrap();
 
-        // Add text annotation
-        let text_style = ("sans-serif", 15).into_font().color(&BLACK);
-        root.draw_text(
-            &format!("Min: {:.4}, Max: {:.4}, Samples: {}", min_amp, max_amp, recording.samples.len()),
-            &text_style,
-            (50, 50)
-        ).unwrap();
+            // Report discontinuities
+            let discontinuities = recording.find_discontinuities(0.05);
+            if !discontinuities.is_empty() {
+                let disc_text = format!("⚠ {} discontinuities detected!", discontinuities.len());
+                let warn_style = ("sans-serif", 15).into_font().color(&RED);
+                root.draw_text(&disc_text, &warn_style, (50, 70)).unwrap();
+            }
 
-        // Report discontinuities
-        let discontinuities = recording.find_discontinuities(0.05);
-        if !discontinuities.is_empty() {
-            let disc_text = format!("⚠ {} discontinuities detected!", discontinuities.len());
-            let warn_style = ("sans-serif", 15).into_font().color(&RED);
-            root.draw_text(&disc_text, &warn_style, (50, 70)).unwrap();
-        }
-
-        root.present().unwrap();
+            root.present().unwrap();
         } // drop root and release borrow on path
         path
     }
@@ -603,7 +633,7 @@ mod tests {
             env.next_amplitude();
         }
         assert_eq!(env.state(), EnvelopeState::Sustain);
-        
+
         // Sustain level should be ~0.5
         let amp = env.next_amplitude();
         assert!((amp - 0.5).abs() < 0.01);
@@ -623,16 +653,16 @@ mod tests {
     #[test]
     fn test_adsr_setters() {
         let mut env = ADSREnvelope::default_adsr(44100);
-        
+
         env.set_attack(0.5);
         assert_eq!(env.attack(), 0.5);
-        
+
         env.set_decay(0.3);
         assert_eq!(env.decay(), 0.3);
-        
+
         env.set_sustain(0.6);
         assert_eq!(env.sustain(), 0.6);
-        
+
         env.set_release(1.0);
         assert_eq!(env.release_time(), 1.0);
     }
@@ -650,20 +680,27 @@ mod tests {
 
         // Events: (time_seconds, is_note_on)
         let events = vec![
-            (0.0, true),   // Note on at start
-            (1.0, false),  // Note off after 1 second
+            (0.0, true),  // Note on at start
+            (1.0, false), // Note off after 1 second
         ];
 
         let recording = record_envelope_sequence(&mut env, &events, 2.0, sample_rate);
-        let path = plot_envelope(&recording, "test_adsr_simple.png", "ADSR Envelope - Simple Note On/Off");
+        let path = plot_envelope(
+            &recording,
+            "test_adsr_simple.png",
+            "ADSR Envelope - Simple Note On/Off",
+        );
 
         println!("Plot saved to: {}", path.display());
 
         // Assert no discontinuities
         let discontinuities = recording.find_discontinuities(0.05);
-        assert!(discontinuities.is_empty(), 
-            "Found {} discontinuities in envelope! This could cause clicks.\n{:?}", 
-            discontinuities.len(), discontinuities);
+        assert!(
+            discontinuities.is_empty(),
+            "Found {} discontinuities in envelope! This could cause clicks.\n{:?}",
+            discontinuities.len(),
+            discontinuities
+        );
     }
 
     /// Test: Plot AR envelope with quick note on/off
@@ -673,18 +710,25 @@ mod tests {
         let mut env = AREnvelope::new(0.05, 0.2, sample_rate);
 
         let events = vec![
-            (0.0, true),   // Note on
-            (0.5, false),  // Note off during sustain
+            (0.0, true),  // Note on
+            (0.5, false), // Note off during sustain
         ];
 
         let recording = record_envelope_sequence(&mut env, &events, 1.0, sample_rate);
-        let path = plot_envelope(&recording, "test_ar_envelope.png", "AR Envelope - Attack/Release");
+        let path = plot_envelope(
+            &recording,
+            "test_ar_envelope.png",
+            "AR Envelope - Attack/Release",
+        );
 
         println!("Plot saved to: {}", path.display());
 
         let discontinuities = recording.find_discontinuities(0.05);
-        assert!(discontinuities.is_empty(), 
-            "Found {} discontinuities!", discontinuities.len());
+        assert!(
+            discontinuities.is_empty(),
+            "Found {} discontinuities!",
+            discontinuities.len()
+        );
     }
 
     /// Test: Multiple note on/off cycles to check for continuity issues
@@ -697,21 +741,28 @@ mod tests {
         let events = vec![
             (0.0, true),
             (0.3, false),
-            (0.5, true),   // Re-trigger during release
+            (0.5, true), // Re-trigger during release
             (0.8, false),
             (1.0, true),
             (1.5, false),
         ];
 
         let recording = record_envelope_sequence(&mut env, &events, 2.0, sample_rate);
-        let path = plot_envelope(&recording, "test_adsr_multiple_cycles.png", "ADSR - Multiple Note Cycles");
+        let path = plot_envelope(
+            &recording,
+            "test_adsr_multiple_cycles.png",
+            "ADSR - Multiple Note Cycles",
+        );
 
         println!("Plot saved to: {}", path.display());
 
         // Check for discontinuities at re-trigger points
         let discontinuities = recording.find_discontinuities(0.05);
-        assert!(discontinuities.is_empty(), 
-            "Found {} discontinuities at re-trigger points!", discontinuities.len());
+        assert!(
+            discontinuities.is_empty(),
+            "Found {} discontinuities at re-trigger points!",
+            discontinuities.len()
+        );
     }
 
     /// Test: Very short attack time (potential click source)
@@ -720,20 +771,24 @@ mod tests {
         let sample_rate = 44100;
         let mut env = ADSREnvelope::new(0.001, 0.1, 0.5, 0.1, sample_rate);
 
-        let events = vec![
-            (0.0, true),
-            (0.5, false),
-        ];
+        let events = vec![(0.0, true), (0.5, false)];
 
         let recording = record_envelope_sequence(&mut env, &events, 1.0, sample_rate);
-        let path = plot_envelope(&recording, "test_adsr_fast_attack.png", "ADSR - Fast Attack (1ms)");
+        let path = plot_envelope(
+            &recording,
+            "test_adsr_fast_attack.png",
+            "ADSR - Fast Attack (1ms)",
+        );
 
         println!("Plot saved to: {}", path.display());
 
         // Fast attack is expected, but should still be smooth
         let discontinuities = recording.find_discontinuities(0.1);
-        assert!(discontinuities.is_empty(), 
-            "Fast attack caused {} discontinuities!", discontinuities.len());
+        assert!(
+            discontinuities.is_empty(),
+            "Fast attack caused {} discontinuities!",
+            discontinuities.len()
+        );
     }
 
     /// Test: Very short release time (common click source)
@@ -744,19 +799,26 @@ mod tests {
 
         let events = vec![
             (0.0, true),
-            (0.5, false),  // Fast release
+            (0.5, false), // Fast release
         ];
 
         let recording = record_envelope_sequence(&mut env, &events, 1.0, sample_rate);
-        let path = plot_envelope(&recording, "test_adsr_fast_release.png", "ADSR - Fast Release (1ms)");
+        let path = plot_envelope(
+            &recording,
+            "test_adsr_fast_release.png",
+            "ADSR - Fast Release (1ms)",
+        );
 
         println!("Plot saved to: {}", path.display());
 
         // Check transition to idle
         let issues = recording.find_state_transition_issues();
-        assert!(issues.is_empty(), 
-            "Found {} state transition issues! Possible click sources.\n{:?}", 
-            issues.len(), issues);
+        assert!(
+            issues.is_empty(),
+            "Found {} state transition issues! Possible click sources.\n{:?}",
+            issues.len(),
+            issues
+        );
     }
 
     /// Test: Release from different sustain levels
@@ -768,10 +830,7 @@ mod tests {
         for (i, sustain) in [0.2, 0.5, 0.8].iter().enumerate() {
             let mut env = ADSREnvelope::new(0.02, 0.05, *sustain, 0.2, sample_rate);
 
-            let events = vec![
-                (0.0, true),
-                (0.2, false),
-            ];
+            let events = vec![(0.0, true), (0.2, false)];
 
             let recording = record_envelope_sequence(&mut env, &events, 0.6, sample_rate);
             let filename = format!("test_adsr_release_sustain_{}.png", i);
@@ -810,15 +869,19 @@ mod tests {
         // Various edge cases
         let events = vec![
             (0.00, true),
-            (0.05, false),  // Very short note (during attack)
-            (0.20, true),   // Re-trigger
-            (0.30, false),  // Short note (during decay)
+            (0.05, false), // Very short note (during attack)
+            (0.20, true),  // Re-trigger
+            (0.30, false), // Short note (during decay)
             (0.50, true),
-            (1.00, false),  // Normal length note
+            (1.00, false), // Normal length note
         ];
 
         let recording = record_envelope_sequence(&mut env, &events, 1.5, sample_rate);
-        let path = plot_envelope(&recording, "test_envelope_click_analysis.png", "Envelope Click Analysis");
+        let path = plot_envelope(
+            &recording,
+            "test_envelope_click_analysis.png",
+            "Envelope Click Analysis",
+        );
 
         println!("Analysis plot saved to: {}", path.display());
         println!("\n=== CLICK ANALYSIS ===");
@@ -840,15 +903,22 @@ mod tests {
         if transition_issues.is_empty() {
             println!("✓ No state transition issues");
         } else {
-            println!("⚠ Found {} state transition issues:", transition_issues.len());
+            println!(
+                "⚠ Found {} state transition issues:",
+                transition_issues.len()
+            );
             for (idx, state, prev_amp, curr_amp) in &transition_issues {
                 let time = *idx as f32 / sample_rate as f32;
-                println!("  At {:.4}s to {:?}: {} -> {} (potential click!)", 
-                    time, state, prev_amp, curr_amp);
+                println!(
+                    "  At {:.4}s to {:?}: {} -> {} (potential click!)",
+                    time, state, prev_amp, curr_amp
+                );
             }
         }
 
-        assert!(discontinuities.is_empty() && transition_issues.is_empty(),
-            "Envelope has potential click sources!");
+        assert!(
+            discontinuities.is_empty() && transition_issues.is_empty(),
+            "Envelope has potential click sources!"
+        );
     }
 }

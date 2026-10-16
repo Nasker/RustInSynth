@@ -1,5 +1,5 @@
 //! GUI module for RustSynth
-//! 
+//!
 //! Provides a Minimoog-style interface using egui with docking panels.
 //! Uses lock-free parameter sharing for real-time audio synchronization.
 
@@ -9,8 +9,8 @@ use std::sync::Arc;
 pub mod app;
 pub mod backend;
 pub mod panels;
-pub mod widgets;
 pub mod theme;
+pub mod widgets;
 
 #[cfg(not(feature = "plugin"))]
 pub mod backend_standalone;
@@ -63,7 +63,8 @@ impl ParamBank {
 
     /// Get all parameter values as a Vec (for saving presets)
     pub fn get_all(&self) -> Vec<f32> {
-        self.values.iter()
+        self.values
+            .iter()
             .map(|v| f32::from_bits(v.load(Ordering::Relaxed)))
             .collect()
     }
@@ -112,17 +113,18 @@ impl SharedState {
             mod_state: Arc::new(parking_lot::Mutex::new(ModState::default())),
         }
     }
-    
+
     /// Get CPU load as percentage (0.0 - 100.0)
     pub fn get_cpu_load(&self) -> f32 {
         let bits = self.cpu_load.load(std::sync::atomic::Ordering::Relaxed);
         f32::from_bits(bits) * 100.0
     }
-    
+
     /// Set CPU load (0.0 - 1.0)
     pub fn set_cpu_load(&self, load: f32) {
         let bits = load.to_bits();
-        self.cpu_load.store(bits, std::sync::atomic::Ordering::Relaxed);
+        self.cpu_load
+            .store(bits, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

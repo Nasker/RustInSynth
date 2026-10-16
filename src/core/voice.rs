@@ -3,28 +3,32 @@ use serde::{Deserialize, Serialize};
 use super::envelope::{ADSREnvelope, Envelope, EnvelopeState};
 use super::event::{NoteEvent, SynthEventKind, SynthEventReceiver, WaveformType};
 use super::filter::{make_filter, Filter, FilterType};
-use super::lfo::{LFO, LfoDestination, LfoWaveform};
-use super::mod_matrix::{ModDest, ModMatrix, ModSlot, ModSource, ModSourceValues};
+use super::lfo::{LfoDestination, LfoWaveform, LFO};
+use super::mod_matrix::{
+    FxMods, ModDest, ModMatrix, ModSlot, ModSource, ModSourceValues, FX_MOD_MASK,
+};
 use super::oscillator::{Oscillator, OscillatorBank};
 use super::param_spec::cc_to_plain;
 use super::params::{CCMapping, SynthParam};
 use super::presets::Preset;
-use super::types::{midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate, StereoSample};
+use super::types::{
+    midi_to_frequency, Amplitude, Frequency, MidiNote, Sample, SampleRate, StereoSample,
+};
 
 /// Envelope time range constants
-pub const MIN_ATTACK_TIME: f32 = 0.001;  // 1ms
-pub const MAX_ATTACK_TIME: f32 = 2.0;    // 2 seconds
-pub const MIN_DECAY_TIME: f32 = 0.001;   // 1ms
-pub const MAX_DECAY_TIME: f32 = 5.0;     // 5 seconds
-pub const MIN_RELEASE_TIME: f32 = 0.001; // 1ms  
-pub const MAX_RELEASE_TIME: f32 = 5.0;   // 5 seconds
+pub const MIN_ATTACK_TIME: f32 = 0.001; // 1ms
+pub const MAX_ATTACK_TIME: f32 = 2.0; // 2 seconds
+pub const MIN_DECAY_TIME: f32 = 0.001; // 1ms
+pub const MAX_DECAY_TIME: f32 = 5.0; // 5 seconds
+pub const MIN_RELEASE_TIME: f32 = 0.001; // 1ms
+pub const MAX_RELEASE_TIME: f32 = 5.0; // 5 seconds
 
 /// A single synthesizer voice containing an oscillator bank, filter, envelopes, and LFO
 pub struct Voice {
     osc_bank: OscillatorBank,
     filter_left: Box<dyn Filter>,
     filter_right: Box<dyn Filter>,
-    filter_type: FilterType,           // Current filter topology
+    filter_type: FilterType, // Current filter topology
     // Second serial filter (after filter 1). Bypassed while it is a
     // wide-open SVF with no resonance and no matrix routes, so existing
     // presets pay nothing for it.
@@ -34,32 +38,34 @@ pub struct Voice {
     filter2_active: bool,
     base_cutoff2: Frequency,
     base_resonance2: f32,
-    envelope: Box<dyn Envelope>,       // Amplitude envelope (VCA)
+    envelope: Box<dyn Envelope>,        // Amplitude envelope (VCA)
     filter_envelope: Box<dyn Envelope>, // Filter envelope (VCF)
-    env3: Box<dyn Envelope>,           // Free modulation envelope
-    env4: Box<dyn Envelope>,           // Second free modulation envelope
-    lfos: [LFO; 3],                    // Per-voice low frequency oscillators
-    mod_matrix: ModMatrix,             // Modulation routing matrix
-    mod_wheel: f32,                    // 0.0 to 1.0, fed from CC1
-    pitch_bend_mod: f32,               // -1.0 to 1.0, pitch wheel as a mod source
-    aftertouch: f32,                   // 0.0 to 1.0, channel pressure
-    lfo_base: [(f32, f32); 3],         // Unmodulated (rate Hz, depth) per LFO
-    last_values: ModSourceValues,      // Previous sample's sources (mod-on-mod)
-    osc4_prev: f32,                    // Previous sample's raw osc4 output (FM/RM source)
-    used_dests: u64,                   // Bitmask of ModDest targeted by the matrix
+    env3: Box<dyn Envelope>,            // Free modulation envelope
+    env4: Box<dyn Envelope>,            // Second free modulation envelope
+    lfos: [LFO; 3],                     // Per-voice low frequency oscillators
+    mod_matrix: ModMatrix,              // Modulation routing matrix
+    mod_wheel: f32,                     // 0.0 to 1.0, fed from CC1
+    pitch_bend_mod: f32,                // -1.0 to 1.0, pitch wheel as a mod source
+    aftertouch: f32,                    // 0.0 to 1.0, channel pressure
+    lfo_base: [(f32, f32); 3],          // Unmodulated (rate Hz, depth) per LFO
+    last_values: ModSourceValues,       // Previous sample's sources (mod-on-mod)
+    osc4_prev: f32,                     // Previous sample's raw osc4 output (FM/RM source)
+    used_dests: u64,                    // Bitmask of ModDest targeted by the matrix
     current_note: Option<MidiNote>,
     velocity: Amplitude,
     sample_rate: SampleRate,
     // Filter envelope modulation
     base_cutoff: Frequency,
     base_resonance: f32,
-    filter_env_amount: f32,            // 0.0 to 1.0 (amount of envelope applied)
+    filter_env_amount: f32, // 0.0 to 1.0 (amount of envelope applied)
     // LFO modulation
-    base_frequency: Frequency,         // Base note frequency for pitch modulation
+    base_frequency: Frequency, // Base note frequency for pitch modulation
+    // Pulse width base values per oscillator (0.0..=1.0)
+    osc_pw: [f32; 4],
     // Portamento (glide)
-    portamento_time: f32,              // Glide time in seconds (0.0 = off)
-    glide_target_freq: Frequency,       // Target frequency during glide
-    glide_active: bool,                 // Whether portamento glide is in progress
+    portamento_time: f32,         // Glide time in seconds (0.0 = off)
+    glide_target_freq: Frequency, // Target frequency during glide
+    glide_active: bool,           // Whether portamento glide is in progress
 }
 
 impl Voice {
@@ -79,7 +85,11 @@ impl Voice {
             filter_envelope: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)), // Quick decay for pluck
             env3: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)),
             env4: Box::new(ADSREnvelope::new(0.01, 0.3, 0.0, 0.3, sample_rate)),
-            lfos: [LFO::new(sample_rate), LFO::new(sample_rate), LFO::new(sample_rate)],
+            lfos: [
+                LFO::new(sample_rate),
+                LFO::new(sample_rate),
+                LFO::new(sample_rate),
+            ],
             mod_matrix: ModMatrix::default(),
             mod_wheel: 0.0,
             pitch_bend_mod: 0.0,
@@ -95,6 +105,7 @@ impl Voice {
             base_resonance: 0.0,
             filter_env_amount: 0.0, // Off by default
             base_frequency: 440.0,
+            osc_pw: [0.5; 4],
             portamento_time: 0.0,
             glide_target_freq: 440.0,
             glide_active: false,
@@ -137,7 +148,9 @@ impl Voice {
         self.apply_resonance_offset(mods.resonance_offset);
 
         self.osc_bank.set_pitch_mods(mods.osc_pitch);
-        self.osc_bank.set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
+        self.osc_bank.set_pulse_widths(mods.osc_pw);
+        self.osc_bank
+            .set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
 
         let modulated_cutoff = self.modulated_cutoff(mods.filter_env_amp, mods.cutoff_semitones);
         // For mono output, use left filter (both filters have same parameters)
@@ -177,7 +190,7 @@ impl Voice {
         self.filter2_left.set_resonance(r2);
         self.filter2_right.set_resonance(r2);
     }
-    
+
     /// Generate the next stereo sample from this voice with per-oscillator panning
     /// pans: [osc1..osc4] where -1.0 = left, 0.0 = center, 1.0 = right
     pub fn next_sample_stereo(&mut self, pans: [f32; 4]) -> StereoSample {
@@ -200,7 +213,9 @@ impl Voice {
         self.apply_resonance_offset(mods.resonance_offset);
 
         self.osc_bank.set_pitch_mods(mods.osc_pitch);
-        self.osc_bank.set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
+        self.osc_bank.set_pulse_widths(mods.osc_pw);
+        self.osc_bank
+            .set_frequency(self.base_frequency * 2.0f32.powf(mods.pitch_semitones / 12.0));
 
         let modulated_cutoff = self.modulated_cutoff(mods.filter_env_amp, mods.cutoff_semitones);
         // Set cutoff on both filters for stereo processing
@@ -297,12 +312,23 @@ impl Voice {
         };
         self.last_values = values;
         let get = |s: ModSource| values.get(s);
-        let off = |d: ModDest| if has(d) { self.mod_matrix.offset_for(d, get) } else { 0.0 };
+        let off = |d: ModDest| {
+            if has(d) {
+                self.mod_matrix.offset_for(d, get)
+            } else {
+                0.0
+            }
+        };
         // Level destinations treat Osc4 as a ring modulator, not an additive
         // offset, so its linear contribution is excluded from `gain` and the
         // amount alone drives `carrier_gain`'s multiplication by the raw wave.
-        let get_no_osc4 =
-            |s: ModSource| if s == ModSource::Osc4 { 0.0 } else { values.get(s) };
+        let get_no_osc4 = |s: ModSource| {
+            if s == ModSource::Osc4 {
+                0.0
+            } else {
+                values.get(s)
+            }
+        };
         let gain = |d: ModDest| {
             if has(d) {
                 (1.0 + self.mod_matrix.offset_for(d, get_no_osc4)).clamp(0.0, 2.0)
@@ -355,6 +381,12 @@ impl Voice {
                 off(ModDest::Osc2Pan),
                 off(ModDest::Osc3Pan),
                 off(ModDest::Osc4Pan),
+            ],
+            osc_pw: [
+                (self.osc_pw[0] + off(ModDest::Osc1Pw)).clamp(0.01, 0.99),
+                (self.osc_pw[1] + off(ModDest::Osc2Pw)).clamp(0.01, 0.99),
+                (self.osc_pw[2] + off(ModDest::Osc3Pw)).clamp(0.01, 0.99),
+                (self.osc_pw[3] + off(ModDest::Osc4Pw)).clamp(0.01, 0.99),
             ],
             width: (1.0 + off(ModDest::StereoWidth)).clamp(0.0, 2.0),
         }
@@ -449,6 +481,19 @@ impl Voice {
         }
     }
 
+    /// Set base pulse width for one oscillator (1-4). Matrix offsets are
+    /// added per sample on top of this value.
+    pub fn set_osc_pw(&mut self, osc_num: u8, pw: f32) {
+        let pw = pw.clamp(0.0, 1.0);
+        match osc_num {
+            1 => self.osc_pw[0] = pw,
+            2 => self.osc_pw[1] = pw,
+            3 => self.osc_pw[2] = pw,
+            4 => self.osc_pw[3] = pw,
+            _ => {}
+        }
+    }
+
     /// Trigger a note on this voice
     pub fn note_on(&mut self, note: MidiNote, velocity: Amplitude) {
         self.current_note = Some(note);
@@ -496,6 +541,11 @@ impl Voice {
     /// Check if this voice is currently playing
     pub fn is_active(&self) -> bool {
         !self.envelope.is_finished()
+    }
+
+    /// Previous sample's source values (for global FX modulation).
+    pub fn last_values(&self) -> ModSourceValues {
+        self.last_values
     }
 
     /// Debug: amp envelope state and configured sustain level.
@@ -751,6 +801,8 @@ struct VoiceMods {
     ring_mod: [f32; 4],
     /// Per-oscillator pan offsets added to the base pans.
     pan_offset: [f32; 4],
+    /// Per-oscillator pulse widths (base + matrix offset, clamped).
+    osc_pw: [f32; 4],
     /// Per-voice stereo width factor (1.0 = unmodulated).
     width: f32,
 }
@@ -863,6 +915,11 @@ pub struct OscBankState {
     pub osc4_semitones: i8,
     pub osc4_cents: i8,
     pub osc4_phase: f32,
+    // Base pulse widths (only audible on the Pulse waveform)
+    pub osc1_pw: f32,
+    pub osc2_pw: f32,
+    pub osc3_pw: f32,
+    pub osc4_pw: f32,
 }
 
 impl Default for OscBankState {
@@ -874,18 +931,22 @@ impl Default for OscBankState {
             osc2_waveform: WaveformType::Saw,
             osc2_level: 0.8,
             osc2_semitones: 0,
-            osc2_cents: 7,  // Slight detune for fatness
+            osc2_cents: 7, // Slight detune for fatness
             osc2_phase: 0.0,
             osc3_waveform: WaveformType::Square,
             osc3_level: 0.5,
-            osc3_semitones: -12,  // Sub oscillator
+            osc3_semitones: -12, // Sub oscillator
             osc3_cents: 0,
             osc3_phase: 0.0,
             osc4_waveform: WaveformType::Sine,
-            osc4_level: 0.0,    // Silent by default; raise to mix or modulate
+            osc4_level: 0.0, // Silent by default; raise to mix or modulate
             osc4_semitones: 0,
             osc4_cents: 0,
             osc4_phase: 0.0,
+            osc1_pw: 0.5,
+            osc2_pw: 0.5,
+            osc3_pw: 0.5,
+            osc4_pw: 0.5,
         }
     }
 }
@@ -919,7 +980,7 @@ pub struct VoiceManager {
     osc2_pan: f32,
     osc3_pan: f32,
     osc4_pan: f32,
-    stereo_width: f32,  // 0.0 = mono, 1.0 = normal, 2.0 = extra wide
+    stereo_width: f32, // 0.0 = mono, 1.0 = normal, 2.0 = extra wide
     // Amplitude ADSR envelope state
     attack_time: f32,
     decay_time: f32,
@@ -960,6 +1021,15 @@ pub struct VoiceManager {
     // Modulation
     mod_matrix: ModMatrix,
     mod_wheel: f32,
+    pitch_bend_mod: f32, // -1.0 to 1.0 (global copy for FX mods)
+    aftertouch: f32,     // 0.0 to 1.0 (global copy for FX mods)
+    used_dests: u64,     // Bitmask of ModDest targeted by the matrix
+    // Global FX modulation: dedicated LFOs evaluated once per sample at
+    // manager level, feeding the effects chain rather than voices.
+    fx_lfos: [LFO; 3],
+    fx_lfo_base: [(f32, f32); 3], // Unmodulated (rate Hz, depth) per LFO
+    fx_last_values: ModSourceValues, // Previous sample's global sources
+    fx_mods: FxMods,              // Latest resolved FX offsets
     // Delay tempo sync (applied by the engine to the effects chain)
     delay_sync: bool,
     delay_beats: f32,
@@ -975,10 +1045,8 @@ pub struct VoiceManager {
 impl VoiceManager {
     pub fn new(max_voices: usize, sample_rate: SampleRate) -> Self {
         let osc_state = OscBankState::default();
-        let mut voices: Vec<Voice> = (0..max_voices)
-            .map(|_| Voice::new(sample_rate))
-            .collect();
-        
+        let mut voices: Vec<Voice> = (0..max_voices).map(|_| Voice::new(sample_rate)).collect();
+
         // Apply default oscillator bank state to all voices
         for voice in &mut voices {
             Self::apply_osc_state_to_voice(voice, &osc_state);
@@ -992,10 +1060,10 @@ impl VoiceManager {
             cc_mapping: CCMapping::default_mappings(),
             polyphony_mode: PolyphonyMode::Mono,
             // Stereo defaults (slight spread for fatness)
-            osc1_pan: 0.0,    // Center
-            osc2_pan: -0.3,   // Slightly left
-            osc3_pan: 0.3,    // Slightly right
-            osc4_pan: 0.0,    // Center
+            osc1_pan: 0.0,  // Center
+            osc2_pan: -0.3, // Slightly left
+            osc3_pan: 0.3,  // Slightly right
+            osc4_pan: 0.0,  // Center
             stereo_width: 1.0,
             // Amp envelope defaults
             attack_time: 0.01,
@@ -1032,6 +1100,17 @@ impl VoiceManager {
             env4: [0.01, 0.3, 0.0, 0.3],
             mod_matrix: ModMatrix::default(),
             mod_wheel: 0.0,
+            pitch_bend_mod: 0.0,
+            aftertouch: 0.0,
+            used_dests: 0,
+            fx_lfos: [
+                LFO::new(sample_rate),
+                LFO::new(sample_rate),
+                LFO::new(sample_rate),
+            ],
+            fx_lfo_base: [(6.0, 0.0); 3],
+            fx_last_values: ModSourceValues::default(),
+            fx_mods: FxMods::default(),
             delay_sync: false,
             delay_beats: 1.0,
             filter_type: FilterType::Svf,
@@ -1061,6 +1140,10 @@ impl VoiceManager {
         bank.set_level(4, state.osc4_level);
         bank.set_detune(4, state.osc4_semitones, state.osc4_cents);
         bank.set_phase(4, state.osc4_phase);
+        voice.set_osc_pw(1, state.osc1_pw);
+        voice.set_osc_pw(2, state.osc2_pw);
+        voice.set_osc_pw(3, state.osc3_pw);
+        voice.set_osc_pw(4, state.osc4_pw);
     }
 
     /// Create a monophonic voice manager (8 voices but mono mode)
@@ -1069,7 +1152,7 @@ impl VoiceManager {
         vm.polyphony_mode = PolyphonyMode::Mono;
         vm
     }
-    
+
     /// Create a polyphonic voice manager (8 voices)
     pub fn polyphonic(sample_rate: SampleRate) -> Self {
         let mut vm = Self::new(8, sample_rate);
@@ -1084,7 +1167,7 @@ impl VoiceManager {
         }
         self.key_stack.clear();
     }
-    
+
     /// Set polyphony mode. No-op when the mode is unchanged, so it is safe
     /// to call every buffer (releasing voices only makes sense on an actual
     /// mode switch).
@@ -1100,17 +1183,17 @@ impl VoiceManager {
             voice.note_off();
         }
     }
-    
+
     /// Get current polyphony mode
     pub fn polyphony_mode(&self) -> PolyphonyMode {
         self.polyphony_mode
     }
-    
+
     /// Get number of active voices
     pub fn active_voice_count(&self) -> usize {
         self.voices.iter().filter(|v| v.is_active()).count()
     }
-    
+
     /// Get max voices
     pub fn max_voices(&self) -> usize {
         self.max_voices
@@ -1143,7 +1226,7 @@ impl VoiceManager {
         let output = mixed_sample * self.master_volume;
         soft_clip(output)
     }
-    
+
     /// Debug: snapshot of voice 0's amp envelope (state, env sustain) plus
     /// the manager-level sustain and filter parameters.
     pub fn debug_voice0(&self) -> (EnvelopeState, f32, f32, f32, f32) {
@@ -1168,12 +1251,106 @@ impl VoiceManager {
             }
         }
 
+        // Resolve global FX destination offsets for the effects chain
+        // (uses this sample's fresh voice state).
+        self.update_fx_mods();
+
         // Apply master volume, stereo width, and soft clipping
         let output = mixed * self.master_volume;
         let widened = output.with_width(self.stereo_width);
         StereoSample::new(soft_clip(widened.left), soft_clip(widened.right))
     }
-    
+
+    /// Latest resolved global FX modulation offsets for the effects chain.
+    pub fn fx_mods(&self) -> FxMods {
+        self.fx_mods
+    }
+
+    /// Evaluate the matrix's global FX destinations once per sample.
+    ///
+    /// Sources: dedicated global LFOs (same rate/depth/waveform as the
+    /// per-voice ones, mod-on-mod included), global performance controllers
+    /// (mod wheel, aftertouch, pitch bend), and per-voice sources (envelopes,
+    /// velocity, key track, Osc 4) aggregated as the strongest value across
+    /// active voices. Cost is skipped entirely when no FX route is enabled.
+    fn update_fx_mods(&mut self) {
+        if self.used_dests & FX_MOD_MASK == 0 {
+            self.fx_mods = FxMods::default();
+            return;
+        }
+
+        // Mod-on-mod on the global LFOs (one-sample lag like the voices).
+        if self.used_dests & LFO_MOD_MASK != 0 {
+            let prev = self.fx_last_values;
+            let prev_get = |s: ModSource| prev.get(s);
+            for i in 0..3 {
+                let (base_rate, base_depth) = self.fx_lfo_base[i];
+                let rate_off = self.mod_matrix.offset_for(LFO_RATE_DESTS[i], prev_get);
+                let depth_off = self.mod_matrix.offset_for(LFO_DEPTH_DESTS[i], prev_get);
+                self.fx_lfos[i].set_rate(base_rate * 2.0f32.powf(rate_off * 3.0));
+                self.fx_lfos[i].set_depth((base_depth + depth_off).clamp(0.0, 1.0));
+            }
+        }
+
+        let mut values = ModSourceValues {
+            lfo: [
+                self.fx_lfos[0].next_value(),
+                self.fx_lfos[1].next_value(),
+                self.fx_lfos[2].next_value(),
+            ],
+            mod_wheel: self.mod_wheel,
+            pitch_bend: self.pitch_bend_mod,
+            aftertouch: self.aftertouch,
+            ..Default::default()
+        };
+        // Per-voice sources: strongest signal across active voices wins.
+        for voice in self.voices.iter().filter(|v| v.is_active()) {
+            let lv = voice.last_values();
+            values.amp_env = values.amp_env.max(lv.amp_env);
+            values.filter_env = values.filter_env.max(lv.filter_env);
+            values.env3 = values.env3.max(lv.env3);
+            values.env4 = values.env4.max(lv.env4);
+            values.velocity = values.velocity.max(lv.velocity);
+            if lv.key_track.abs() > values.key_track.abs() {
+                values.key_track = lv.key_track;
+            }
+            if lv.osc4.abs() > values.osc4.abs() {
+                values.osc4 = lv.osc4;
+            }
+        }
+        self.fx_last_values = values;
+
+        let get = |s: ModSource| values.get(s);
+        let m = &self.mod_matrix;
+        self.fx_mods = FxMods {
+            delay_time: m.offset_for(ModDest::DelayTime, get),
+            delay_feedback: m.offset_for(ModDest::DelayFeedback, get),
+            delay_mix: m.offset_for(ModDest::DelayMix, get),
+            reverb_mix: m.offset_for(ModDest::ReverbMix, get),
+            chorus_rate: m.offset_for(ModDest::ChorusRate, get),
+            chorus_depth: m.offset_for(ModDest::ChorusDepth, get),
+            chorus_mix: m.offset_for(ModDest::ChorusMix, get),
+        };
+    }
+
+    /// Push the current LFO settings (rate/depth/waveform) onto the global
+    /// FX LFOs so FX modulation tracks the same modulators as the voices.
+    fn sync_fx_lfos(&mut self) {
+        let rates = [
+            self.effective_lfo_rate(0),
+            self.effective_lfo_rate(1),
+            self.effective_lfo_rate(2),
+        ];
+        let depths = [self.lfo_depth, self.lfo2.depth, self.lfo3.depth];
+        let waves = [self.lfo_waveform, self.lfo2.waveform, self.lfo3.waveform];
+        for i in 0..3 {
+            self.fx_lfos[i].set_rate(rates[i]);
+            self.fx_lfos[i].set_depth(depths[i]);
+            self.fx_lfos[i].set_waveform(waves[i]);
+            self.fx_lfo_base[i] = (self.fx_lfos[i].rate(), self.fx_lfos[i].depth());
+        }
+    }
+
     /// Set oscillator pan (-1.0 = left, 0.0 = center, 1.0 = right)
     pub fn set_osc_pan(&mut self, osc_num: u8, pan: f32) {
         let pan = pan.clamp(-1.0, 1.0);
@@ -1185,7 +1362,7 @@ impl VoiceManager {
             _ => {}
         }
     }
-    
+
     /// Get oscillator pan
     pub fn osc_pan(&self, osc_num: u8) -> f32 {
         match osc_num {
@@ -1196,12 +1373,12 @@ impl VoiceManager {
             _ => 0.0,
         }
     }
-    
+
     /// Set stereo width (0.0 = mono, 1.0 = normal, 2.0 = extra wide)
     pub fn set_stereo_width(&mut self, width: f32) {
         self.stereo_width = width.clamp(0.0, 2.0);
     }
-    
+
     /// Get stereo width
     pub fn stereo_width(&self) -> f32 {
         self.stereo_width
@@ -1239,6 +1416,9 @@ impl VoiceManager {
         self.sample_rate = sample_rate;
         for voice in &mut self.voices {
             voice.set_sample_rate(sample_rate);
+        }
+        for lfo in &mut self.fx_lfos {
+            lfo.set_sample_rate(sample_rate);
         }
     }
 
@@ -1406,6 +1586,7 @@ impl VoiceManager {
         for voice in &mut self.voices {
             voice.set_lfo_rate(rate);
         }
+        self.sync_fx_lfos();
     }
 
     /// Effective rate in Hz for LFO `index` given current sync/tempo.
@@ -1480,6 +1661,7 @@ impl VoiceManager {
                 voice.set_lfo_rate_at(i, rates[i]);
             }
         }
+        self.sync_fx_lfos();
     }
 
     /// Current tempo in BPM.
@@ -1495,6 +1677,7 @@ impl VoiceManager {
         for voice in &mut self.voices {
             voice.set_lfo_rate_at(0, rate);
         }
+        self.sync_fx_lfos();
     }
 
     /// Set LFO depth for all voices (0.0 to 1.0)
@@ -1503,6 +1686,7 @@ impl VoiceManager {
         for voice in &mut self.voices {
             voice.set_lfo_depth(self.lfo_depth);
         }
+        self.sync_fx_lfos();
     }
 
     /// Set LFO waveform for all voices
@@ -1511,6 +1695,7 @@ impl VoiceManager {
         for voice in &mut self.voices {
             voice.set_lfo_waveform(waveform);
         }
+        self.sync_fx_lfos();
     }
 
     /// Set LFO destination for all voices
@@ -1555,6 +1740,7 @@ impl VoiceManager {
             voice.set_lfo_depth_at(index, s.depth);
             voice.set_lfo_waveform_at(index, s.waveform);
         }
+        self.sync_fx_lfos();
     }
 
     /// Get settings for LFO 2 or 3 (index 1 or 2)
@@ -1597,7 +1783,21 @@ impl VoiceManager {
 
     /// Set the modulation routing matrix on the manager and all voices
     pub fn set_mod_matrix(&mut self, matrix: ModMatrix) {
+        let had_lfo_mods = self.used_dests & LFO_MOD_MASK != 0;
         self.mod_matrix = matrix;
+        self.used_dests = matrix
+            .slots
+            .iter()
+            .filter(|s| s.enabled && s.source != ModSource::Off)
+            .fold(0u64, |m, s| m | (1u64 << s.dest as u64));
+        // Restore unmodulated FX-LFO settings when mod-on-mod routes go away.
+        if had_lfo_mods && self.used_dests & LFO_MOD_MASK == 0 {
+            for i in 0..3 {
+                let (rate, depth) = self.fx_lfo_base[i];
+                self.fx_lfos[i].set_rate(rate);
+                self.fx_lfos[i].set_depth(depth);
+            }
+        }
         for voice in &mut self.voices {
             voice.set_mod_matrix(matrix);
         }
@@ -1674,6 +1874,7 @@ impl VoiceManager {
 
     /// Set aftertouch pressure (0.0 to 1.0) on all voices
     pub fn set_aftertouch(&mut self, pressure: f32) {
+        self.aftertouch = pressure.clamp(0.0, 1.0);
         for voice in &mut self.voices {
             voice.set_aftertouch(pressure);
         }
@@ -1780,8 +1981,24 @@ impl VoiceManager {
         }
     }
 
+    /// Set base pulse width for a specific oscillator (1-4)
+    pub fn set_osc_pw(&mut self, osc_num: u8, pw: f32) {
+        let pw = pw.clamp(0.0, 1.0);
+        match osc_num {
+            1 => self.osc_state.osc1_pw = pw,
+            2 => self.osc_state.osc2_pw = pw,
+            3 => self.osc_state.osc3_pw = pw,
+            4 => self.osc_state.osc4_pw = pw,
+            _ => return,
+        }
+        for voice in &mut self.voices {
+            voice.set_osc_pw(osc_num, pw);
+        }
+    }
+
     /// Set pitch bend for all voices (-1.0 to +1.0)
     pub fn set_pitch_bend(&mut self, bend: f32) {
+        self.pitch_bend_mod = bend.clamp(-1.0, 1.0);
         for voice in &mut self.voices {
             voice.osc_bank_mut().set_pitch_bend(bend);
             voice.set_pitch_bend_mod(bend);
@@ -1860,6 +2077,7 @@ impl VoiceManager {
             }
             SynthParam::Osc1Level => self.set_osc_level(1, plain),
             SynthParam::Osc1Phase => self.set_osc_phase(1, plain),
+            SynthParam::Osc1Pw => self.set_osc_pw(1, plain),
             SynthParam::Osc2Waveform => {
                 self.set_osc_waveform(2, WaveformType::from_index(plain as u8))
             }
@@ -1867,6 +2085,7 @@ impl VoiceManager {
             SynthParam::Osc2Semitones => self.set_osc_semitones(2, plain as i8),
             SynthParam::Osc2Cents => self.set_osc_cents(2, plain as i8),
             SynthParam::Osc2Phase => self.set_osc_phase(2, plain),
+            SynthParam::Osc2Pw => self.set_osc_pw(2, plain),
             SynthParam::Osc3Waveform => {
                 self.set_osc_waveform(3, WaveformType::from_index(plain as u8))
             }
@@ -1874,6 +2093,7 @@ impl VoiceManager {
             SynthParam::Osc3Semitones => self.set_osc_semitones(3, plain as i8),
             SynthParam::Osc3Cents => self.set_osc_cents(3, plain as i8),
             SynthParam::Osc3Phase => self.set_osc_phase(3, plain),
+            SynthParam::Osc3Pw => self.set_osc_pw(3, plain),
             SynthParam::Osc4Waveform => {
                 self.set_osc_waveform(4, WaveformType::from_index(plain as u8))
             }
@@ -1882,6 +2102,7 @@ impl VoiceManager {
             SynthParam::Osc4Cents => self.set_osc_cents(4, plain as i8),
             SynthParam::Osc4Phase => self.set_osc_phase(4, plain),
             SynthParam::Osc4Pan => self.set_osc_pan(4, plain),
+            SynthParam::Osc4Pw => self.set_osc_pw(4, plain),
 
             // Stereo
             SynthParam::Osc1Pan => self.set_osc_pan(1, plain),
@@ -1942,7 +2163,7 @@ impl VoiceManager {
             PolyphonyMode::Poly => self.handle_note_on_poly(note, velocity),
         }
     }
-    
+
     /// Handle note off - dispatches to mono or poly handler
     fn handle_note_off(&mut self, note: MidiNote) {
         match self.polyphony_mode {
@@ -1950,25 +2171,25 @@ impl VoiceManager {
             PolyphonyMode::Poly => self.handle_note_off_poly(note),
         }
     }
-    
+
     /// Monophonic note on with key stacking
     fn handle_note_on_mono(&mut self, note: MidiNote, velocity: Amplitude) {
         // Remove note if already pressed (avoid duplicates)
         self.key_stack.retain(|&(n, _)| n != note);
         // Push to top of stack (newest priority)
         self.key_stack.push((note, velocity));
-        
+
         // Trigger the note on the first voice
         if let Some(voice) = self.voices.first_mut() {
             voice.note_on(note, velocity);
         }
     }
-    
+
     /// Monophonic note off with key stacking - return to previous note if any
     fn handle_note_off_mono(&mut self, note: MidiNote) {
         // Remove the note from stack
         self.key_stack.retain(|&(n, _)| n != note);
-        
+
         if let Some(voice) = self.voices.first_mut() {
             // If this was the current note, switch to previous if available
             if voice.current_note() == Some(note) {
@@ -1982,7 +2203,7 @@ impl VoiceManager {
             }
         }
     }
-    
+
     /// Polyphonic note on - allocate a voice for the note
     fn handle_note_on_poly(&mut self, note: MidiNote, velocity: Amplitude) {
         // First check if this note is already playing - retrigger it
@@ -1990,7 +2211,7 @@ impl VoiceManager {
             voice.note_on(note, velocity);
             return;
         }
-        
+
         // Allocate a new voice
         if let Some(idx) = self.allocate_voice_index() {
             // Apply current envelope/filter/lfo settings to the voice
@@ -2030,11 +2251,11 @@ impl VoiceManager {
             voice.set_mod_wheel(self.mod_wheel);
             // Portamento doesn't make as much sense in poly, but keep it
             voice.portamento_time = self.portamento_time;
-            
+
             voice.note_on(note, velocity);
         }
     }
-    
+
     /// Polyphonic note off - release the voice playing this note
     fn handle_note_off_poly(&mut self, note: MidiNote) {
         if let Some(voice) = self.find_voice_with_note(note) {
@@ -2101,6 +2322,11 @@ impl VoiceManager {
         self.set_osc_detune(4, preset.osc4_semitones, preset.osc4_cents);
         self.set_osc_phase(4, preset.osc4_phase);
 
+        self.set_osc_pw(1, preset.osc1_pw);
+        self.set_osc_pw(2, preset.osc2_pw);
+        self.set_osc_pw(3, preset.osc3_pw);
+        self.set_osc_pw(4, preset.osc4_pw);
+
         // Filter settings
         self.set_filter_cutoff(preset.filter_cutoff);
         self.set_filter_resonance(preset.filter_resonance);
@@ -2161,7 +2387,9 @@ impl VoiceManager {
 
         // Pitch bend
         for voice in &mut self.voices {
-            voice.osc_bank_mut().set_pitch_bend_range(preset.pitch_bend_range);
+            voice
+                .osc_bank_mut()
+                .set_pitch_bend_range(preset.pitch_bend_range);
         }
 
         // Portamento
@@ -2210,6 +2438,11 @@ impl VoiceManager {
             osc4_semitones: self.osc_state.osc4_semitones,
             osc4_cents: self.osc_state.osc4_cents,
             osc4_phase: self.osc_state.osc4_phase,
+
+            osc1_pw: self.osc_state.osc1_pw,
+            osc2_pw: self.osc_state.osc2_pw,
+            osc3_pw: self.osc_state.osc3_pw,
+            osc4_pw: self.osc_state.osc4_pw,
 
             filter_cutoff: self.filter_cutoff,
             filter_resonance: self.filter_resonance,
@@ -2308,7 +2541,11 @@ mod tests {
         }
 
         let (state, _, _, _, _) = vm.debug_voice0();
-        assert_ne!(state, EnvelopeState::Release, "held note must not be releasing");
+        assert_ne!(
+            state,
+            EnvelopeState::Release,
+            "held note must not be releasing"
+        );
         assert_ne!(state, EnvelopeState::Idle, "held note must still be active");
     }
 
@@ -2341,12 +2578,21 @@ mod tests {
 
         // All samples should have similar amplitude (sustaining)
         // With sustain at 0.5 and velocity 1.0, we should see significant amplitude
-        let avg_left: f32 = samples_at_sustain.iter().map(|s| s.left.abs()).sum::<f32>() / samples_at_sustain.len() as f32;
-        let avg_right: f32 = samples_at_sustain.iter().map(|s| s.right.abs()).sum::<f32>() / samples_at_sustain.len() as f32;
+        let avg_left: f32 = samples_at_sustain.iter().map(|s| s.left.abs()).sum::<f32>()
+            / samples_at_sustain.len() as f32;
+        let avg_right: f32 = samples_at_sustain
+            .iter()
+            .map(|s| s.right.abs())
+            .sum::<f32>()
+            / samples_at_sustain.len() as f32;
 
         // Should have significant output (not near zero)
-        assert!(avg_left > 0.01 || avg_right > 0.01,
-            "Sustain should produce audible output, got avg_left={}, avg_right={}", avg_left, avg_right);
+        assert!(
+            avg_left > 0.01 || avg_right > 0.01,
+            "Sustain should produce audible output, got avg_left={}, avg_right={}",
+            avg_left,
+            avg_right
+        );
     }
 
     /// Test that oscillator panning creates stereo separation
@@ -2358,11 +2604,11 @@ mod tests {
         // Only enable osc1 and osc2 for clearer test
         vm.set_osc_level(1, 1.0);
         vm.set_osc_level(2, 1.0);
-        vm.set_osc_level(3, 0.0);  // Disable osc3
+        vm.set_osc_level(3, 0.0); // Disable osc3
 
-        vm.set_osc_pan(1, -1.0);  // Hard left
-        vm.set_osc_pan(2, 1.0);   // Hard right
-        vm.set_osc_pan(3, 0.0);   // Center (but disabled)
+        vm.set_osc_pan(1, -1.0); // Hard left
+        vm.set_osc_pan(2, 1.0); // Hard right
+        vm.set_osc_pan(3, 0.0); // Center (but disabled)
 
         // Trigger note
         vm.receive_event(NoteEvent::note_on(69, 1.0));
@@ -2383,12 +2629,28 @@ mod tests {
 
         // With osc1 panned left and osc2 panned right, we should have
         // significant energy in both channels
-        assert!(left_avg > 0.001, "Left channel should have energy with osc1 panned left, got {}", left_avg);
-        assert!(right_avg > 0.001, "Right channel should have energy with osc2 panned right, got {}", right_avg);
+        assert!(
+            left_avg > 0.001,
+            "Left channel should have energy with osc1 panned left, got {}",
+            left_avg
+        );
+        assert!(
+            right_avg > 0.001,
+            "Right channel should have energy with osc2 panned right, got {}",
+            right_avg
+        );
 
         // The channels should be somewhat balanced since we have one osc on each side
-        let ratio = if left_avg > right_avg { left_avg / right_avg } else { right_avg / left_avg };
-        assert!(ratio < 10.0, "Left and right should be relatively balanced (ratio < 10), got ratio={}", ratio);
+        let ratio = if left_avg > right_avg {
+            left_avg / right_avg
+        } else {
+            right_avg / left_avg
+        };
+        assert!(
+            ratio < 10.0,
+            "Left and right should be relatively balanced (ratio < 10), got ratio={}",
+            ratio
+        );
     }
 
     /// Test that extreme panning works correctly
@@ -2414,8 +2676,12 @@ mod tests {
         }
 
         // With osc1 hard panned left, left should be significantly louder than right
-        assert!(left_sum > right_sum * 2.0,
-            "Hard left pan should have left > 2x right, got left={}, right={}", left_sum, right_sum);
+        assert!(
+            left_sum > right_sum * 2.0,
+            "Hard left pan should have left > 2x right, got left={}, right={}",
+            left_sum,
+            right_sum
+        );
     }
 
     /// Test that sustain can be changed dynamically during a playing note (like in a DAW)
@@ -2444,13 +2710,18 @@ mod tests {
         }
 
         // Calculate average amplitude after sustain change
-        let avg_amp: f32 = samples_after_change.iter()
+        let avg_amp: f32 = samples_after_change
+            .iter()
             .map(|s| (s.left.abs() + s.right.abs()) / 2.0)
-            .sum::<f32>() / samples_after_change.len() as f32;
+            .sum::<f32>()
+            / samples_after_change.len() as f32;
 
         // With sustain at 0.8, we should have significant output
-        assert!(avg_amp > 0.05,
-            "After changing sustain to 0.8, output should be audible, got avg_amp={}", avg_amp);
+        assert!(
+            avg_amp > 0.05,
+            "After changing sustain to 0.8, output should be audible, got avg_amp={}",
+            avg_amp
+        );
 
         // Now test starting with high sustain, then lowering it
         let mut vm2 = VoiceManager::monophonic(44100);
@@ -2470,14 +2741,19 @@ mod tests {
             samples_after_lower.push(vm2.next_sample_stereo());
         }
 
-        let avg_amp_lower: f32 = samples_after_lower.iter()
+        let avg_amp_lower: f32 = samples_after_lower
+            .iter()
             .map(|s| (s.left.abs() + s.right.abs()) / 2.0)
-            .sum::<f32>() / samples_after_lower.len() as f32;
+            .sum::<f32>()
+            / samples_after_lower.len() as f32;
 
         // With sustain lowered to 0.1, output should be much lower
-        assert!(avg_amp_lower < avg_amp * 0.5,
-            "Lowering sustain should reduce output, got avg_amp_lower={} vs previous {}"
-            , avg_amp_lower, avg_amp);
+        assert!(
+            avg_amp_lower < avg_amp * 0.5,
+            "Lowering sustain should reduce output, got avg_amp_lower={} vs previous {}",
+            avg_amp_lower,
+            avg_amp
+        );
     }
 
     #[test]
@@ -2668,8 +2944,13 @@ mod tests {
         for _ in 0..22050 {
             let _ = voice.next_sample();
         }
-        let later = (0..200).map(|_| voice.next_sample().abs()).fold(0.0f32, f32::max);
-        assert!(later <= first || first == 0.0, "env4 should attenuate over time");
+        let later = (0..200)
+            .map(|_| voice.next_sample().abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            later <= first || first == 0.0,
+            "env4 should attenuate over time"
+        );
     }
 
     /// Regression: Osc4 is an audio-rate mod source — routing it to a pitch
@@ -2700,7 +2981,10 @@ mod tests {
             .zip(fm.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 1.0, "Osc4->Osc1Pitch should produce audible FM (diff {diff})");
+        assert!(
+            diff > 1.0,
+            "Osc4->Osc1Pitch should produce audible FM (diff {diff})"
+        );
     }
 
     /// Regression: Osc4 routed to an osc level acts as ring modulation —
@@ -2731,7 +3015,10 @@ mod tests {
             .zip(rm.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 1.0, "Osc4->Osc1Level should ring-modulate (diff {diff})");
+        assert!(
+            diff > 1.0,
+            "Osc4->Osc1Level should ring-modulate (diff {diff})"
+        );
     }
 
     /// Regression: a routed Filter2Cutoff engages the second filter, and
@@ -2816,5 +3103,83 @@ mod tests {
             }
         }
         assert!(has_nonzero, "Voice manager should produce non-zero samples");
+    }
+
+    /// Global FX destinations are wired and expose a mask for the engine.
+    #[test]
+    fn test_fx_dests_are_wired() {
+        use crate::core::mod_matrix::FX_DESTS;
+        for d in FX_DESTS {
+            assert!(d.is_wired(), "{d:?} must be a wired destination");
+            assert!(d.is_global_fx(), "{d:?} must be in the FX mask");
+            assert!(!d.is_per_voice(), "{d:?} must not be per-voice");
+        }
+        assert_eq!(FX_DESTS.len(), 7);
+    }
+
+    /// A routed global source (mod wheel) produces FX offsets even with no
+    /// active voice — FX modulation must not depend on held notes.
+    #[test]
+    fn test_fx_mods_track_global_sources() {
+        let mut vm = VoiceManager::new(4, 44100);
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::ModWheel,
+            dest: ModDest::ReverbMix,
+            amount: 0.4,
+            enabled: true,
+        };
+        vm.set_mod_matrix(m);
+        vm.set_mod_wheel(1.0);
+        let _ = vm.next_sample_stereo();
+        assert!(
+            (vm.fx_mods().reverb_mix - 0.4).abs() < 1e-6,
+            "mod wheel should drive ReverbMix offset, got {}",
+            vm.fx_mods().reverb_mix
+        );
+
+        // Wheel back down → offset disappears (no drift, no latching).
+        vm.set_mod_wheel(0.0);
+        let _ = vm.next_sample_stereo();
+        assert_eq!(vm.fx_mods().reverb_mix, 0.0);
+    }
+
+    /// The global FX LFOs mirror the voice LFO settings and wiggle offsets
+    /// without any note held.
+    #[test]
+    fn test_fx_mods_use_global_lfos() {
+        let mut vm = VoiceManager::new(4, 44100);
+        let mut m = ModMatrix::default();
+        m.slots[0] = ModSlot {
+            source: ModSource::Lfo1,
+            dest: ModDest::DelayMix,
+            amount: 0.5,
+            enabled: true,
+        };
+        vm.set_mod_matrix(m);
+        vm.set_lfo_rate(5.0);
+        vm.set_lfo_depth(1.0);
+
+        let mut moved = false;
+        for _ in 0..4000 {
+            let _ = vm.next_sample_stereo();
+            if vm.fx_mods().delay_mix.abs() > 0.05 {
+                moved = true;
+                break;
+            }
+        }
+        assert!(moved, "LFO1 should modulate the DelayMix FX offset");
+    }
+
+    /// With no FX routes the offsets stay zero even while voices play.
+    #[test]
+    fn test_fx_mods_idle_without_routes() {
+        let mut vm = VoiceManager::monophonic(44100);
+        vm.set_mod_wheel(1.0);
+        vm.receive_event(NoteEvent::note_on(69, 1.0));
+        for _ in 0..64 {
+            let _ = vm.next_sample_stereo();
+        }
+        assert_eq!(vm.fx_mods(), FxMods::default());
     }
 }

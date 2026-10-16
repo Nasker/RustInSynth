@@ -1,5 +1,5 @@
 //! RustSynth GUI Application
-//! 
+//!
 //! Graphical interface using egui with Minimoog-style aesthetic.
 //!
 //! This standalone binary is only built when the `plugin` feature is OFF.

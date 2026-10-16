@@ -8,14 +8,16 @@ use egui::*;
 
 use crate::core::event::WaveformType;
 use crate::core::lfo::{LfoDestination, LfoWaveform};
-use crate::core::params::SynthParam;
 use crate::core::mod_matrix::{ModDest, ModMatrix, ModSlot, ModSource, MOD_SLOTS};
+use crate::core::params::SynthParam;
 use crate::core::presets::{
     list_library, load_preset, save_preset, Preset, PresetEntry, PRESET_BANKS,
 };
 use crate::core::voice::{LfoSettings, ModState, PolyphonyMode};
 use crate::gui::backend::{MidiLearnState, SynthBackend};
-use crate::gui::theme::{hangar_background, paint_chrome_title, section_header, spaced_label, THEME};
+use crate::gui::theme::{
+    hangar_background, paint_chrome_title, section_header, spaced_label, THEME,
+};
 use crate::gui::widgets::{gold_value_slider, param_slider};
 
 /// Which page is shown in the main panel (Massive-style tabbed layers).
@@ -84,7 +86,7 @@ fn format_slider_value(value: f64, _range: std::ops::RangeInclusive<usize>) -> S
 
 /// Window size shared by the standalone app and the plugin editor, sized so
 /// the SYNTH page fits without scrolling (the LFO/FX column is the tallest).
-pub const WINDOW_SIZE: [f32; 2] = [1120.0, 720.0];
+pub const WINDOW_SIZE: [f32; 2] = [1120.0, 800.0];
 
 /// How the shared shell should differ between the standalone app and the
 /// plugin editor. The layout itself is identical; only these knobs change.
@@ -145,11 +147,7 @@ pub fn shell(
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             ui.set_min_height(30.0);
-            ui.label(
-                RichText::new(&cfg.version)
-                    .size(9.0)
-                    .color(THEME.gold_dark),
-            );
+            ui.label(RichText::new(&cfg.version).size(9.0).color(THEME.gold_dark));
 
             if cfg.show_cpu {
                 ui.separator();
@@ -161,7 +159,11 @@ pub fn shell(
                 } else {
                     Color32::from_rgb(200, 100, 100)
                 };
-                ui.label(RichText::new("CPU:").size(10.0).color(Color32::from_gray(150)));
+                ui.label(
+                    RichText::new("CPU:")
+                        .size(10.0)
+                        .color(Color32::from_gray(150)),
+                );
                 ui.add(
                     egui::ProgressBar::new(cpu_load / 100.0)
                         .desired_width(60.0)
@@ -185,7 +187,13 @@ pub fn shell(
         });
 
         // Centered chrome logo, painted over the reserved bar height
-        paint_chrome_title(ctx, ui.painter().clone(), bar_rect.center(), "RUST IN SYNTH", 18.0);
+        paint_chrome_title(
+            ctx,
+            ui.painter().clone(),
+            bar_rect.center(),
+            "RUST IN SYNTH",
+            18.0,
+        );
     });
 
     // ── Main panel ──────────────────────────────────────────────────────────
@@ -203,10 +211,7 @@ pub fn shell(
                 ] {
                     let selected = preset_state.right_tab == tab;
                     if ui
-                        .selectable_label(
-                            selected,
-                            RichText::new(label).size(13.0).strong(),
-                        )
+                        .selectable_label(selected, RichText::new(label).size(13.0).strong())
                         .clicked()
                     {
                         preset_state.right_tab = tab;
@@ -291,21 +296,16 @@ pub fn shell(
 pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "OSCILLATORS");
 
-    let wf_labels = ["Sin", "Tri", "Saw", "Sqr", "Nse"];
+    let wf_labels = ["Sin", "Sqr", "Saw", "Tri", "Nse", "Pls"];
 
     // OSC 1
     ui.group(|ui| {
-        ui.label(
-            RichText::new("OSC 1")
-                .size(10.0)
-                .strong()
-                .color(Color32::from_rgb(255, 180, 60)),
-        );
+        ui.label(RichText::new("OSC 1").size(10.0).strong().color(THEME.gold));
 
         let wf1 = b.get_param(SynthParam::Osc1Waveform) as usize;
         egui::ComboBox::from_id_salt("osc1_wf")
             .width(60.0)
-            .selected_text(wf_labels[wf1.min(4)])
+            .selected_text(wf_labels[wf1.min(5)])
             .show_ui(ui, |ui| {
                 for (i, label) in wf_labels.iter().enumerate() {
                     if ui.selectable_label(wf1 == i, *label).clicked() {
@@ -317,23 +317,19 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
         param_slider(ui, b, SynthParam::Osc1Level, "Level");
         param_slider(ui, b, SynthParam::Osc1Phase, "Phase");
         param_slider(ui, b, SynthParam::Osc1Pan, "Pan");
+        param_slider(ui, b, SynthParam::Osc1Pw, "PW");
     });
 
     ui.add_space(4.0);
 
     // OSC 2
     ui.group(|ui| {
-        ui.label(
-            RichText::new("OSC 2")
-                .size(10.0)
-                .strong()
-                .color(Color32::from_rgb(255, 180, 60)),
-        );
+        ui.label(RichText::new("OSC 2").size(10.0).strong().color(THEME.gold));
 
         let wf2 = b.get_param(SynthParam::Osc2Waveform) as usize;
         egui::ComboBox::from_id_salt("osc2_wf")
             .width(60.0)
-            .selected_text(wf_labels[wf2.min(4)])
+            .selected_text(wf_labels[wf2.min(5)])
             .show_ui(ui, |ui| {
                 for (i, label) in wf_labels.iter().enumerate() {
                     if ui.selectable_label(wf2 == i, *label).clicked() {
@@ -347,23 +343,19 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
         param_slider(ui, b, SynthParam::Osc2Cents, "Cents");
         param_slider(ui, b, SynthParam::Osc2Phase, "Phase");
         param_slider(ui, b, SynthParam::Osc2Pan, "Pan");
+        param_slider(ui, b, SynthParam::Osc2Pw, "PW");
     });
 
     ui.add_space(4.0);
 
     // OSC 3
     ui.group(|ui| {
-        ui.label(
-            RichText::new("OSC 3")
-                .size(10.0)
-                .strong()
-                .color(Color32::from_rgb(255, 180, 60)),
-        );
+        ui.label(RichText::new("OSC 3").size(10.0).strong().color(THEME.gold));
 
         let wf3 = b.get_param(SynthParam::Osc3Waveform) as usize;
         egui::ComboBox::from_id_salt("osc3_wf")
             .width(60.0)
-            .selected_text(wf_labels[wf3.min(4)])
+            .selected_text(wf_labels[wf3.min(5)])
             .show_ui(ui, |ui| {
                 for (i, label) in wf_labels.iter().enumerate() {
                     if ui.selectable_label(wf3 == i, *label).clicked() {
@@ -377,6 +369,7 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
         param_slider(ui, b, SynthParam::Osc3Cents, "Cents");
         param_slider(ui, b, SynthParam::Osc3Phase, "Phase");
         param_slider(ui, b, SynthParam::Osc3Pan, "Pan");
+        param_slider(ui, b, SynthParam::Osc3Pw, "PW");
     });
 
     ui.add_space(4.0);
@@ -384,23 +377,14 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
     // OSC 4 — also feeds the routing matrix as an FM/RM source
     ui.group(|ui| {
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("OSC 4")
-                    .size(10.0)
-                    .strong()
-                    .color(Color32::from_rgb(255, 180, 60)),
-            );
-            ui.label(
-                RichText::new("FM/RM")
-                    .size(8.0)
-                    .color(THEME.text_dim),
-            );
+            ui.label(RichText::new("OSC 4").size(10.0).strong().color(THEME.gold));
+            ui.label(RichText::new("FM/RM").size(8.0).color(THEME.text_dim));
         });
 
         let wf4 = b.get_param(SynthParam::Osc4Waveform) as usize;
         egui::ComboBox::from_id_salt("osc4_wf")
             .width(60.0)
-            .selected_text(wf_labels[wf4.min(4)])
+            .selected_text(wf_labels[wf4.min(5)])
             .show_ui(ui, |ui| {
                 for (i, label) in wf_labels.iter().enumerate() {
                     if ui.selectable_label(wf4 == i, *label).clicked() {
@@ -414,6 +398,7 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
         param_slider(ui, b, SynthParam::Osc4Cents, "Cents");
         param_slider(ui, b, SynthParam::Osc4Phase, "Phase");
         param_slider(ui, b, SynthParam::Osc4Pan, "Pan");
+        param_slider(ui, b, SynthParam::Osc4Pw, "PW");
     });
 }
 
@@ -426,44 +411,48 @@ pub fn oscillators(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn filter2(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "FILTER 2");
 
-    let ft = b.get_param(SynthParam::Filter2Type) as usize;
-    egui::ComboBox::from_id_salt("filter2_type")
-        .selected_text(crate::core::filter::FilterType::ALL[ft.min(2)].name())
-        .show_ui(ui, |ui| {
-            for (i, ty) in crate::core::filter::FilterType::ALL.iter().enumerate() {
-                if ui.selectable_label(ft == i, ty.name()).clicked() {
-                    b.set_param(SynthParam::Filter2Type, i as f32);
+    ui.group(|ui| {
+        let ft = b.get_param(SynthParam::Filter2Type) as usize;
+        egui::ComboBox::from_id_salt("filter2_type")
+            .selected_text(crate::core::filter::FilterType::ALL[ft.min(2)].name())
+            .show_ui(ui, |ui| {
+                for (i, ty) in crate::core::filter::FilterType::ALL.iter().enumerate() {
+                    if ui.selectable_label(ft == i, ty.name()).clicked() {
+                        b.set_param(SynthParam::Filter2Type, i as f32);
+                    }
                 }
-            }
-        });
+            });
 
-    param_slider(ui, b, SynthParam::Filter2Cutoff, "Cutoff");
-    param_slider(ui, b, SynthParam::Filter2Resonance, "Res");
+        param_slider(ui, b, SynthParam::Filter2Cutoff, "Cutoff");
+        param_slider(ui, b, SynthParam::Filter2Resonance, "Res");
+    });
 }
 
 pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "FILTER 1");
 
-    // Filter topology selector (stored in ModState so it reaches the DSP)
-    let mut ms = b.mod_state();
-    let before = ms;
-    egui::ComboBox::from_id_salt("filter_type")
-        .selected_text(ms.filter_type.name())
-        .show_ui(ui, |ui| {
-            for ty in crate::core::filter::FilterType::ALL {
-                ui.selectable_value(&mut ms.filter_type, ty, ty.name());
-            }
-        });
-    if ms != before {
-        b.set_mod_state(ms);
-    }
+    ui.group(|ui| {
+        // Filter topology selector (stored in ModState so it reaches the DSP)
+        let mut ms = b.mod_state();
+        let before = ms;
+        egui::ComboBox::from_id_salt("filter_type")
+            .selected_text(ms.filter_type.name())
+            .show_ui(ui, |ui| {
+                for ty in crate::core::filter::FilterType::ALL {
+                    ui.selectable_value(&mut ms.filter_type, ty, ty.name());
+                }
+            });
+        if ms != before {
+            b.set_mod_state(ms);
+        }
 
-    param_slider(ui, b, SynthParam::FilterCutoff, "Cutoff");
-    param_slider(ui, b, SynthParam::FilterResonance, "Res");
+        param_slider(ui, b, SynthParam::FilterCutoff, "Cutoff");
+        param_slider(ui, b, SynthParam::FilterResonance, "Res");
 
-    ui.add_space(8.0);
-    ui.label(RichText::new("Env Amount").size(10.0));
-    param_slider(ui, b, SynthParam::FilterEnvAmount, "Amt");
+        ui.add_space(8.0);
+        ui.label(RichText::new("Env Amount").size(10.0).color(THEME.text_dim));
+        param_slider(ui, b, SynthParam::FilterEnvAmount, "Amt");
+    });
 }
 
 // ============================================================================
@@ -471,37 +460,39 @@ pub fn filter(ui: &mut Ui, b: &mut dyn SynthBackend) {
 // ============================================================================
 
 pub fn envelopes(ui: &mut Ui, b: &mut dyn SynthBackend) {
-    section_header(ui, "AMP ENV");
+    section_header(ui, "ENVELOPES");
 
-    param_slider(ui, b, SynthParam::Attack, "Attack");
-    param_slider(ui, b, SynthParam::Decay, "Decay");
-    param_slider(ui, b, SynthParam::Sustain, "Sustain");
-    param_slider(ui, b, SynthParam::Release, "Release");
+    ui.group(|ui| {
+        mod_block_title(ui, "AMP");
+        param_slider(ui, b, SynthParam::Attack, "Attack");
+        param_slider(ui, b, SynthParam::Decay, "Decay");
+        param_slider(ui, b, SynthParam::Sustain, "Sustain");
+        param_slider(ui, b, SynthParam::Release, "Release");
+    });
 
-    ui.add_space(12.0);
-    section_header(ui, "FILTER ENV");
+    ui.add_space(4.0);
 
-    param_slider(ui, b, SynthParam::FilterAttack, "Attack");
-    param_slider(ui, b, SynthParam::FilterDecay, "Decay");
-    param_slider(ui, b, SynthParam::FilterSustain, "Sustain");
-    param_slider(ui, b, SynthParam::FilterRelease, "Release");
+    ui.group(|ui| {
+        mod_block_title(ui, "FILTER");
+        param_slider(ui, b, SynthParam::FilterAttack, "Attack");
+        param_slider(ui, b, SynthParam::FilterDecay, "Decay");
+        param_slider(ui, b, SynthParam::FilterSustain, "Sustain");
+        param_slider(ui, b, SynthParam::FilterRelease, "Release");
+    });
 }
 
 pub fn master(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "MASTER");
 
-    param_slider(ui, b, SynthParam::PortamentoTime, "Portamento");
-    param_slider(ui, b, SynthParam::MasterVolume, "Volume");
+    ui.group(|ui| {
+        param_slider(ui, b, SynthParam::PortamentoTime, "Portamento");
+        param_slider(ui, b, SynthParam::MasterVolume, "Volume");
+    });
 
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     // Stereo width lives with the master controls.
     ui.group(|ui| {
-        ui.label(
-            RichText::new("STEREO")
-                .size(10.0)
-                .strong()
-                .color(Color32::from_rgb(100, 200, 255)),
-        );
+        mod_block_title(ui, "STEREO");
         param_slider(ui, b, SynthParam::StereoWidth, "Width");
     });
 }
@@ -510,24 +501,26 @@ pub fn master(ui: &mut Ui, b: &mut dyn SynthBackend) {
 pub fn tempo(ui: &mut Ui, b: &mut dyn SynthBackend, follows_host: bool) {
     section_header(ui, "TEMPO");
 
-    let mut ms = b.mod_state();
-    let before = ms;
-    ui.add_enabled(
-        !follows_host,
-        egui::Slider::new(&mut ms.bpm, 20.0..=300.0)
-            .text("BPM")
-            .fixed_decimals(1),
-    );
-    if follows_host {
-        ui.label(
-            RichText::new("Follows host transport")
-                .size(9.0)
-                .color(THEME.text_dim),
+    ui.group(|ui| {
+        let mut ms = b.mod_state();
+        let before = ms;
+        ui.add_enabled(
+            !follows_host,
+            egui::Slider::new(&mut ms.bpm, 20.0..=300.0)
+                .text("BPM")
+                .fixed_decimals(1),
         );
-    }
-    if ms != before {
-        b.set_mod_state(ms);
-    }
+        if follows_host {
+            ui.label(
+                RichText::new("Follows host transport")
+                    .size(9.0)
+                    .color(THEME.text_dim),
+            );
+        }
+        if ms != before {
+            b.set_mod_state(ms);
+        }
+    });
 }
 
 // ============================================================================
@@ -537,68 +530,72 @@ pub fn tempo(ui: &mut Ui, b: &mut dyn SynthBackend, follows_host: bool) {
 pub fn lfo(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "LFO");
 
-    // Tempo sync lives with LFO 1; when synced the Rate slider is bypassed.
-    let mut ms = b.mod_state();
-    let before = ms;
-    ui.add_enabled_ui(!ms.lfo1.sync, |ui| {
-        param_slider(ui, b, SynthParam::LfoRate, "Rate");
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut ms.lfo1.sync, RichText::new("Sync").size(10.0));
-        if ms.lfo1.sync {
-            division_combo(ui, "lfo1_div".into(), &mut ms.lfo1.rate_beats);
-        }
-    });
-    if ms != before {
-        b.set_mod_state(ms);
-    }
-    param_slider(ui, b, SynthParam::LfoDepth, "Depth");
-
-    ui.label(RichText::new("Waveform").size(10.0));
-    let lfo_wf_labels = ["Sin", "Tri", "Sqr", "Saw", "Rnd"];
-    let lfo_wf = b.get_param(SynthParam::LfoWaveform) as usize;
-    egui::ComboBox::from_id_salt("lfo_wf")
-        .width(70.0)
-        .selected_text(lfo_wf_labels[lfo_wf.min(4)])
-        .show_ui(ui, |ui| {
-            for (i, label) in lfo_wf_labels.iter().enumerate() {
-                if ui.selectable_label(lfo_wf == i, *label).clicked() {
-                    b.set_param(SynthParam::LfoWaveform, i as f32);
-                }
+    ui.group(|ui| {
+        // Tempo sync lives with LFO 1; when synced the Rate slider is bypassed.
+        let mut ms = b.mod_state();
+        let before = ms;
+        ui.add_enabled_ui(!ms.lfo1.sync, |ui| {
+            param_slider(ui, b, SynthParam::LfoRate, "Rate");
+        });
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut ms.lfo1.sync, RichText::new("Sync").size(10.0));
+            if ms.lfo1.sync {
+                division_combo(ui, "lfo1_div".into(), &mut ms.lfo1.rate_beats);
             }
         });
-    // Routing lives on the ROUTING MATRIX page now; the legacy LFO1
-    // destination only survives for old-preset migration, so no combo here.
+        if ms != before {
+            b.set_mod_state(ms);
+        }
+        param_slider(ui, b, SynthParam::LfoDepth, "Depth");
+
+        ui.label(RichText::new("Waveform").size(10.0).color(THEME.text_dim));
+        let lfo_wf_labels = ["Sin", "Tri", "Sqr", "Saw", "Rnd"];
+        let lfo_wf = b.get_param(SynthParam::LfoWaveform) as usize;
+        egui::ComboBox::from_id_salt("lfo_wf")
+            .width(70.0)
+            .selected_text(lfo_wf_labels[lfo_wf.min(4)])
+            .show_ui(ui, |ui| {
+                for (i, label) in lfo_wf_labels.iter().enumerate() {
+                    if ui.selectable_label(lfo_wf == i, *label).clicked() {
+                        b.set_param(SynthParam::LfoWaveform, i as f32);
+                    }
+                }
+            });
+        // Routing lives on the ROUTING MATRIX page now; the legacy LFO1
+        // destination only survives for old-preset migration, so no combo here.
+    });
 }
 
 pub fn pitch_voice(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "PITCH / VOICE");
 
-    let current_mode = b.polyphony_mode();
-    ui.horizontal(|ui| {
-        ui.label("Mode:");
-        let mono_selected = current_mode == PolyphonyMode::Mono;
-        if ui.selectable_label(mono_selected, "MONO").clicked() && !mono_selected {
-            b.set_polyphony_mode(PolyphonyMode::Mono);
+    ui.group(|ui| {
+        let current_mode = b.polyphony_mode();
+        ui.horizontal(|ui| {
+            ui.label("Mode:");
+            let mono_selected = current_mode == PolyphonyMode::Mono;
+            if ui.selectable_label(mono_selected, "MONO").clicked() && !mono_selected {
+                b.set_polyphony_mode(PolyphonyMode::Mono);
+            }
+            let poly_selected = current_mode == PolyphonyMode::Poly;
+            if ui.selectable_label(poly_selected, "POLY").clicked() && !poly_selected {
+                b.set_polyphony_mode(PolyphonyMode::Poly);
+            }
+        });
+
+        // Voice count is only meaningful when the backend exposes it (standalone).
+        let max = b.max_voices();
+        if max > 0 {
+            let active = b.active_voice_count();
+            ui.label(
+                RichText::new(format!("Voices: {}/{}", active, max))
+                    .size(10.0)
+                    .color(THEME.text_dim),
+            );
         }
-        let poly_selected = current_mode == PolyphonyMode::Poly;
-        if ui.selectable_label(poly_selected, "POLY").clicked() && !poly_selected {
-            b.set_polyphony_mode(PolyphonyMode::Poly);
-        }
+
+        param_slider(ui, b, SynthParam::PitchBendRange, "Bend Range");
     });
-
-    // Voice count is only meaningful when the backend exposes it (standalone).
-    let max = b.max_voices();
-    if max > 0 {
-        let active = b.active_voice_count();
-        ui.label(
-            RichText::new(format!("Voices: {}/{}", active, max))
-                .size(10.0)
-                .color(Color32::from_gray(150)),
-        );
-    }
-
-    param_slider(ui, b, SynthParam::PitchBendRange, "Bend Range");
 }
 
 // ============================================================================
@@ -611,7 +608,10 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
     // DISTORTION
     ui.group(|ui| {
         let mut dist_on = b.distortion_enabled();
-        if ui.checkbox(&mut dist_on, RichText::new("DIST").size(10.0).strong()).changed() {
+        if ui
+            .checkbox(&mut dist_on, RichText::new("DIST").size(10.0).strong())
+            .changed()
+        {
             b.set_distortion_enabled(dist_on);
         }
 
@@ -631,11 +631,25 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
         });
 
         let mut drive = b.distortion_drive();
-        if gold_value_slider(ui, egui::Slider::new(&mut drive, 0.0..=1.0).text("Drive").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut drive, 0.0..=1.0)
+                .text("Drive")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_distortion_drive(drive);
         }
         let mut mix = b.distortion_mix();
-        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut mix, 0.0..=1.0)
+                .text("Mix")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_distortion_mix(mix);
         }
     });
@@ -645,7 +659,10 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
     // DELAY
     ui.group(|ui| {
         let mut delay_on = b.delay_enabled();
-        if ui.checkbox(&mut delay_on, RichText::new("DELAY").size(10.0).strong()).changed() {
+        if ui
+            .checkbox(&mut delay_on, RichText::new("DELAY").size(10.0).strong())
+            .changed()
+        {
             b.set_delay_enabled(delay_on);
         }
 
@@ -654,7 +671,13 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
         let before = ms;
         let mut time = b.delay_time();
         let time_resp = ui.add_enabled_ui(!ms.delay_sync, |ui| {
-            gold_value_slider(ui, egui::Slider::new(&mut time, 0.05..=1.0).text("Time").suffix("s").custom_formatter(format_slider_value))
+            gold_value_slider(
+                ui,
+                egui::Slider::new(&mut time, 0.05..=1.0)
+                    .text("Time")
+                    .suffix("s")
+                    .custom_formatter(format_slider_value),
+            )
         });
         if time_resp.inner.changed() {
             b.set_delay_time(time);
@@ -669,11 +692,25 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
             b.set_mod_state(ms);
         }
         let mut feedback = b.delay_feedback();
-        if gold_value_slider(ui, egui::Slider::new(&mut feedback, 0.0..=0.9).text("Fdbk").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut feedback, 0.0..=0.9)
+                .text("Fdbk")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_delay_feedback(feedback);
         }
         let mut mix = b.delay_mix();
-        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut mix, 0.0..=1.0)
+                .text("Mix")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_delay_mix(mix);
         }
     });
@@ -683,20 +720,44 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
     // REVERB
     ui.group(|ui| {
         let mut reverb_on = b.reverb_enabled();
-        if ui.checkbox(&mut reverb_on, RichText::new("REVERB").size(10.0).strong()).changed() {
+        if ui
+            .checkbox(&mut reverb_on, RichText::new("REVERB").size(10.0).strong())
+            .changed()
+        {
             b.set_reverb_enabled(reverb_on);
         }
 
         let mut room = b.reverb_room_size();
-        if gold_value_slider(ui, egui::Slider::new(&mut room, 0.0..=1.0).text("Room").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut room, 0.0..=1.0)
+                .text("Room")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_reverb_room_size(room);
         }
         let mut damp = b.reverb_damping();
-        if gold_value_slider(ui, egui::Slider::new(&mut damp, 0.0..=1.0).text("Damp").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut damp, 0.0..=1.0)
+                .text("Damp")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_reverb_damping(damp);
         }
         let mut mix = b.reverb_mix();
-        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut mix, 0.0..=1.0)
+                .text("Mix")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_reverb_mix(mix);
         }
     });
@@ -706,20 +767,46 @@ pub fn effects(ui: &mut Ui, b: &mut dyn SynthBackend) {
     // CHORUS
     ui.group(|ui| {
         let mut chorus_on = b.chorus_enabled();
-        if ui.checkbox(&mut chorus_on, RichText::new("CHORUS").size(10.0).strong()).changed() {
+        if ui
+            .checkbox(&mut chorus_on, RichText::new("CHORUS").size(10.0).strong())
+            .changed()
+        {
             b.set_chorus_enabled(chorus_on);
         }
 
         let mut rate = b.chorus_rate();
-        if gold_value_slider(ui, egui::Slider::new(&mut rate, 0.1..=5.0).text("Rate").suffix("Hz").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut rate, 0.1..=5.0)
+                .text("Rate")
+                .suffix("Hz")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_chorus_rate(rate);
         }
         let mut depth = b.chorus_depth();
-        if gold_value_slider(ui, egui::Slider::new(&mut depth, 0.0..=10.0).text("Depth").suffix("ms").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut depth, 0.0..=10.0)
+                .text("Depth")
+                .suffix("ms")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_chorus_depth(depth);
         }
         let mut mix = b.chorus_mix();
-        if gold_value_slider(ui, egui::Slider::new(&mut mix, 0.0..=1.0).text("Mix").custom_formatter(format_slider_value)).changed() {
+        if gold_value_slider(
+            ui,
+            egui::Slider::new(&mut mix, 0.0..=1.0)
+                .text("Mix")
+                .custom_formatter(format_slider_value),
+        )
+        .changed()
+        {
             b.set_chorus_mix(mix);
         }
     });
@@ -775,9 +862,18 @@ fn preset_shelf(
             ui.set_width(size.x - 14.0);
             ui.set_height(size.y - 14.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(title.to_uppercase()).size(11.0).strong().color(THEME.gold));
+                ui.label(
+                    RichText::new(title.to_uppercase())
+                        .size(11.0)
+                        .strong()
+                        .color(THEME.gold),
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(idxs.len().to_string()).size(9.0).color(THEME.text_dim));
+                    ui.label(
+                        RichText::new(idxs.len().to_string())
+                            .size(9.0)
+                            .color(THEME.text_dim),
+                    );
                 });
             });
             ui.separator();
@@ -799,7 +895,10 @@ fn preset_shelf(
                                     .italics()
                                     .color(THEME.gold_light)
                             };
-                            if ui.selectable_label(state.selected_preset == Some(i), text).clicked() {
+                            if ui
+                                .selectable_label(state.selected_preset == Some(i), text)
+                                .clicked()
+                            {
                                 *clicked = Some(i);
                             }
                         }
@@ -840,7 +939,11 @@ pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
             state.search.clear();
         }
         ui.separator();
-        let factory = state.available_presets.iter().filter(|e| e.is_factory).count();
+        let factory = state
+            .available_presets
+            .iter()
+            .filter(|e| e.is_factory)
+            .count();
         let user = state.available_presets.len() - factory;
         ui.label(
             RichText::new(format!("{} factory · {} user", factory, user))
@@ -852,8 +955,10 @@ pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
 
     // ── Bucket (filtered) entries into bank shelves ─────────────────────────
     let needle = state.search.to_lowercase();
-    let mut shelves: Vec<(String, Vec<usize>)> =
-        PRESET_BANKS.iter().map(|b| (b.to_string(), Vec::new())).collect();
+    let mut shelves: Vec<(String, Vec<usize>)> = PRESET_BANKS
+        .iter()
+        .map(|b| (b.to_string(), Vec::new()))
+        .collect();
     for (i, e) in state.available_presets.iter().enumerate() {
         if !needle.is_empty()
             && !e.name.to_lowercase().contains(&needle)
@@ -861,7 +966,10 @@ pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
         {
             continue;
         }
-        match shelves.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(&e.category)) {
+        match shelves
+            .iter_mut()
+            .find(|(n, _)| n.eq_ignore_ascii_case(&e.category))
+        {
             Some((_, v)) => v.push(i),
             None => shelves.push((e.category.clone(), vec![i])),
         }
@@ -909,130 +1017,139 @@ pub fn presets(ui: &mut Ui, b: &mut dyn SynthBackend, state: &mut PresetState) {
 pub fn midi(ui: &mut Ui, b: &mut dyn SynthBackend) {
     section_header(ui, "MIDI");
 
-    let status = if b.midi_connected() {
-        "✅ Connected"
-    } else {
-        "❌ Disconnected"
-    };
-    ui.label(RichText::new(status).size(11.0));
+    ui.group(|ui| {
+        let status = if b.midi_connected() {
+            "✅ Connected"
+        } else {
+            "❌ Disconnected"
+        };
+        ui.label(RichText::new(status).size(11.0));
 
-    // Port selector (only meaningful for standalone; plugin reports no ports)
-    let ports = b.midi_ports();
-    let selected_port = b.selected_midi_port();
-    egui::ComboBox::from_id_salt("midi_port")
-        .selected_text(
-            selected_port
-                .and_then(|i| ports.get(i))
-                .map(|s| s.as_str())
-                .unwrap_or("No ports"),
-        )
-        .show_ui(ui, |ui| {
-            for (i, port_name) in ports.iter().enumerate() {
-                let is_selected = selected_port == Some(i);
-                if ui.selectable_label(is_selected, port_name).clicked() {
-                    b.connect_midi_port(i);
+        // Port selector (only meaningful for standalone; plugin reports no ports)
+        let ports = b.midi_ports();
+        let selected_port = b.selected_midi_port();
+        egui::ComboBox::from_id_salt("midi_port")
+            .selected_text(
+                selected_port
+                    .and_then(|i| ports.get(i))
+                    .map(|s| s.as_str())
+                    .unwrap_or("No ports"),
+            )
+            .show_ui(ui, |ui| {
+                for (i, port_name) in ports.iter().enumerate() {
+                    let is_selected = selected_port == Some(i);
+                    if ui.selectable_label(is_selected, port_name).clicked() {
+                        b.connect_midi_port(i);
+                    }
+                }
+            });
+
+        ui.horizontal(|ui| {
+            if ui.button("🔄").on_hover_text("Refresh ports").clicked() {
+                b.refresh_midi_ports();
+            }
+            if ui.button("🔌 Connect").clicked() {
+                if let Some(port_idx) = b.selected_midi_port() {
+                    b.connect_midi_port(port_idx);
                 }
             }
         });
 
-    ui.horizontal(|ui| {
-        if ui.button("🔄").on_hover_text("Refresh ports").clicked() {
-            b.refresh_midi_ports();
-        }
-        if ui.button("🔌 Connect").clicked() {
-            if let Some(port_idx) = b.selected_midi_port() {
-                b.connect_midi_port(port_idx);
-            }
-        }
-    });
-
-    // MIDI Channel
-    ui.add_space(4.0);
-    let channel_labels = [
-        "All", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
-        "16",
-    ];
-    let current_channel = b.midi_channel_display() as usize;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Channel:").size(10.0));
-        egui::ComboBox::from_id_salt("midi_channel")
-            .width(50.0)
-            .selected_text(channel_labels[current_channel.min(16)])
-            .show_ui(ui, |ui| {
-                for (i, label) in channel_labels.iter().enumerate() {
-                    if ui.selectable_label(current_channel == i, *label).clicked() {
-                        b.set_midi_channel(i as u8);
-                    }
-                }
-            });
-    });
-
-    // MIDI Learn
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(4.0);
-
-    match b.midi_learn_state() {
-        MidiLearnState::Waiting(param) => {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("🎯 Learning:").size(10.0).color(Color32::YELLOW));
-                ui.label(RichText::new(param.name()).size(10.0).strong());
-            });
-            if ui.button("Cancel").clicked() {
-                b.cancel_midi_learn();
-            }
-        }
-        MidiLearnState::Idle => {
-            ui.label(RichText::new("CC Learn:").size(10.0));
-            egui::ComboBox::from_id_salt("midi_learn_param")
-                .selected_text("Select param...")
-                .width(120.0)
+        // MIDI Channel
+        ui.add_space(4.0);
+        let channel_labels = [
+            "All", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+            "16",
+        ];
+        let current_channel = b.midi_channel_display() as usize;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Channel:").size(10.0));
+            egui::ComboBox::from_id_salt("midi_channel")
+                .width(50.0)
+                .selected_text(channel_labels[current_channel.min(16)])
                 .show_ui(ui, |ui| {
-                    for param in SynthParam::all() {
-                        if ui.selectable_label(false, param.name()).clicked() {
-                            b.start_midi_learn(*param);
+                    for (i, label) in channel_labels.iter().enumerate() {
+                        if ui.selectable_label(current_channel == i, *label).clicked() {
+                            b.set_midi_channel(i as u8);
                         }
                     }
                 });
-        }
-    }
-
-    // Custom mappings
-    let mappings = b.custom_cc_mappings();
-    if !mappings.is_empty() {
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(format!("{} custom mappings", mappings.len()))
-                .size(9.0)
-                .color(Color32::from_gray(120)),
-        );
-        if ui.small_button("Clear all").clicked() {
-            b.clear_cc_mappings();
-        }
-    }
-
-    // CC Activity
-    ui.add_space(8.0);
-    ui.label(RichText::new("CC Activity:").size(10.0));
-
-    let cc_list = b.midi_cc_activity();
-    egui::ScrollArea::vertical()
-        .id_salt("midi_cc_activity")
-        .max_height(80.0)
-        .show(ui, |ui| {
-            for (cc, val) in cc_list.iter().take(10) {
-                let mapped = mappings.iter().find(|m| m.cc == *cc).map(|m| m.param.short_name());
-                let cc_text = if let Some(param_name) = mapped {
-                    format!("CC {:>3} → {}", cc, param_name)
-                } else {
-                    format!("CC {:>3}:", cc)
-                };
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(cc_text).size(9.0).monospace());
-                    ui.add(egui::ProgressBar::new(*val as f32 / 127.0).desired_width(40.0));
-                });
-            }
         });
+
+        // MIDI Learn
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        match b.midi_learn_state() {
+            MidiLearnState::Waiting(param) => {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("🎯 Learning:")
+                            .size(10.0)
+                            .color(Color32::YELLOW),
+                    );
+                    ui.label(RichText::new(param.name()).size(10.0).strong());
+                });
+                if ui.button("Cancel").clicked() {
+                    b.cancel_midi_learn();
+                }
+            }
+            MidiLearnState::Idle => {
+                ui.label(RichText::new("CC Learn:").size(10.0));
+                egui::ComboBox::from_id_salt("midi_learn_param")
+                    .selected_text("Select param...")
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for param in SynthParam::all() {
+                            if ui.selectable_label(false, param.name()).clicked() {
+                                b.start_midi_learn(*param);
+                            }
+                        }
+                    });
+            }
+        }
+
+        // Custom mappings
+        let mappings = b.custom_cc_mappings();
+        if !mappings.is_empty() {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!("{} custom mappings", mappings.len()))
+                    .size(9.0)
+                    .color(Color32::from_gray(120)),
+            );
+            if ui.small_button("Clear all").clicked() {
+                b.clear_cc_mappings();
+            }
+        }
+
+        // CC Activity
+        ui.add_space(8.0);
+        ui.label(RichText::new("CC Activity:").size(10.0));
+
+        let cc_list = b.midi_cc_activity();
+        egui::ScrollArea::vertical()
+            .id_salt("midi_cc_activity")
+            .max_height(80.0)
+            .show(ui, |ui| {
+                for (cc, val) in cc_list.iter().take(10) {
+                    let mapped = mappings
+                        .iter()
+                        .find(|m| m.cc == *cc)
+                        .map(|m| m.param.short_name());
+                    let cc_text = if let Some(param_name) = mapped {
+                        format!("CC {:>3} → {}", cc, param_name)
+                    } else {
+                        format!("CC {:>3}:", cc)
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(cc_text).size(9.0).monospace());
+                        ui.add(egui::ProgressBar::new(*val as f32 / 127.0).desired_width(40.0));
+                    });
+                }
+            });
+    });
 }
 
 // ============================================================================
@@ -1062,6 +1179,11 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_param(SynthParam::Osc4Cents, preset.osc4_cents as f32);
     b.set_param(SynthParam::Osc4Phase, preset.osc4_phase);
 
+    b.set_param(SynthParam::Osc1Pw, preset.osc1_pw);
+    b.set_param(SynthParam::Osc2Pw, preset.osc2_pw);
+    b.set_param(SynthParam::Osc3Pw, preset.osc3_pw);
+    b.set_param(SynthParam::Osc4Pw, preset.osc4_pw);
+
     b.set_param(SynthParam::FilterCutoff, preset.filter_cutoff);
     b.set_param(SynthParam::FilterResonance, preset.filter_resonance);
     b.set_param(SynthParam::Filter2Type, preset.filter2_type.index() as f32);
@@ -1082,7 +1204,10 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_param(SynthParam::LfoRate, preset.lfo_rate);
     b.set_param(SynthParam::LfoDepth, preset.lfo_depth);
     b.set_param(SynthParam::LfoWaveform, preset.lfo_waveform as u8 as f32);
-    b.set_param(SynthParam::LfoDestination, preset.lfo_destination as u8 as f32);
+    b.set_param(
+        SynthParam::LfoDestination,
+        preset.lfo_destination as u8 as f32,
+    );
 
     b.set_param(SynthParam::PitchBendRange, preset.pitch_bend_range as f32);
     b.set_param(SynthParam::PortamentoTime, preset.portamento_time);
@@ -1102,7 +1227,10 @@ pub fn apply_preset(b: &mut dyn SynthBackend, preset: &Preset) {
     b.set_distortion_enabled(preset.distortion_enabled);
     b.set_distortion_drive(preset.distortion_drive);
     b.set_distortion_mix(preset.distortion_mix);
-    b.set_param(SynthParam::DistortionType, preset.distortion_type.index() as f32);
+    b.set_param(
+        SynthParam::DistortionType,
+        preset.distortion_type.index() as f32,
+    );
 
     // Effects - Delay
     b.set_delay_enabled(preset.delay_enabled);
@@ -1199,6 +1327,11 @@ pub fn create_preset(b: &dyn SynthBackend, name: &str, category: &str) -> Preset
         osc4_semitones: b.get_param(SynthParam::Osc4Semitones) as i8,
         osc4_cents: b.get_param(SynthParam::Osc4Cents) as i8,
         osc4_phase: b.get_param(SynthParam::Osc4Phase),
+
+        osc1_pw: b.get_param(SynthParam::Osc1Pw),
+        osc2_pw: b.get_param(SynthParam::Osc2Pw),
+        osc3_pw: b.get_param(SynthParam::Osc3Pw),
+        osc4_pw: b.get_param(SynthParam::Osc4Pw),
 
         filter_cutoff: b.get_param(SynthParam::FilterCutoff),
         filter_resonance: b.get_param(SynthParam::FilterResonance),
@@ -1330,12 +1463,7 @@ fn lfo_wf_from_index(i: usize) -> LfoWaveform {
 }
 
 fn mod_block_title(ui: &mut Ui, title: &str) {
-    ui.label(
-        RichText::new(title)
-            .size(10.0)
-            .strong()
-            .color(Color32::from_rgb(255, 180, 60)),
-    );
+    ui.label(RichText::new(title).size(10.0).strong().color(THEME.gold));
 }
 
 /// One extra LFO block (LFO 2/3). Explicit vertical layout keeps the title
@@ -1365,7 +1493,11 @@ fn extra_lfo(ui: &mut Ui, title: &str, s: &mut LfoSettings) {
 
             ui.horizontal(|ui| {
                 ui.spacing_mut().slider_width = 55.0;
-                ui.add(egui::Slider::new(&mut s.depth, 0.0..=1.0).text("Depth").fixed_decimals(2));
+                ui.add(
+                    egui::Slider::new(&mut s.depth, 0.0..=1.0)
+                        .text("Depth")
+                        .fixed_decimals(2),
+                );
                 ui.add_enabled(
                     !s.sync,
                     egui::Slider::new(&mut s.rate, 0.1..=20.0)
@@ -1385,7 +1517,9 @@ fn extra_env(ui: &mut Ui, title: &str, adsr: &mut [f32; 4]) {
         let slider = if level {
             egui::Slider::new(v, 0.0..=1.0)
         } else {
-            egui::Slider::new(v, 0.001..=5.0).logarithmic(true).suffix(" s")
+            egui::Slider::new(v, 0.001..=5.0)
+                .logarithmic(true)
+                .suffix(" s")
         };
         ui.add(slider.text(label).fixed_decimals(2));
     };
@@ -1448,7 +1582,7 @@ fn src_group_break(s: ModSource) -> bool {
 }
 
 /// Thicker separator after these columns (pitch | filters | amp/stereo |
-/// osc levels | osc pans | LFO rates | LFO depths).
+/// osc levels | osc pans | pulse widths | global FX | LFO rates | depths).
 fn dst_group_break(d: ModDest) -> bool {
     matches!(
         d,
@@ -1457,6 +1591,8 @@ fn dst_group_break(d: ModDest) -> bool {
             | ModDest::StereoWidth
             | ModDest::Osc4Level
             | ModDest::Osc4Pan
+            | ModDest::Osc4Pw
+            | ModDest::ChorusMix
             | ModDest::Lfo3Rate
     )
 }
@@ -1472,8 +1608,16 @@ fn find_route(m: &ModMatrix, s: ModSource, d: ModDest) -> Option<usize> {
 /// toggles a route (backed by a free matrix slot); hovering a lit cell pops
 /// up an amount slider.
 fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
-    let srcs: Vec<ModSource> = ModSource::all().iter().copied().filter(|s| s.is_wired()).collect();
-    let dsts: Vec<ModDest> = ModDest::all().iter().copied().filter(|d| d.is_wired()).collect();
+    let srcs: Vec<ModSource> = ModSource::all()
+        .iter()
+        .copied()
+        .filter(|s| s.is_wired())
+        .collect();
+    let dsts: Vec<ModDest> = ModDest::all()
+        .iter()
+        .copied()
+        .filter(|d| d.is_wired())
+        .collect();
     let (rows, cols) = (srcs.len(), dsts.len());
 
     let size = vec2(
@@ -1489,7 +1633,10 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
             Vec2::splat(GRID_CELL),
         )
     };
-    let grid_rect = Rect::from_min_size(origin, vec2(cols as f32 * GRID_CELL, rows as f32 * GRID_CELL));
+    let grid_rect = Rect::from_min_size(
+        origin,
+        vec2(cols as f32 * GRID_CELL, rows as f32 * GRID_CELL),
+    );
 
     let grid_id = ui.id().with("routing_grid");
     let popup_rect_id = grid_id.with("popup_rect");
@@ -1566,12 +1713,18 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
             let col = cell_rect(0, c);
             let tint = THEME.toxic_green.gamma_multiply(0.10);
             painter.rect_filled(
-                Rect::from_min_max(pos2(rect.min.x, row.min.y), pos2(grid_rect.max.x, row.max.y)),
+                Rect::from_min_max(
+                    pos2(rect.min.x, row.min.y),
+                    pos2(grid_rect.max.x, row.max.y),
+                ),
                 0.0,
                 tint,
             );
             painter.rect_filled(
-                Rect::from_min_max(pos2(col.min.x, grid_rect.min.y), pos2(col.max.x, grid_rect.max.y)),
+                Rect::from_min_max(
+                    pos2(col.min.x, grid_rect.min.y),
+                    pos2(col.max.x, grid_rect.max.y),
+                ),
                 0.0,
                 tint,
             );
@@ -1582,18 +1735,30 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
         let thick = Stroke::new(1.0, THEME.gold_dark.gamma_multiply(0.7));
         for c in 0..=cols {
             let x = origin.x + c as f32 * GRID_CELL;
-            let stroke = if c == 0 || c == cols || dst_group_break(dsts[c - 1]) { thick } else { thin };
+            let stroke = if c == 0 || c == cols || dst_group_break(dsts[c - 1]) {
+                thick
+            } else {
+                thin
+            };
             painter.line_segment([pos2(x, grid_rect.min.y), pos2(x, grid_rect.max.y)], stroke);
         }
         for r in 0..=rows {
             let y = origin.y + r as f32 * GRID_CELL;
-            let stroke = if r == 0 || r == rows || src_group_break(srcs[r - 1]) { thick } else { thin };
+            let stroke = if r == 0 || r == rows || src_group_break(srcs[r - 1]) {
+                thick
+            } else {
+                thin
+            };
             painter.line_segment([pos2(grid_rect.min.x, y), pos2(grid_rect.max.x, y)], stroke);
         }
 
         // Row labels (sources)
         for (r, s) in srcs.iter().enumerate() {
-            let color = if focus.map(|f| f.0) == Some(r) { THEME.gold_light } else { THEME.text_secondary };
+            let color = if focus.map(|f| f.0) == Some(r) {
+                THEME.gold_light
+            } else {
+                THEME.text_secondary
+            };
             painter.text(
                 pos2(origin.x - 6.0, cell_rect(r, 0).center().y),
                 Align2::RIGHT_CENTER,
@@ -1606,8 +1771,13 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
         // Rotated column labels (destinations) below the grid, reading
         // bottom-to-top so they anchor at the column's bottom edge.
         for (c, d) in dsts.iter().enumerate() {
-            let color = if focus.map(|f| f.1) == Some(c) { THEME.gold_light } else { THEME.text_secondary };
-            let galley = painter.layout_no_wrap(d.name().to_string(), FontId::proportional(10.0), color);
+            let color = if focus.map(|f| f.1) == Some(c) {
+                THEME.gold_light
+            } else {
+                THEME.text_secondary
+            };
+            let galley =
+                painter.layout_no_wrap(d.name().to_string(), FontId::proportional(10.0), color);
             let x = cell_rect(0, c).center().x - galley.size().y / 2.0;
             painter.add(
                 epaint::TextShape::new(
@@ -1625,11 +1795,23 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
                 let center = cell_rect(r, c).center();
                 if let Some(i) = find_route(&ms.matrix, srcs[r], dsts[c]) {
                     let amt = ms.matrix.slots[i].amount.clamp(-1.0, 1.0);
-                    let color = if amt >= 0.0 { THEME.toxic_green } else { THEME.rust };
-                    painter.circle_filled(center, 3.5 + 5.5 * amt.abs(), color.gamma_multiply(0.35 + 0.65 * amt.abs()));
+                    let color = if amt >= 0.0 {
+                        THEME.toxic_green
+                    } else {
+                        THEME.rust
+                    };
+                    painter.circle_filled(
+                        center,
+                        3.5 + 5.5 * amt.abs(),
+                        color.gamma_multiply(0.35 + 0.65 * amt.abs()),
+                    );
                     painter.circle_stroke(center, 9.0, Stroke::new(1.0, color));
                 } else if hovered == Some((r, c)) {
-                    painter.circle_stroke(center, 9.0, Stroke::new(1.0, Color32::from_white_alpha(70)));
+                    painter.circle_stroke(
+                        center,
+                        9.0,
+                        Stroke::new(1.0, Color32::from_white_alpha(70)),
+                    );
                 } else {
                     painter.circle_filled(center, 1.5, Color32::from_white_alpha(28));
                 }
@@ -1698,8 +1880,17 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
         .count();
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let color = if used == MOD_SLOTS { THEME.logo_red_light } else { THEME.gold };
-        ui.label(RichText::new(format!("Routes {}/{}", used, MOD_SLOTS)).size(10.0).strong().color(color));
+        let color = if used == MOD_SLOTS {
+            THEME.logo_red_light
+        } else {
+            THEME.gold
+        };
+        ui.label(
+            RichText::new(format!("Routes {}/{}", used, MOD_SLOTS))
+                .size(10.0)
+                .strong()
+                .color(color),
+        );
         if hidden > 0 {
             ui.label(
                 RichText::new(format!("({} legacy route(s) not shown)", hidden))
@@ -1712,9 +1903,11 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
         }
     });
     ui.label(
-        RichText::new("Click a cell to route a source to a destination · hover a lit cell to set its amount")
-            .size(9.0)
-            .color(THEME.text_dim),
+        RichText::new(
+            "Click a cell to route a source to a destination · hover a lit cell to set its amount",
+        )
+        .size(9.0)
+        .color(THEME.text_dim),
     );
     if let Some(t) = ui.data(|d| d.get_temp::<f64>(full_id)) {
         if now - t < 2.0 {
@@ -1731,12 +1924,11 @@ fn routing_grid(ui: &mut Ui, ms: &mut ModState) {
 /// The ROUTING MATRIX page: the extra modulators (LFO 2/3, ENV 3/4) in a
 /// 2x2 block on top, with the source × destination grid below it.
 pub fn mod_matrix_panel(ui: &mut Ui, b: &mut dyn SynthBackend) {
-    section_header(ui, "ROUTING MATRIX");
+    section_header(ui, "MODULATORS");
 
     let before = b.mod_state();
     let mut ms = before;
 
-    ui.label(RichText::new("MODULATORS").size(10.0).color(THEME.gold_dark));
     egui::Grid::new("modulators_2x2")
         .num_columns(2)
         .spacing([6.0, 6.0])
@@ -1751,10 +1943,10 @@ pub fn mod_matrix_panel(ui: &mut Ui, b: &mut dyn SynthBackend) {
     ui.add_space(4.0);
     ui.separator();
     ui.add_space(4.0);
+    section_header(ui, "ROUTING MATRIX");
     routing_grid(ui, &mut ms);
 
     if ms != before {
         b.set_mod_state(ms);
     }
 }
-

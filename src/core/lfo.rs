@@ -1,16 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
-use super::types::{SampleRate};
+use super::types::SampleRate;
 
 /// LFO routing destinations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LfoDestination {
     #[default]
     Off,
-    Pitch,         // Modulate oscillator pitch (vibrato)
-    FilterCutoff,  // Modulate filter cutoff
-    Amplitude,     // Modulate amplitude (tremolo)
+    Pitch,        // Modulate oscillator pitch (vibrato)
+    FilterCutoff, // Modulate filter cutoff
+    Amplitude,    // Modulate amplitude (tremolo)
 }
 
 impl LfoDestination {
@@ -43,7 +43,7 @@ pub enum LfoWaveform {
     Triangle,
     Square,
     Saw,
-    Random,      // Sample & hold
+    Random, // Sample & hold
 }
 
 impl LfoWaveform {
@@ -62,11 +62,11 @@ impl LfoWaveform {
 /// Low Frequency Oscillator for modulation
 /// Generates sub-audio rate waveforms (0.1-20 Hz) for pitch/filter/amplitude modulation
 pub struct LFO {
-    rate: f32,           // Frequency in Hz (0.1-20)
-    depth: f32,          // Modulation depth 0.0-1.0
+    rate: f32,  // Frequency in Hz (0.1-20)
+    depth: f32, // Modulation depth 0.0-1.0
     waveform: LfoWaveform,
     destination: LfoDestination,
-    phase: f32,          // 0.0 to 2π
+    phase: f32, // 0.0 to 2π
     phase_increment: f32,
     sample_rate: SampleRate,
     // Random/S&H state
@@ -77,8 +77,8 @@ pub struct LFO {
 impl LFO {
     pub fn new(sample_rate: SampleRate) -> Self {
         let mut lfo = Self {
-            rate: 6.0,      // Default 6 Hz (medium vibrato)
-            depth: 0.0,     // Off by default
+            rate: 6.0,  // Default 6 Hz (medium vibrato)
+            depth: 0.0, // Off by default
             waveform: LfoWaveform::Sine,
             destination: LfoDestination::Off,
             phase: 0.0,
@@ -262,7 +262,11 @@ mod tests {
 
         for _ in 0..1000 {
             let value = lfo.next_value();
-            assert!(value >= -1.0 && value <= 1.0, "LFO value out of range: {}", value);
+            assert!(
+                value >= -1.0 && value <= 1.0,
+                "LFO value out of range: {}",
+                value
+            );
         }
     }
 
@@ -274,7 +278,11 @@ mod tests {
 
         for _ in 0..1000 {
             let value = lfo.next_value();
-            assert!(value >= -0.5 && value <= 0.5, "LFO value exceeds depth: {}", value);
+            assert!(
+                value >= -0.5 && value <= 0.5,
+                "LFO value exceeds depth: {}",
+                value
+            );
         }
     }
 

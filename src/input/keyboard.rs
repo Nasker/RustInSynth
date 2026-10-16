@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use std::io::stdout;
 
@@ -117,7 +119,8 @@ impl KeyboardInput {
         let enhanced_keyboard = execute!(
             stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
-        ).is_ok();
+        )
+        .is_ok();
 
         if !enhanced_keyboard {
             eprintln!("Note: Key release detection not available. Using monophonic mode.");
