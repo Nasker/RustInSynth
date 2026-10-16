@@ -4,7 +4,9 @@
   <img src="RustInSynth.png" alt="Rust In Synth" width="480">
 </p>
 
-A Minimoog-style synthesizer written in pure Rust with a real-time GUI, **true stereo output**, a **16-slot modulation matrix**, and both **standalone and plugin (VST3/CLAP)** operation.
+**RustInSynth — An Open-Source Virtual Analog Synthesizer in Rust**
+
+A polyphonic virtual-analog synthesizer featuring a flexible modulation matrix, multiple filter architectures, stereo effects, and standalone and VST3/CLAP plugin support.
 
 ## Features
 
