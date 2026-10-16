@@ -1,10 +1,10 @@
 # RustInSynth Development Plan
 
-## Current Version: v1.2.0 released; next release in progress (modulation matrix, new filters, distortion, tempo sync, preset browser)
+## Current Version: v1.3.0-alpha in progress (modulation matrix, new filters, distortion, tempo sync, preset browser)
 
 ## Roadmap (Ordered by Priority)
 
-### Phase 0: Standalone ↔ Plugin Parity (1:1) ✅ DONE (manual DAW checklist pending)
+### Phase 0: Standalone ↔ Plugin Parity (1:1) ✅ DONE
 
 > Goal: the VST3/CLAP version must behave identically to the standalone.
 > Root causes found in audit (2026-08-03): divergent MIDI CC paths, three
@@ -54,16 +54,17 @@
 - [x] **0.7 Parity verification** ✅ DONE (unit tests; manual checklist below)
   - Unit test: per `SynthParam`, assert default + range match between
     `ParamBank` and `RustInSynthParams`, and curve round-trips
-  - Manual checklist (for the user):
-    - [ ] Standalone: sliders show correct values/units, semitones snap to
+  - Manual checklist (verified 2026-10-16 in Ableton Live and Logic Pro
+    via Element on macOS; standalone in daily use):
+    - [x] Standalone: sliders show correct values/units, semitones snap to
       integers, MIDI CC moves GUI sliders
-    - [ ] Plugin in DAW: cutoff & envelope times feel logarithmic in GUI and
+    - [x] Plugin in DAW: cutoff & envelope times feel logarithmic in GUI and
       in host automation lanes; host automation updates the plugin GUI
-    - [ ] Plugin MIDI CC with editor open: knob moves + host records automation
-    - [ ] Plugin MIDI CC with editor closed: parameter changes audibly and
+    - [x] Plugin MIDI CC with editor open: knob moves + host records automation
+    - [x] Plugin MIDI CC with editor closed: parameter changes audibly and
       persists (not overwritten on the next buffer)
-    - [ ] Same preset file sounds identical in standalone and plugin
-    - [ ] DAW automation recording works for drags (gestures)
+    - [x] Same preset file sounds identical in standalone and plugin
+    - [x] DAW automation recording works for drags (gestures)
     - [ ] Note: `bundle_vst3.sh` is macOS-only; on Linux bundle the
       CLAP/VST3 artifacts from `target/release` manually
 
@@ -169,7 +170,8 @@
 
 ### Phase 5: Modulation & Sound Engine Overhaul ✅ DONE (design in `docs/feature-roadmap.md`)
 
-Landed between 2026-10-12 and 2026-10-13. DAW testing of these features is still pending.
+Landed between 2026-10-12 and 2026-10-13. DAW-verified 2026-10-16 in Ableton
+Live (VST3) and Logic Pro (VST3 via Element) on macOS.
 
 - [x] **5.1 Modulation matrix** — `core/mod_matrix.rs`, 16 slots, per-voice offset accumulation, `dest_range()` table; ROUTING MATRIX tab (`panels::routing_grid`)
 - [x] **5.2 Extra modulators** — LFO 1-3 (per-LFO waveform/rate/depth/sync), Env 3 and Env 4 as matrix sources; legacy single-LFO destination mapped into a matrix slot
@@ -184,14 +186,21 @@ Landed between 2026-10-12 and 2026-10-13. DAW testing of these features is still
 
 ### Next Up (open items from Phase 5)
 
-- [ ] **Wire global-effect matrix destinations** — Delay/Reverb/Chorus targets are selectable in the matrix but not applied by the DSP (`ModDest::is_wired` is false for them)
+- [x] **Global-effect matrix destinations wired** — `VoiceManager::update_fx_mods`
+  resolves Delay/Reverb/Chorus targets once per sample (dedicated global LFOs
+  plus strongest-signal per-voice sources) and `EffectsChain::set_fx_mods`
+  applies them
 - [ ] **Remaining destinations from the roadmap** — Osc phase/PM, DistortionDrive/Mix and Env3 attack/decay are not in `ModDest`
 - [ ] **Unbuilt modulator options** — Per-LFO phase offset, retrigger mode, unipolar switch, and Env 3 loop mode from the roadmap are not implemented
 - [ ] **Matrix automation** — amounts/routes are preset-only; consider exposing a few as host params or CC-learn targets
 - [ ] **Tap tempo** in the standalone top bar
 - [ ] **Preset browser extras** — rename/delete, tags/search, A/B compare, CLAP/VST3 program list
-- [ ] **Manual DAW pass** — verify new features in a host (parity checklist in Phase 0.7 + matrix, sync, filter 2, distortion)
-- [ ] **Release housekeeping** — bump `Cargo.toml` version, add a release entry, add a GUI screenshot to the README
+- [x] **Manual DAW pass** — verified 2026-10-16 in Ableton Live (VST3) and
+  Logic Pro (via Element hosting the VST3) on macOS: tempo sync follows the
+  host transport, plugin state persists across sessions, and multiple
+  instances stay light on CPU
+- [ ] **Release housekeeping** — `Cargo.toml` bumped to `1.3.0-alpha` and
+  README release entry added ✅; remaining: GUI screenshot for the README
 
 ---
 
@@ -227,7 +236,8 @@ struct SynthApp {
 | Date | Version | Changes |
 |------|---------|---------|
 | 2026-10-13 | — | Factory bank expanded and refreshed (`factory_bank.rs`, ~75 presets); distortion unit, Filter 2, OSC 4, LFO/Env extensions, matrix destinations and preset format v2 polished; panels reorganised |
-| 2026-10-12 | — | Modulation matrix (16 slots, ROUTING MATRIX tab), LFO 1-3 and Env 3/4, tempo sync, Ladder/Comb filters, preset browser tab; `docs/feature-roadmap.md` written as the design doc. DAW test pending |
+| 2026-10-16 | v1.3.0-alpha | Version labeled `1.3.0-alpha`; global-effect matrix destinations wired (`update_fx_mods` → `set_fx_mods`); DAW verification in Ableton Live (VST3) and Logic Pro (via Element) — tempo sync, session persistence, multi-instance CPU confirmed |
+| 2026-10-12 | — | Modulation matrix (16 slots, ROUTING MATRIX tab), LFO 1-3 and Env 3/4, tempo sync, Ladder/Comb filters, preset browser tab; `docs/feature-roadmap.md` written as the design doc |
 | 2026-08-06 | v1.2.0 | Release: unified standalone/plugin GUI, docs updated |
 | 2026-08-03 | — | Audited standalone↔plugin parity; identified broken plugin envelope CC path, triple curve mismatch, duplicated defaults/scaling; wrote Phase 0 parity plan + GUI aesthetics backlog |
 | 2026-08-03 | — | Implemented Phase 0: `core/param_spec.rs` single spec table driving `ParamBank` + `RustInSynthParams`; shared curve-aware `param_slider` widget used by both GUIs; plugin CC path mirrors standalone (editor-open → CC queue → `ParamSetter`; editor-closed → direct apply + change-detecting `sync_plugin_params_safe`); CC scaling deduped into `param_spec::cc_to_plain` (used by DSP, standalone GUI feedback, and plugin editor); CC mapping persistence shared via `core::params`; automation gestures (`begin/end_param_change`) wired through the shared slider; dead `sync_plugin_params` deleted; editor 1500×550 + CPU meter + voice counts; parity tests in `plugin.rs` — 65 tests pass, standalone and plugin both compile |

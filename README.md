@@ -275,7 +275,7 @@ See [PLAN.md](PLAN.md) for the development plan.
 
 ## Current Status
 
-**Unreleased (post-1.2.0; `Cargo.toml` still says 1.2.0)** - Modulation, filters & presets overhaul:
+**v1.3.0-alpha (in progress)** - Modulation, filters & presets overhaul:
 - [x] 16-slot modulation matrix with ROUTING MATRIX tab (source / destination / amount / enable per slot)
 - [x] 3 LFOs and 2 auxiliary envelopes (Env 3, Env 4) as matrix sources
 - [x] OSC 4 with audio-rate FM / ring-mod routing
@@ -287,9 +287,9 @@ See [PLAN.md](PLAN.md) for the development plan.
 - [x] Tabbed GUI shared by standalone and plugin
 - [x] Aftertouch input
 - [x] Standalone/plugin parity work: single param spec, one curve per parameter, shared CC scaling, host automation gestures
-- [ ] Manual DAW verification of the new features is still pending
+- [x] Manual DAW verification done in Ableton Live (VST3) and Logic Pro (VST3 via Element) on macOS — tempo sync, session persistence and multi-instance CPU confirmed
 
-**Known gaps:** global-effect matrix destinations (delay / reverb / chorus targets) are selectable but not yet applied by the DSP; matrix amounts, extra LFO/Env settings and tempo are not exposed as host-automatable plugin parameters.
+**Known gaps:** matrix amounts, extra LFO/Env settings and tempo are not exposed as host-automatable plugin parameters (they live in presets and `ModState` instead).
 
 **v1.2.0** - Stereo Fix & Unified GUI Architecture:
 - [x] Fixed stereo separation with independent left/right filters per voice
